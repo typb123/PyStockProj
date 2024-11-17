@@ -20,38 +20,73 @@ class DataPreparator:
         df = df.drop(columns=[col for col in columnsToDrop if col in df.columns], errors='ignore')
 
         #Drop any rows with NaN values
-        df.dropna()
+        df.dropna(inplace=True)
 
         return df
     
-    def createTarget(self, df: pd.DataFrame, predictionDays: int = 1) -> pd.DataFrame:
+    def createTarget(self, df: pd.DataFrame, predictionDays: int = 14) -> pd.DataFrame:
         """
         Create a target variable based on future returns.
+        Returns pd.DataFrame with added targetReturns column 
         """
-        return
+        df = df.copy()
 
-
-
-
+        df['target'] = df['Close'].shift(-predictionDays)
+        df['targetReturns'] = (df['target'] - df['Close']) / df['Close']
+        df.dropna(subset=['targetReturns'], inplace=True)  # Drop rows with NaN values caused by shifting
+        df = df.drop(columns=['target']) #Drop the intermediate column
+        return df
 
     def getFeatureColumns(self, df: pd.DataFrame) -> List[str]:
-        return 
-
-
-
+        '''
+        Identifies feature columns and excludes columns like 'Close' and target variables 
+        '''
+        excludeColumns = ['Open', 'High', 'Low', 'Close', 'Volume', 'targetReturns']
+        return [col for col in df.columns if col not in excludeColumns] 
 
     def prepareForTrain(self, df: pd.DataFrame, 
-                        predictionDays: int = 1, 
+                        predictionDays: int = 14, 
                         testSize: float = 0.2) -> Dict[str, np.ndarray]:
+        """
+        Prepares data for training. Features like scaling and train-test splitting for scikit learn.
+
+        Parameters:
+            pd.DataFrame
+            predictionDays (int): number of days ahead to predict (14 days for now)
+            testSize (float): Proportion of data reserved for testing
+
+        Returns:
+            Dict[str, np.ndarray]: Dictionary containing training and test sets and feature names 
+        """
+
+        #Clean data and prepare features
+        df = self.prepareFeatures(df)
         
+        #Create target variables
+        df = self.createTarget(df, predictionDays)
 
+        #Identify feature columns
+        self.featureColumns = self.getFeatureColumns(df)
 
+        #Drop and rows with Nan Vals
+        df = df.dropna()
 
-        return
+        #Separate features (X) and targe (Y)
+        X = df[self.featureColumns].values
+        Y = df['targetReturns'].values
+
+        # Scale the features
+        X = self.scalar.fit_transform(X)
+
+        #Split the data into training and test sets
+        XTrain, XTest, YTrain, YTest = train_test_split(X, Y, test_size=testSize, shuffle=False)
+
+        return {
+            'XTrain': XTrain,
+            'XTest': XTest,
+            'YTrain': YTrain,
+            'YTest': YTest,
+            'featureNames': self.featureColumns
+        } 
     
-    def inverseTransformPredictions(self, predictions: np.ndarray) -> np.ndarray:
-
-        return
-
-
 
