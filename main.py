@@ -83,8 +83,8 @@ def mainMenu():
 
 
 
-if __name__ == "__main__":
-    mainMenu()
+#if __name__ == "__main__":
+ #   mainMenu()
 
 
 

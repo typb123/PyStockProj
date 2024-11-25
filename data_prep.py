@@ -41,7 +41,7 @@ class DataPreparator:
         '''
         Identifies feature columns and excludes columns like 'Close' and target variables 
         '''
-        excludeColumns = ['Open', 'High', 'Low', 'Close', 'Volume', 'targetReturns']
+        excludeColumns = ['Open', 'High', 'Low', 'Close', 'Capital Gains', 'targetReturns', 'Ticker'] ##EXLUDE LATER  'dailyReturn', 'vma_10', 'vma_20', 'macdHistogram'
         return [col for col in df.columns if col not in excludeColumns] 
 
     def prepareForTrain(self, df: pd.DataFrame, 

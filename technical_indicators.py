@@ -1,5 +1,6 @@
 import pandas as pd
 import numpy as np
+from typing import List
 
 
 def CalculateData(data: pd.DataFrame) -> pd.DataFrame:
@@ -69,6 +70,33 @@ def CalculateData(data: pd.DataFrame) -> pd.DataFrame:
             df[f'vma_{window}'] = df['Volume'].rolling(window=window).mean()
         return df
     
+    def calculateIchimokuCloud(df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Calculate Ichimoku Cloud components and add them to the DataFrame."""
+        # Validate input
+        required_columns = ['High', 'Low', 'Close']
+        for col in required_columns:
+            if col not in df.columns:
+                raise ValueError(f"Input DataFrame must contain '{col}' column.")
+    
+        # Calculate Tenkan-sen (Conversion Line)
+        df['tenkan_sen'] = (df['High'].rolling(window=9).max() + df['Low'].rolling(window=9).min()) / 2
+
+        # Calculate Kijun-sen (Base Line)
+        df['kijun_sen'] = (df['High'].rolling(window=26).max() + df['Low'].rolling(window=26).min()) / 2
+
+        # Calculate Senkou Span A (Leading Span A)
+        df['senkou_span_a'] = ((df['tenkan_sen'] + df['kijun_sen']) / 2).shift(26)
+
+        # Calculate Senkou Span B (Leading Span B)
+        df['senkou_span_b'] = ((df['High'].rolling(window=52).max() + df['Low'].rolling(window=52).min()) / 2).shift(26)
+
+        # Calculate Chikou Span (Lagging Span)
+        df['chikou_span'] = df['Close'].shift(-26)
+
+        return df
+
+    
 
     #Calculate all indicators 
     result = calculateMovingAverages(result)
@@ -76,7 +104,8 @@ def CalculateData(data: pd.DataFrame) -> pd.DataFrame:
     result = calculateRSI(result)
     result = calculateMACD(result)
     result = calculateVMA(result)
-    result = calculateOBV(result)
+    result = calculateOBV(result) 
+    result = calculateIchimokuCloud(result)
 
     result = result.dropna()
 
