@@ -24,7 +24,7 @@ class DataPreparator:
 
         return df
     
-    def createTarget(self, df: pd.DataFrame, predictionDays: int = 14) -> pd.DataFrame:
+    def createTarget(self, df: pd.DataFrame, predictionDays: int = 5) -> pd.DataFrame:
         """
         Create a target variable based on future returns.
         Returns pd.DataFrame with added targetReturns column 
@@ -41,18 +41,18 @@ class DataPreparator:
         '''
         Identifies feature columns and excludes columns like 'Close' and target variables 
         '''
-        excludeColumns = ['Open', 'High', 'Low', 'Close', 'Capital Gains', 'targetReturns', 'Ticker'] ##EXLUDE LATER  'dailyReturn', 'vma_10', 'vma_20', 'macdHistogram'
+        excludeColumns = ['High', 'Low', 'Close', 'Capital Gains', 'targetReturns', 'Ticker'] ##EXLUDE LATER 'Open', 'vma_10', 'vma_20', 'macdHistogram'
         return [col for col in df.columns if col not in excludeColumns] 
 
     def prepareForTrain(self, df: pd.DataFrame, 
-                        predictionDays: int = 14, 
+                        predictionDays: int = 5, 
                         testSize: float = 0.2) -> Dict[str, np.ndarray]:
         """
         Prepares data for training. Features like scaling and train-test splitting for scikit learn.
 
         Parameters:
             pd.DataFrame
-            predictionDays (int): number of days ahead to predict (14 days for now)
+            predictionDays (int): number of days ahead to predict 
             testSize (float): Proportion of data reserved for testing
 
         Returns:

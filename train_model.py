@@ -6,14 +6,39 @@ from data_prep import DataPreparator
 from technical_indicators import CalculateData
 from main import fetchStockData
 
-#These are the 12 tickers I am currently training on
-TRAINING_TICKERS = ["SPY", "XLU", "XLE", "XLV", "VOOG", 
-                    "VOOV", "VB", "TSLA", "LAD", "JPM", 
-                    "AAPL", "SCHW", "NVDA", "META", "GE",
-                    "INTC", "BX", "KR", "FDX", "MSFT", 
-                    "CVX", "PSX", "PG", "PFE", "AMGN", 
-                    "BRK-A", "BRK-B", "RCL", "AMZN", "HD", 
-                    "DUK", "NEE", "GS", "CAT", "MCD"]
+#These are the 150 tickers I am currently training on
+TRAINING_TICKERS = [
+    "SPY", "XLU", "XLE", "XLV", "VOOG",
+    "VOOV", "VB", "TSLA", "LAD", "JPM",
+    "AAPL", "SCHW", "NVDA", "META", "GE",
+    "INTC", "BX", "KR", "FDX", "MSFT",
+    "CVX", "PSX", "PG", "PFE", "AMGN",
+    "BRK-A", "BRK-B", "RCL", "AMZN", "HD",
+    "DUK", "NEE", "GS", "CAT", "MCD",
+    "QQQ", "VTI", "IWM", "XLF", "XLK",
+    "V", "MA", "GOOGL", "COST", "WMT",
+    "UNH", "JNJ", "WFC", "CRM", "ADBE",
+    "AMD", "PYPL", "BA", "MMM", "UPS",
+    "VZ", "T", "MRK", "ABBV", "ABT",
+    "NOW", "CL", "IBM", "CSCO", "HON",
+    "MU", "QCOM", "UBER", "MRNA", "SQ",
+    "NFLX", "CMG", "GM", "F", "BAC",
+    "C", "MS", "AMAT", "SBUX", "DELL",
+    "SNOW", "AVGO", "CCI", "DIA", "XBI",
+    "XTL", "XRT", "KO", "PEP", "MDT",
+    "BABA", "LMT", "ORCL", "TMUS", "ROKU",
+    "COIN", "Z", "SHOP", "LYFT", "WDC",
+    "PANW", "ZS", "CRM", "DDOG", "NET",
+    "PLTR", "SYK", "DHR", "LLY", "ISRG",
+    "TXN", "CRWD", "ZM", "PINS", "OKTA",
+    "NOC", "GD", "RTX", "BAESY", "TXT", 
+    "NVMI", "NVST", "QQQM", "ADI", "FTNT", 
+    "OXY", "XOM", "EOG", "HAL", "SLB", 
+    "PM", "CLX", "STZ", "HSY", "MKC", 
+    "USB", "TROW", "PRU", "MET", "CME", 
+    "BDX", "ZBH", "BMRN", "BIIB", "ILMN", 
+    "O", "SPG", "AMT", "PLD", "EQIX"
+    ]
 
 def fetchAndPrepareData(tickers, period="5y") -> pd.DataFrame:
     """Here we fetch and combine historical data for my specified ticker symbols"""
@@ -21,7 +46,6 @@ def fetchAndPrepareData(tickers, period="5y") -> pd.DataFrame:
     for ticker in tickers:
         try:
             # Fetch data for the current ticker
-            print(f"Fetching data for {ticker}...")
             stockData = fetchStockData(ticker, period=period)
             
             # Calculate technical indicators for the fetched data
@@ -44,11 +68,16 @@ def fetchAndPrepareData(tickers, period="5y") -> pd.DataFrame:
     
     return combineData
 
-def trainLinearRegression(XTrain, YTrain) -> LinearRegression:
+def trainLinearRegression(XTrain, YTrain, featureNames) -> LinearRegression:
     """Train a linear regression model on the given training data"""
     print("Training linear regression model...")
     model = LinearRegression()
     model.fit(XTrain, YTrain)
+
+    # Save the trained model and feature names
+    joblib.dump(model, "models/linear_regression_model.pkl")
+    joblib.dump(featureNames, "models/feature_names.pkl")
+
     print("Model training complete.")
     return model
 
@@ -78,18 +107,21 @@ def main():
 
     #Prepare data for training
     dataPreparator = DataPreparator()
-    preparedData = dataPreparator.prepareForTrain(data, predictionDays=14, testSize = 0.2)
+    preparedData = dataPreparator.prepareForTrain(data, predictionDays=5, testSize = 0.2)
 
     XTrain = preparedData['XTrain']
     XTest = preparedData['XTest']
     YTrain = preparedData['YTrain']
     YTest = preparedData['YTest']
 
+    # Get feature names
+    featureNames = preparedData['featureNames']
+
     #Train Linear Regression model
-    model = trainLinearRegression(XTrain, YTrain)
+    model = trainLinearRegression(XTrain, YTrain, featureNames)
 
      # Analyze feature importance
-    analyzeLinearRegressionFeatureImportance(model, preparedData['featureNames'])
+    analyzeLinearRegressionFeatureImportance(model, featureNames)
 
     #Evaluate the model
     evaluateModel(model, XTest, YTest)
