@@ -12,6 +12,9 @@ def CalculateData(data: pd.DataFrame) -> pd.DataFrame:
     -Rolling volatility 
     -Relative Strength Index (RSI)
     -Moving Average Convergence Divergence (MACD)
+    -On-Balance Volume (OBV)
+    -Volume Moving Average (VMA)
+    -Ichimoku Cloud components
 
     Parameters: data(pd.DataFrame): Stock DataFrame with "Close" price column. Raises error otherwise
 

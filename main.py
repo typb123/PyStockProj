@@ -60,7 +60,7 @@ def mainMenu():
 
         try:
             #Take user input and validate it
-            userChoice = int(input("Please enter and option: ").strip())
+            userChoice = int(input("Please enter an option: ").strip())
         except ValueError:
             print(INVALID)
             continue

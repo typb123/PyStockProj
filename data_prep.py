@@ -26,9 +26,15 @@ class DataPreparator:
     
     def createTarget(self, df: pd.DataFrame, predictionDays: int = 5) -> pd.DataFrame:
         """
-        Create a target variable based on future returns.
-        Returns pd.DataFrame with added targetReturns column 
-        """
+        Creates a target variable based on future returns.
+
+        Parameters:
+            df (pd.DataFrame): The input DataFrame containing historical stock data.
+            predictionDays (int): The number of days ahead to calculate the target.
+
+        Returns:
+            pd.DataFrame: DataFrame with an added 'targetReturns' column and intermediate 'target' column removed.
+    """
         df = df.copy()
 
         df['target'] = df['Close'].shift(-predictionDays)
@@ -41,7 +47,7 @@ class DataPreparator:
         '''
         Identifies feature columns and excludes columns like 'Close' and target variables 
         '''
-        excludeColumns = ['High', 'Low', 'Close', 'Capital Gains', 'targetReturns', 'Ticker'] ##EXLUDE LATER 'Open', 'vma_10', 'vma_20', 'macdHistogram'
+        excludeColumns = ['High', 'Low', 'Close', 'Capital Gains', 'targetReturns', 'Ticker']
         return [col for col in df.columns if col not in excludeColumns] 
 
     def prepareForTrain(self, df: pd.DataFrame, 
@@ -86,7 +92,8 @@ class DataPreparator:
             'XTest': XTest,
             'YTrain': YTrain,
             'YTest': YTest,
-            'featureNames': self.featureColumns
+            'featureNames': self.featureColumns,
+            'scalar': self.scalar
         } 
     
 
