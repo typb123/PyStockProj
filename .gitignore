@@ -1,13 +1,72 @@
+# Python artifacts and bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+
 # Virtual environment
 venv/
+.pipenv/
+.poetry/
+*.conda
 
-# Python cache files
-__pycache__/
-*.pyc
-*.pyo
+# Build and distribution files
+build/
+dist/
+*.egg-info/
+*.egg
 
-# Jupyter Notebook checkpoints
-.ipynb_checkpoints/
+# Logs and cache
+*.log
+logs/
+training.log
+*.prof
+*.dat
 
-# Environment variables
+# Data files (avoid leaking actual data)
+data/
+*.csv
+*.json
+*.db
+*.sqlite3
+
+# Model files
+models/
+*.h5
+*.pkl
+*.joblib
+
+
+# Notebooks
+notebooks/.ipynb_checkpoints/
+
+# Dependency management
+Pipfile
+Pipfile.lock
+poetry.lock
+
+# Environment and secrets
 .env
+.env.*
+
+# Testing and coverage
+*.pytest_cache
+coverage/
+*.coverage
+nosetests.xml
+test-results/
+
+# IDE files
+.vscode/
+.idea/
+*.code-workspace
+
+# Temporary files and OS metadata
+*.bak
+*.swp
+*.temp
+*~
+.DS_Store
+Thumbs.db
+
+# Git conflicts and metadata
+*.orig
