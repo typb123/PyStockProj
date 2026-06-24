@@ -1,7 +1,11 @@
 import numpy as np
+import pytest
 
 from src.train.evaluator import (
     build_classification_report,
+    build_probability_summary,
+    build_probability_tail_report,
+    build_probability_threshold_report,
     build_regression_report,
     build_trading_relevance_report,
 )
@@ -51,3 +55,79 @@ def test_build_trading_relevance_report_splits_by_classifier_direction():
     assert report["avg_actual_return_when_predicted_down"] == 0.004999999999999999
     assert report["avg_predicted_return_when_predicted_up"] == 0.045
     assert report["avg_predicted_return_when_predicted_down"] == 0.005000000000000001
+
+
+def test_build_probability_summary_reports_distribution():
+    probabilities = np.array([0.1, 0.2, 0.5, 0.8, 0.9])
+
+    report = build_probability_summary(probabilities)
+
+    assert report["count"] == 5
+    assert report["min"] == 0.1
+    assert report["max"] == 0.9
+    assert report["mean"] == 0.5
+    assert report["median"] == 0.5
+    assert np.isclose(report["std"], np.std(probabilities))
+    assert np.isclose(report["p10"], 0.14)
+    assert report["p25"] == 0.2
+    assert report["p75"] == 0.8
+    assert np.isclose(report["p90"], 0.86)
+
+
+def test_build_probability_summary_rejects_empty_input():
+    with pytest.raises(ValueError, match="probability_up"):
+        build_probability_summary(np.array([]))
+
+
+def test_build_probability_tail_report_summarizes_top_and_bottom_tails():
+    probabilities = np.array([0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0])
+    actual_returns = np.array(
+        [-0.10, -0.05, -0.02, 0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.07]
+    )
+
+    report = build_probability_tail_report(probabilities, actual_returns)
+
+    assert report["top_10_pct"]["count"] == 1
+    assert report["top_10_pct"]["avg_actual_return"] == 0.07
+    assert report["top_10_pct"]["precision"] == 1.0
+    assert report["top_20_pct"]["count"] == 2
+    assert report["top_20_pct"]["avg_actual_return"] == 0.065
+    assert report["top_20_pct"]["precision"] == 1.0
+    assert report["bottom_10_pct"]["count"] == 1
+    assert report["bottom_10_pct"]["avg_actual_return"] == -0.10
+    assert report["bottom_10_pct"]["precision"] == 0.0
+    assert report["bottom_20_pct"]["count"] == 2
+    assert report["bottom_20_pct"]["avg_actual_return"] == -0.07500000000000001
+    assert report["bottom_20_pct"]["precision"] == 0.0
+
+
+def test_probability_tail_and_threshold_reports_reject_mismatched_lengths():
+    probabilities = np.array([0.1, 0.2, 0.3])
+    actual_returns = np.array([0.01, -0.02])
+
+    for report_builder in [
+        build_probability_tail_report,
+        build_probability_threshold_report,
+    ]:
+        with pytest.raises(ValueError, match="same length"):
+            report_builder(probabilities, actual_returns)
+
+
+def test_build_probability_threshold_report_summarizes_selected_rows():
+    probabilities = np.array([0.40, 0.50, 0.56, 0.61, 0.72])
+    actual_returns = np.array([-0.03, 0.01, -0.02, 0.04, 0.05])
+
+    report = build_probability_threshold_report(probabilities, actual_returns)
+
+    assert report[0.50]["selected_count"] == 4
+    assert report[0.50]["selected_fraction"] == 0.8
+    assert report[0.50]["precision"] == 0.75
+    assert report[0.50]["avg_actual_return"] == 0.02
+    assert report[0.60]["selected_count"] == 2
+    assert report[0.60]["selected_fraction"] == 0.4
+    assert report[0.60]["precision"] == 1.0
+    assert report[0.60]["avg_actual_return"] == 0.045
+    assert report[0.70]["selected_count"] == 1
+    assert report[0.70]["selected_fraction"] == 0.2
+    assert report[0.70]["precision"] == 1.0
+    assert report[0.70]["avg_actual_return"] == 0.05

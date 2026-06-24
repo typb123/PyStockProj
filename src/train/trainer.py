@@ -13,6 +13,9 @@ from src.data.technical_indicators import calculate_data
 from src.data.data_fetch import fetch_stock_data
 from src.train.evaluator import (
     build_classification_report,
+    build_probability_summary,
+    build_probability_tail_report,
+    build_probability_threshold_report,
     build_regression_report,
     build_trading_relevance_report,
 )
@@ -137,6 +140,7 @@ def log_xgboost_test_report(
     y_train,
     y_test,
     classifier_predictions,
+    classifier_probability_up,
     regressor_predictions,
 ):
     classification_report_data = build_classification_report(
@@ -148,10 +152,22 @@ def log_xgboost_test_report(
     trading_report_data = build_trading_relevance_report(
         y_test, regressor_predictions, classifier_predictions
     )
+    probability_summary = build_probability_summary(classifier_probability_up)
+    probability_tail_report = build_probability_tail_report(
+        classifier_probability_up, y_test
+    )
+    probability_threshold_report = build_probability_threshold_report(
+        classifier_probability_up, y_test
+    )
 
     logging.info(f"XGBoost Test Classification Report: {classification_report_data}")
     logging.info(f"XGBoost Test Regression Report: {regression_report_data}")
     logging.info(f"XGBoost Trading Relevance Report: {trading_report_data}")
+    logging.info(f"XGBoost Classifier Probability Summary: {probability_summary}")
+    logging.info(f"XGBoost Classifier Probability Tail Report: {probability_tail_report}")
+    logging.info(
+        f"XGBoost Classifier Probability Threshold Report: {probability_threshold_report}"
+    )
 
 
 def build_model_metadata(
@@ -293,6 +309,7 @@ def train_models(data: pd.DataFrame) -> None:
         y_train,
         y_test,
         classifier.predict(x_test_classifier),
+        classifier.predict_proba(x_test_classifier)[:, 1],
         regressor.predict(x_test_regressor),
     )
 
