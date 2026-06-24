@@ -206,7 +206,8 @@ def train_models(data: pd.DataFrame) -> None:
 
     # Define feature sets for each model
     linear_features = [
-        'tenkan_sen', 'kijun_sen', 'senkou_span_a', 'senkou_span_b', 'chikou_span', 
+        'tenkan_sen', 'kijun_sen', 'senkou_span_a', 'senkou_span_b',
+        'chikou_lag_close_26', 'chikou_return_26', 'chikou_above_lag_26',
         'Open', 'Close', 'rsi', 'signalLine', 'ATR', 
         '20_day_avg', 'macd', 'BB_Std', 'obv', 'dailyReturn', 
         'macdHistogram',  'vma_20',  'High', 'Low', 'BB_Middle', 
@@ -221,7 +222,8 @@ def train_models(data: pd.DataFrame) -> None:
         'dailyReturn', 'volatility', 'rsi',
         'macd', 'signalLine', 'macdHistogram',
         'obv', 'vma_10', 'vma_20',
-        'tenkan_sen', 'kijun_sen', 'senkou_span_a', 'senkou_span_b', 'chikou_span',
+        'tenkan_sen', 'kijun_sen', 'senkou_span_a', 'senkou_span_b',
+        'chikou_lag_close_26', 'chikou_return_26', 'chikou_above_lag_26',
         'BB_Middle', 'BB_Upper', 'BB_Lower', 'BB_Std',
         'ATR', 'stoch_k', 'stoch_d'
     ]
@@ -231,7 +233,8 @@ def train_models(data: pd.DataFrame) -> None:
         'dailyReturn', 'volatility', 'rsi',
         'macd', 'signalLine', 'macdHistogram',
         'obv', 'vma_10', 'vma_20',
-        'tenkan_sen', 'kijun_sen', 'senkou_span_a', 'senkou_span_b', 'chikou_span',
+        'tenkan_sen', 'kijun_sen', 'senkou_span_a', 'senkou_span_b',
+        'chikou_lag_close_26', 'chikou_return_26', 'chikou_above_lag_26',
         'BB_Middle', 'BB_Upper', 'BB_Lower', 'BB_Std',
         'ATR', 'stoch_k', 'stoch_d'
     ] 

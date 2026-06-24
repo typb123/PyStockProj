@@ -84,7 +84,8 @@ REQUIRED_COLUMNS = [
     'dailyReturn', 'volatility', 'rsi',
     'macd', 'signalLine', 'macdHistogram',
     'obv', 'vma_10', 'vma_20',
-    'tenkan_sen', 'kijun_sen', 'senkou_span_a', 'senkou_span_b', 'chikou_span',
+    'tenkan_sen', 'kijun_sen', 'senkou_span_a', 'senkou_span_b',
+    'chikou_lag_close_26', 'chikou_return_26', 'chikou_above_lag_26',
     'BB_Middle', 'BB_Upper', 'BB_Lower', 'BB_Std',  # Bollinger Bands
     'ATR',  # Average True Range
     'stoch_k', 'stoch_d'  # Stochastic Oscillator

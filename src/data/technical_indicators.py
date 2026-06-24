@@ -124,7 +124,9 @@ def calculate_data(data: pd.DataFrame) -> pd.DataFrame:
         df['senkou_span_a'] = ((df['tenkan_sen'] + df['kijun_sen']) / 2).shift(26)
         df['senkou_span_b'] = ((df['High'].rolling(window=52, min_periods=5).max() +
                                df['Low'].rolling(window=52, min_periods=5).min()) / 2).shift(26)
-        df['chikou_span'] = df['Close'].shift(-26)
+        df['chikou_lag_close_26'] = df['Close'].shift(26)
+        df['chikou_return_26'] = (df['Close'] - df['Close'].shift(26)) / df['Close'].shift(26)
+        df['chikou_above_lag_26'] = (df['Close'] > df['Close'].shift(26)).astype(int)
         return df
 
     # --- Compute All Indicators ---
