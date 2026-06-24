@@ -36,3 +36,20 @@ def test_data_preparator_fits_scaler_on_training_rows_only():
     expected_train_mean = df.iloc[:14][REQUIRED_COLUMNS[0]].mean()
 
     assert scaler.mean_[first_feature_index] == expected_train_mean
+
+
+def test_create_target_shifts_within_each_ticker():
+    df = pd.DataFrame(
+        {
+            "Ticker": ["AAA", "AAA", "AAA", "BBB", "BBB", "BBB"],
+            "Close": [10.0, 20.0, 30.0, 1000.0, 2000.0, 3000.0],
+        }
+    )
+
+    preparator = DataPreparator()
+    result = preparator.create_target(df, prediction_days=1)
+
+    assert result["Ticker"].tolist() == ["AAA", "AAA", "BBB", "BBB"]
+    assert result["Close"].tolist() == [10.0, 20.0, 1000.0, 2000.0]
+    np.testing.assert_allclose(result["targetReturns"], [1.0, 0.5, 1.0, 0.5])
+    assert "target" not in result.columns

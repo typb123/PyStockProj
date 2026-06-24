@@ -46,7 +46,10 @@ class DataPreparator:
     """
         df = df.copy()
 
-        df['target'] = df['Close'].shift(-prediction_days)
+        if "Ticker" in df.columns:
+            df['target'] = df.groupby("Ticker")['Close'].shift(-prediction_days)
+        else:
+            df['target'] = df['Close'].shift(-prediction_days)
         df['targetReturns'] = (df['target'] - df['Close']) / df['Close']
         df.dropna(subset=['targetReturns'], inplace=True)  # Drop rows with NaN values caused by shifting
         df = df.drop(columns=['target']) #Drop the intermediate column
