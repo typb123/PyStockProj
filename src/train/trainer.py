@@ -221,7 +221,7 @@ def train_models(data: pd.DataFrame) -> None:
         'obv', 'vma_10', 'vma_20',
         'tenkan_sen', 'kijun_sen', 'senkou_span_a', 'senkou_span_b', 'chikou_span',
         'BB_Middle', 'BB_Upper', 'BB_Lower', 'BB_Std',
-        'ATR', 'stoch_k', 'stoch_d', 'EPS'
+        'ATR', 'stoch_k', 'stoch_d'
     ]
     regressor_features  = [
         'Open', 'High', 'Low', 'Close', 'Volume',
@@ -231,7 +231,7 @@ def train_models(data: pd.DataFrame) -> None:
         'obv', 'vma_10', 'vma_20',
         'tenkan_sen', 'kijun_sen', 'senkou_span_a', 'senkou_span_b', 'chikou_span',
         'BB_Middle', 'BB_Upper', 'BB_Lower', 'BB_Std',
-        'ATR', 'stoch_k', 'stoch_d', 'EPS'
+        'ATR', 'stoch_k', 'stoch_d'
     ] 
 
     # Standardize features for Linear Regression
