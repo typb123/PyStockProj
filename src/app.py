@@ -1,4 +1,6 @@
-from src.helpers import fetchStockData, getFuturePredictionDate, predictPrice
+from src.data.data_fetch import fetch_stock_data
+from src.inference.predictor import predict_price
+from src.utils.helpers import get_prediction_date
 import yfinance as yf
 
 #Constants 
@@ -6,11 +8,11 @@ WELCOME_MESSAGE = "\n\nWelcome to my stock prediction program.\n"
 INVALID = "\nInvalid option! Please try again.\n"
 GOODBYE = "Exiting the program. Thank you and goodbye!"
 
-def getStockInfo(ticker):
+def get_stock_info(ticker):
     """Fetch and display my stock information"""
     try:
-        one_month_stock_data = fetchStockData(ticker, period="1mo")
-        one_year_stock_data = fetchStockData(ticker, period="1y")
+        one_month_stock_data = fetch_stock_data(ticker, period="1mo")
+        one_year_stock_data = fetch_stock_data(ticker, period="1y")
 
         # Calculate 1-month high and low
         one_month_high = one_month_stock_data['High'].max()
@@ -25,10 +27,10 @@ def getStockInfo(ticker):
         current_price = ticker_info.get('currentPrice', None)
 
         # Get future prediction date (5 trading days ahead)
-        prediction_date = getFuturePredictionDate(one_year_stock_data, tradingDaysAhead=5)
+        prediction_date = get_prediction_date(one_year_stock_data, trading_days_ahead=5)
 
         # Fetch prediction
-        prediction = predictPrice(ticker)
+        prediction = predict_price(ticker)
 
         # ---- Output Results ----
         print(f"\nStock Information for {ticker}:")
@@ -52,7 +54,7 @@ def getStockInfo(ticker):
         
         
 
-def mainMenu():
+def main_menu():
     """Main Menu for my console application"""
     print(WELCOME_MESSAGE)
 
@@ -62,19 +64,19 @@ def mainMenu():
 
         try:
             #Take user input and validate it
-            userChoice = int(input("Please enter an option: ").strip())
+            user_choice = int(input("Please enter an option: ").strip())
         except ValueError:
             print(INVALID)
             continue
 
-        if userChoice == 1:
+        if user_choice == 1:
             ticker = input("Enter a ticker symbol (e.g AAPL): ").strip().upper()
             if ticker:
-                getStockInfo(ticker)
+                get_stock_info(ticker)
             else:
                 print(INVALID)
                 continue
-        elif userChoice == 2:
+        elif user_choice == 2:
             print(GOODBYE)
             break
         else:
@@ -83,7 +85,7 @@ def mainMenu():
 
 
 if __name__ == "__main__":
-    mainMenu()
+    main_menu()
 
 
 
@@ -96,5 +98,4 @@ if __name__ == "__main__":
 
 
     
-
 

@@ -13,7 +13,7 @@ class DataPreparator:
     """
     def __init__(self):
         self.scalar = StandardScaler()
-        self.featureColumns: List[str] = [] #Store the names of the features
+        self.feature_columns: List[str] = [] #Store the names of the features
 
     def prepare_features(self, df: pd.DataFrame) -> pd.DataFrame:
         """
@@ -28,25 +28,25 @@ class DataPreparator:
         df = df.copy() #Create copy to leave original data intact
 
         #Drop unnecessary columns
-        columnsToDrop = ['Dividends', 'Stock Splits']
-        df = df.drop(columns=[col for col in columnsToDrop if col in df.columns], errors='ignore')
+        columns_to_drop = ['Dividends', 'Stock Splits']
+        df = df.drop(columns=[col for col in columns_to_drop if col in df.columns], errors='ignore')
 
         return df
 
-    def create_target(self, df: pd.DataFrame, predictionDays: int = 5) -> pd.DataFrame:
+    def create_target(self, df: pd.DataFrame, prediction_days: int = 5) -> pd.DataFrame:
         """
         Creates a target variable based on future returns.
 
         Parameters:
             df (pd.DataFrame): The input DataFrame containing historical stock data.
-            predictionDays (int): The number of days ahead to calculate the target.
+            prediction_days (int): The number of days ahead to calculate the target.
 
         Returns:
             pd.DataFrame: DataFrame with an added 'targetReturns' column and intermediate 'target' column removed.
     """
         df = df.copy()
 
-        df['target'] = df['Close'].shift(-predictionDays)
+        df['target'] = df['Close'].shift(-prediction_days)
         df['targetReturns'] = (df['target'] - df['Close']) / df['Close']
         df.dropna(subset=['targetReturns'], inplace=True)  # Drop rows with NaN values caused by shifting
         df = df.drop(columns=['target']) #Drop the intermediate column
@@ -55,7 +55,7 @@ class DataPreparator:
     def prepare_for_train(
         self,
         df: pd.DataFrame,
-        predictionDays: int = 5,
+        prediction_days: int = 5,
         val_size: float = 0.15,
         test_size:  float = 0.15,
         dropna: bool = True
@@ -82,32 +82,32 @@ class DataPreparator:
         df = self.prepare_features(df)
 
         #Create target variables
-        df = self.create_target(df, predictionDays)
+        df = self.create_target(df, prediction_days)
 
         #Identify feature columns
         missing_columns = [col for col in REQUIRED_COLUMNS if col not in df.columns]
         if missing_columns:
             raise ValueError(f"Missing required feature columns: {missing_columns}")
-        self.featureColumns = list(REQUIRED_COLUMNS)
+        self.feature_columns = list(REQUIRED_COLUMNS)
 
         #Drop and rows with Nan Vals
         df = df.dropna()
 
         #Separate features (X) and targe (Y)
-        X = df[self.featureColumns].values
-        Y = df['targetReturns'].values
+        x = df[self.feature_columns].values
+        y = df['targetReturns'].values
 
         # Scale the features
-        X = self.scalar.fit_transform(X)
+        x = self.scalar.fit_transform(x)
 
         #Split the data into training and test sets
-        XTrain, XTest, YTrain, YTest = train_test_split(X, Y, test_size=test_size, shuffle=False)
+        x_train, x_test, y_train, y_test = train_test_split(x, y, test_size=test_size, shuffle=False)
 
         return {
-            'XTrain': XTrain,
-            'XTest': XTest,
-            'YTrain': YTrain,
-            'YTest': YTest,
-            'featureNames': self.featureColumns,
+            'x_train': x_train,
+            'x_test': x_test,
+            'y_train': y_train,
+            'y_test': y_test,
+            'feature_names': self.feature_columns,
             'scalar': self.scalar
         }

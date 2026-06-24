@@ -3,7 +3,7 @@ import numpy as np
 from typing import List, Optional
 
 
-def CalculateData(data: pd.DataFrame) -> pd.DataFrame:
+def calculate_data(data: pd.DataFrame) -> pd.DataFrame:
     """
     Calculate and add technical indicators to stock data for model input.
 
