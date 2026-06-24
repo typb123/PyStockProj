@@ -1,7 +1,6 @@
 import joblib
 import pandas as pd
 import numpy as np
-import cupy as cp
 import copy
 import logging
 import time
@@ -158,7 +157,7 @@ def cross_validate_model(X, Y, model=None, cv=5):
         model = LinearRegression()
     
     # Define custom scoring for negative MSE
-    scores = cross_val_score(model, cp.asnumpy(X), cp.asnumpy(Y), scoring='neg_mean_squared_error', cv=cv)
+    scores = cross_val_score(model, X, Y, scoring='neg_mean_squared_error', cv=cv)
     if scores is None:
         raise ValueError("Cross-validation scoring failed. Please check your model and data.")
     avg_mse = -np.mean(scores)
@@ -167,13 +166,7 @@ def cross_validate_model(X, Y, model=None, cv=5):
     
 
 def evaluate_model(model, XTest, YTest, model_type="regression"):
-    # Only call .get() if YTest is a CuPy array
-    if isinstance(YTest, cp.ndarray):
-        YTest = YTest.get()
-        
     YPred = model.predict(XTest)
-    if isinstance(YPred, cp.ndarray):
-        YPred = YPred.get()
 
     if model_type == "regression":
         mse = mean_squared_error(YTest, YPred)
@@ -216,7 +209,7 @@ def train_models(data: pd.DataFrame) -> None:
         '20_day_avg', 'macd', 'BB_Std', 'obv', 'dailyReturn', 
         'macdHistogram',  'vma_20',  'High', 'Low', 'BB_Middle', 
         'BB_Upper', 'BB_Lower','stoch_k', 'stoch_d', 'Volume', 
-        '10_day_avg', 'volatility', 'vma_10', HERE:   '5_day_avg',
+        '10_day_avg', 'volatility', 'vma_10', '5_day_avg',
     ] 
     # REMOVED FROM LINEAR REGRESSION:   
     #  
@@ -275,12 +268,6 @@ def train_models(data: pd.DataFrame) -> None:
     XTrain_regressor  = np.column_stack((XTrain_full[regressor_features], train_lr_preds))
     XTest_regressor   = np.column_stack((XTest_full[regressor_features], test_lr_preds))
 
-    # Convert to CuPy arrays for GPU acceleration
-    XTrain_classifier_cp = cp.array(XTrain_classifier)
-    XTest_classifier_cp  = cp.array(XTest_classifier)
-    XTrain_regressor_cp  = cp.array(XTrain_regressor)
-    XTest_regressor_cp   = cp.array(XTest_regressor)
-
     # Binary labels for classifier
     direction_YTrain = (YTrain > 0).astype(int)
     direction_YTest  = (YTest > 0).astype(int)
@@ -289,10 +276,10 @@ def train_models(data: pd.DataFrame) -> None:
     logging.info("Training XGBoost Classifier...")
     classifier = XGBClassifier(**XG_PARAMS_CLASSIFIER)
     classifier.fit(
-        XTrain_classifier_cp, direction_YTrain,
-        eval_set=[(XTest_classifier_cp, direction_YTest)],
+        XTrain_classifier, direction_YTrain,
+        eval_set=[(XTest_classifier, direction_YTest)],
     )
-    evaluate_model(classifier, XTest_classifier_cp, direction_YTest, model_type="classification")
+    evaluate_model(classifier, XTest_classifier, direction_YTest, model_type="classification")
 
     # Log feature importances for XGBoost Classifier
     importances_clf = classifier.feature_importances_
@@ -308,10 +295,10 @@ def train_models(data: pd.DataFrame) -> None:
     logging.info("Training XGBoost Regressor...")
     regressor = XGBRegressor(**XG_PARAMS_REGRESSOR)
     regressor.fit(
-        XTrain_regressor_cp, YTrain,
-        eval_set=[(XTest_regressor_cp, YTest)],
+        XTrain_regressor, YTrain,
+        eval_set=[(XTest_regressor, YTest)],
     )
-    evaluate_model(regressor, XTest_regressor_cp, YTest, model_type="regression")
+    evaluate_model(regressor, XTest_regressor, YTest, model_type="regression")
 
     # Log feature importances for XGBoost Regressor
     importances_reg = regressor.feature_importances_
