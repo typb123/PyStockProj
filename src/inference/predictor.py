@@ -64,15 +64,17 @@ def predict_price(ticker: str) -> dict:
             raise ValueError(f"No data available for ticker {ticker}")
 
         # Extract latest features
-        latest_features = processed_data.iloc[-1][feature_columns].values.reshape(1, -1)
+        latest_feature_row = processed_data.iloc[-1][feature_columns]
+        numeric_latest_feature_row = pd.to_numeric(latest_feature_row, errors="coerce")
+        invalid_features = numeric_latest_feature_row.index[
+            latest_feature_row.isna()
+            | numeric_latest_feature_row.isna()
+            | ~np.isfinite(numeric_latest_feature_row)
+        ].tolist()
+        if invalid_features:
+            raise ValueError(f"Invalid latest feature values for {ticker}: {invalid_features}")
 
-        # Handle NaNs
-        if np.isnan(latest_features).any():
-            nan_count = np.isnan(latest_features).sum()
-            if nan_count > 0:
-                logging.warning(f"NaN values detected in latest features for {ticker}: {nan_count} NaNs found.")
-            latest_features = np.nan_to_num(latest_features)
-
+        latest_features = numeric_latest_feature_row.to_numpy(dtype=float).reshape(1, -1)
         latest_features = data_preparator.scalar.transform(latest_features)
         latest_features_df = pd.DataFrame(latest_features, columns=feature_columns)
 
@@ -97,13 +99,16 @@ def predict_price(ticker: str) -> dict:
 
         result = {
             'direction': direction,
-            'linear_predicted_return': lr_prediction,
-            'predicted_return': predicted_return,
-            'expected_price': expected_price
+            'linear_predicted_return': float(lr_prediction),
+            'predicted_return': float(predicted_return),
+            'expected_price': float(expected_price)
         }
 
         logging.info(f"Prediction for {ticker}: {result}")
         return result
+    except ValueError:
+        logging.error(f"Error predicting price for {ticker}: invalid input data")
+        raise
     except Exception as e:
         logging.error(f"Error predicting price for {ticker}: {e}")
         return {"error": str(e)}
