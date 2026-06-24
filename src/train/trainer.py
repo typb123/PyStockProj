@@ -387,8 +387,8 @@ def train_models(data: pd.DataFrame) -> None:
     joblib.dump(data_preparator, MODEL_PATHS["preparator"])
     joblib.dump(all_features, MODEL_PATHS["features"])
     joblib.dump(model_metadata, MODEL_PATHS["model_metadata"])
-    classifier.save_model(MODEL_PATHS["classifier"].replace(".pkl", ".json"))
-    regressor.save_model(MODEL_PATHS["regressor"].replace(".pkl", ".json"))
+    classifier.save_model(MODEL_PATHS["classifier"])
+    regressor.save_model(MODEL_PATHS["regressor"])
     logging.info("Training completed. Models saved successfully.")
 
 def main():

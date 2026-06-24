@@ -45,8 +45,8 @@ XG_PARAMS_REGRESSOR = {
 MODEL_PATHS = {
     'linear': 'models/linear_regression_model.pkl',
     'linear_scaler': 'models/linear_regression_scaler.pkl',
-    'classifier': 'models/xgboost_classifier.pkl',
-    'regressor': 'models/xgboost_regressor.pkl',
+    'classifier': 'models/xgboost_classifier.json',
+    'regressor': 'models/xgboost_regressor.json',
     'preparator': 'models/data_preparator.pkl',
     'features': 'models/feature_names.pkl',
     'model_metadata': 'models/model_metadata.pkl'

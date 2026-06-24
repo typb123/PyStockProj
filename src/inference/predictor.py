@@ -54,8 +54,8 @@ def predict_price(ticker: str) -> dict:
         xgb_classifier = XGBClassifier(**classifier_params)
         xgb_regressor = XGBRegressor(**regressor_params)
 
-        xgb_classifier.load_model(MODEL_PATHS['classifier'].replace('.pkl', '.json'))
-        xgb_regressor.load_model(MODEL_PATHS['regressor'].replace('.pkl', '.json'))
+        xgb_classifier.load_model(MODEL_PATHS['classifier'])
+        xgb_regressor.load_model(MODEL_PATHS['regressor'])
 
         # data_preparator.scalar is the saved training-time scaler artifact name.
         data_preparator = joblib.load(MODEL_PATHS['preparator'])
