@@ -2,7 +2,6 @@ import pandas as pd
 import numpy as np
 from typing import List, Dict
 from sklearn.preprocessing import StandardScaler
-from sklearn.model_selection import train_test_split
 from src.config import REQUIRED_COLUMNS
 
 
@@ -62,6 +61,34 @@ class DataPreparator:
         df = df.drop(columns=["target"])  # Drop the intermediate column
         return df
 
+    def _split_group(
+        self,
+        group: pd.DataFrame,
+        prediction_days: int,
+        val_size: float,
+        test_size: float,
+    ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+        group = group.sort_index()
+        num_rows = len(group)
+        test_count = int(np.ceil(num_rows * test_size))
+        val_count = int(np.ceil(num_rows * val_size))
+        gap_count = prediction_days
+
+        train_end = num_rows - test_count - gap_count - val_count - gap_count
+        if train_end <= 0 or val_count <= 0 or test_count <= 0:
+            raise ValueError(
+                "Not enough rows to create train, validation, and test splits with the requested gap."
+            )
+
+        val_start = train_end + gap_count
+        val_end = val_start + val_count
+        test_start = val_end + gap_count
+
+        train = group.iloc[:train_end]
+        val = group.iloc[val_start:val_end]
+        test = group.iloc[test_start:]
+        return train, val, test
+
     def prepare_for_train(
         self,
         df: pd.DataFrame,
@@ -109,19 +136,30 @@ class DataPreparator:
 
         # Drop and rows with Nan Vals
         df = df.dropna(subset=self.feature_columns + ["targetReturns"])
+        df = df.copy()
+        df["_source_index"] = df.index
+
+        if "Ticker" in df.columns:
+            grouped_data = [group for _, group in df.groupby("Ticker", sort=False)]
+        else:
+            grouped_data = [df]
+
+        split_parts = [
+            self._split_group(group, prediction_days, val_size, test_size)
+            for group in grouped_data
+        ]
+
+        train_df = pd.concat([parts[0] for parts in split_parts], ignore_index=True)
+        val_df = pd.concat([parts[1] for parts in split_parts], ignore_index=True)
+        test_df = pd.concat([parts[2] for parts in split_parts], ignore_index=True)
 
         # Separate features (X) and targe (Y)
-        x = df[self.feature_columns].values
-        y = df["targetReturns"].values
-
-        # Split the data into training, validation, and test sets
-        x_train_val, x_test, y_train_val, y_test = train_test_split(
-            x, y, test_size=test_size, shuffle=False
-        )
-        relative_val_size = val_size / (1 - test_size)
-        x_train, x_val, y_train, y_val = train_test_split(
-            x_train_val, y_train_val, test_size=relative_val_size, shuffle=False
-        )
+        x_train = train_df[self.feature_columns].values
+        x_val = val_df[self.feature_columns].values
+        x_test = test_df[self.feature_columns].values
+        y_train = train_df["targetReturns"].values
+        y_val = val_df["targetReturns"].values
+        y_test = test_df["targetReturns"].values
 
         # Scale the features
         x_train = self.scalar.fit_transform(x_train)
@@ -135,6 +173,23 @@ class DataPreparator:
             "y_train": y_train,
             "y_val": y_val,
             "y_test": y_test,
+            "direction_y_train": (y_train > 0).astype(int),
+            "direction_y_val": (y_val > 0).astype(int),
+            "direction_y_test": (y_test > 0).astype(int),
+            "target_y_train": y_train,
+            "target_y_val": y_val,
+            "target_y_test": y_test,
             "feature_names": self.feature_columns,
             "scalar": self.scalar,
+            "split_metadata": {
+                "train": train_df[["_source_index", "Ticker"]]
+                if "Ticker" in train_df.columns
+                else train_df[["_source_index"]],
+                "val": val_df[["_source_index", "Ticker"]]
+                if "Ticker" in val_df.columns
+                else val_df[["_source_index"]],
+                "test": test_df[["_source_index", "Ticker"]]
+                if "Ticker" in test_df.columns
+                else test_df[["_source_index"]],
+            },
         }
