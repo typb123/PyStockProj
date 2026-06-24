@@ -1,3 +1,9 @@
+"""Prediction-time inference using the artifacts saved by trainer.py.
+
+Feature order, preprocessing, and model feature subsets are loaded from training
+artifacts so live predictions match the trained inputs.
+"""
+
 import joblib
 import logging
 import copy
@@ -12,14 +18,21 @@ from src.config import (
 )
 from src.data.technical_indicators import calculate_data
 from src.data.data_fetch import fetch_stock_data
+
+
 logging.basicConfig(
     filename=LOG_FILE,
     level=logging.INFO,
     format='%(asctime)s: - %(levelname)s -%(message)s'
 )
+
+
 def predict_price(ticker: str) -> dict:
     """
-    Predict price movement using trained models
+    Predict direction and future return for one ticker using saved artifacts.
+
+    Linear Regression is reported separately as linear_predicted_return. XGBoost
+    classifier predicts direction, while XGBoost regressor predicts return magnitude.
 
     Parameters:
         ticker (str)
@@ -30,28 +43,25 @@ def predict_price(ticker: str) -> dict:
     try:
         logging.info(f"Loading model for {ticker}...")
 
-        # Load linear model
+        # Load the baseline model, its scaler, and feature metadata from training.
         linear_model = joblib.load(MODEL_PATHS['linear'])
         scaler_lr = joblib.load(MODEL_PATHS['linear_scaler'])
         model_metadata = joblib.load(MODEL_PATHS['model_metadata'])
 
-        # Load XGBoost models - create with same parameters used during training
         classifier_params = copy.deepcopy(XG_PARAMS_CLASSIFIER)
         regressor_params = copy.deepcopy(XG_PARAMS_REGRESSOR)
 
-        # Create fresh instances with the same parameters
         xgb_classifier = XGBClassifier(**classifier_params)
         xgb_regressor = XGBRegressor(**regressor_params)
 
-        # Load model data
         xgb_classifier.load_model(MODEL_PATHS['classifier'].replace('.pkl', '.json'))
         xgb_regressor.load_model(MODEL_PATHS['regressor'].replace('.pkl', '.json'))
 
-        # Load preparator
+        # data_preparator.scalar is the saved training-time scaler artifact name.
         data_preparator = joblib.load(MODEL_PATHS['preparator'])
         feature_columns = data_preparator.feature_columns
 
-        # Fetch recent stock data
+        # calculate_data is called on one ticker's history, matching its assumptions.
         data = fetch_stock_data(ticker, period="5y")
         processed_data = calculate_data(data)
 
@@ -59,11 +69,10 @@ def predict_price(ticker: str) -> dict:
         if missing_cols:
             raise ValueError(f"Missing required columns: {missing_cols}")
 
-        # Check if processed_data is empty
         if processed_data.empty:
             raise ValueError(f"No data available for ticker {ticker}")
 
-        # Extract latest features
+        # Reject invalid latest values rather than silently replacing them.
         latest_feature_row = processed_data.iloc[-1][feature_columns]
         numeric_latest_feature_row = pd.to_numeric(latest_feature_row, errors="coerce")
         invalid_features = numeric_latest_feature_row.index[
@@ -78,7 +87,7 @@ def predict_price(ticker: str) -> dict:
         latest_features = data_preparator.scalar.transform(latest_features)
         latest_features_df = pd.DataFrame(latest_features, columns=feature_columns)
 
-        # Add Linear Regression Prediction as a feature
+        # Feature subsets and order must match the saved training metadata.
         linear_features = model_metadata["linear_features"]
         lr_features = scaler_lr.transform(latest_features_df[linear_features])
         lr_prediction = linear_model.predict(lr_features)[0]
@@ -88,15 +97,14 @@ def predict_price(ticker: str) -> dict:
         classifier_input = latest_features_df[classifier_features]
         regressor_input = latest_features_df[regressor_features]
 
-        # Make predictions
         predicted_direction = xgb_classifier.predict(classifier_input)[0]
         predicted_return = xgb_regressor.predict(regressor_input)[0]
 
-        # Interpret results
         direction = "Up" if predicted_direction == 1 else "Down"
         last_close_price = processed_data['Close'].iloc[-1]
         expected_price = last_close_price * (1 + predicted_return)
 
+        # Return separate model outputs plus the price implied by the XGBoost return.
         result = {
             'direction': direction,
             'linear_predicted_return': float(lr_prediction),
