@@ -38,66 +38,21 @@ logging.basicConfig(
 )
 def validate_input_data(data):
     """
-    Validate the input data to ensure there are no NaN values.
+    Validate the input data structure before model preparation.
     """
-    # Check initial NaN values
-    nan_count_before = data.isnull().sum().sum()
-    logging.info(f"NaN values before filling: {nan_count_before}")
-    
-    if nan_count_before > 0:
-        # Log NaN distribution by column
+    if data.empty:
+        raise ValueError("Input data is empty.")
+
+    nan_count = data.isnull().sum().sum()
+    logging.info(f"NaN values before preparation: {nan_count}")
+
+    if nan_count > 0:
         nan_by_column = data.isnull().sum()
         nan_columns = [col for col in data.columns if nan_by_column[col] > 0]
         for col in nan_columns:
             logging.info(f"Column {col}: {nan_by_column[col]} NaN values ({nan_by_column[col]/len(data)*100:.2f}%)")
-        
-        # Standard filling - avoid chained assignment
-        data = data.ffill().bfill()
-        
-        # Debug - check NaNs after standard filling
-        remaining_nan_count = data.isnull().sum().sum()
-        logging.info(f"NaN values after ffill/bfill: {remaining_nan_count}")
-        
-        # If still have NaNs, handle each column properly
-        if remaining_nan_count > 0:
-            for col in data.columns:
-                if data[col].isnull().any():
-                    if col == 'ATR':
-                        # Special handling for ATR column
-                        logging.info(f"Handling ATR column (has {data['ATR'].isnull().sum()} NaNs)")
-                        atr_mean = data.loc[data['ATR'].notnull(), 'ATR'].mean()
-                        data.loc[data['ATR'].isnull(), 'ATR'] = atr_mean
-                    elif data[col].dtype.kind in 'ifc':
-                        # For numeric columns, use mean
-                        col_mean = data[col].mean()
-                        if pd.isna(col_mean):  # If mean itself is NaN
-                            data.loc[data[col].isnull(), col] = 0
-                        else:
-                            data.loc[data[col].isnull(), col] = col_mean
-                    else:
-                        # For non-numeric columns
-                        data.loc[data[col].isnull(), col] = 0
-            
-            # Final check for any remaining NaNs
-            final_nan_count = data.isnull().sum().sum()
-            if final_nan_count > 0:
-                # One last attempt - replace any remaining NaNs with 0
-                logging.warning(f"Still have {final_nan_count} NaNs after targeted filling, using zeros")
-                data = data.fillna(0)
-                
-                # If we still have NaNs, we need to know which columns
-                if data.isnull().sum().sum() > 0:
-                    problem_cols = [col for col in data.columns if data[col].isnull().any()]
-                    logging.error(f"Columns still containing NaNs: {problem_cols}")
-                    # Drop problematic columns as last resort
-                    data = data.drop(columns=problem_cols)
-                    logging.warning(f"Dropped problematic columns: {problem_cols}")
-    
-    # Final validation
-    if data.isnull().values.any():
-        raise ValueError("Data still contains NaN values after all filling attempts.")
-    
-    logging.info("Data validation complete - no NaN values remain.")
+
+    logging.info("Data validation complete.")
     return data
             
 def fetch_tickers_data(ticker, period="5y"):
