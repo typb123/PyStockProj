@@ -198,8 +198,10 @@ def train_models(data: pd.DataFrame) -> None:
     # Extract train/test datasets with feature names
     all_features = prepared_data["feature_names"]
     x_train_full = pd.DataFrame(prepared_data["x_train"], columns=all_features)
+    x_val_full = pd.DataFrame(prepared_data["x_val"], columns=all_features)
     x_test_full = pd.DataFrame(prepared_data["x_test"], columns=all_features)
     y_train = prepared_data["y_train"]
+    y_val = prepared_data["y_val"]
     y_test = prepared_data["y_test"]
 
     # Define feature sets for each model
@@ -237,6 +239,7 @@ def train_models(data: pd.DataFrame) -> None:
     # Standardize features for Linear Regression
     scaler_lr = StandardScaler()
     x_train_lr_scaled = scaler_lr.fit_transform(x_train_full[linear_features])
+    x_val_lr_scaled = scaler_lr.transform(x_val_full[linear_features])
     x_test_lr_scaled = scaler_lr.transform(x_test_full[linear_features])
 
     # Train Linear Regression on scaled features
@@ -257,6 +260,7 @@ def train_models(data: pd.DataFrame) -> None:
 
     # Generate Linear Regression predictions as additional feature
     train_lr_preds = linear_model.predict(x_train_lr_scaled).reshape(-1, 1)
+    val_lr_preds = linear_model.predict(x_val_lr_scaled).reshape(-1, 1)
     test_lr_preds = linear_model.predict(x_test_lr_scaled).reshape(-1, 1)
 
     # Add LR predictions to Classifier and Regressor feature sets
@@ -264,12 +268,15 @@ def train_models(data: pd.DataFrame) -> None:
     regressor_feature_names  = regressor_features + ["LinearRegression_Prediction"]
 
     x_train_classifier = np.column_stack((x_train_full[classifier_features], train_lr_preds))
+    x_val_classifier = np.column_stack((x_val_full[classifier_features], val_lr_preds))
     x_test_classifier = np.column_stack((x_test_full[classifier_features], test_lr_preds))
     x_train_regressor = np.column_stack((x_train_full[regressor_features], train_lr_preds))
+    x_val_regressor = np.column_stack((x_val_full[regressor_features], val_lr_preds))
     x_test_regressor = np.column_stack((x_test_full[regressor_features], test_lr_preds))
 
     # Binary labels for classifier
     direction_y_train = (y_train > 0).astype(int)
+    direction_y_val = (y_val > 0).astype(int)
     direction_y_test = (y_test > 0).astype(int)
 
     # Train XGBoost Classifier
@@ -277,7 +284,7 @@ def train_models(data: pd.DataFrame) -> None:
     classifier = XGBClassifier(**XG_PARAMS_CLASSIFIER)
     classifier.fit(
         x_train_classifier, direction_y_train,
-        eval_set=[(x_test_classifier, direction_y_test)],
+        eval_set=[(x_val_classifier, direction_y_val)],
     )
     evaluate_model(classifier, x_test_classifier, direction_y_test, model_type="classification")
 
@@ -296,7 +303,7 @@ def train_models(data: pd.DataFrame) -> None:
     regressor = XGBRegressor(**XG_PARAMS_REGRESSOR)
     regressor.fit(
         x_train_regressor, y_train,
-        eval_set=[(x_test_regressor, y_test)],
+        eval_set=[(x_val_regressor, y_val)],
     )
     evaluate_model(regressor, x_test_regressor, y_test, model_type="regression")
 
