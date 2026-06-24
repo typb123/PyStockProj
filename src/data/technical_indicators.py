@@ -1,3 +1,10 @@
+"""Technical indicator feature generation for one ticker's chronological history.
+
+This module does not group by ticker internally. Call calculate_data() on one
+ticker at a time so rolling windows, shifts, and cumulative indicators do not
+bleed across ticker boundaries.
+"""
+
 import pandas as pd
 import numpy as np
 from typing import List, Optional
@@ -5,7 +12,11 @@ from typing import List, Optional
 
 def calculate_data(data: pd.DataFrame) -> pd.DataFrame:
     """
-    Calculate and add technical indicators to stock data for model input.
+    Calculate technical indicators for one ticker's ordered OHLCV history.
+
+    Rolling and shifted indicators use the input row order directly. Some early
+    rows intentionally contain NaNs until enough lookback history exists;
+    DataPreparator later drops rows missing required features or targets.
 
     Indicators:
         - Moving Averages (5, 10, 20 day SMA)
@@ -29,13 +40,11 @@ def calculate_data(data: pd.DataFrame) -> pd.DataFrame:
     Raises:
         KeyError: If required columns are missing.
     """
-    # Validate input
     required_columns = {'Close', 'High', 'Low', 'Volume'}
     missing_cols = required_columns - set(data.columns)
     if missing_cols:
         raise KeyError(f"Input DataFrame must contain {missing_cols} columns")
 
-    # Create a working copy
     df = data.copy()
 
     # --- Indicator Functions ---
@@ -47,12 +56,14 @@ def calculate_data(data: pd.DataFrame) -> pd.DataFrame:
 
     def calculate_returns_and_volatility(df: pd.DataFrame, vol_window: int = 10) -> pd.DataFrame:
         """Calculate daily returns and rolling volatility."""
+        # pct_change creates an expected first-row NaN for the missing prior close.
         df['dailyReturn'] = df['Close'].pct_change()
         df['volatility'] = df['dailyReturn'].rolling(window=vol_window, min_periods=1).std()
         return df
 
     def calculate_rsi(df: pd.DataFrame, period: int = 14) -> pd.DataFrame:
         """Calculate Relative Strength Index with division-by-zero protection."""
+        # min_periods delays RSI until there is enough history for a meaningful signal.
         delta = df['Close'].diff(1)
         gain = delta.where(delta > 0, 0).rolling(window=period, min_periods=5).mean()
         loss = (-delta.where(delta < 0, 0)).rolling(window=period, min_periods=5).mean()
@@ -62,6 +73,7 @@ def calculate_data(data: pd.DataFrame) -> pd.DataFrame:
 
     def calculate_macd(df: pd.DataFrame, fast: int = 12, slow: int = 26, signal: int = 9) -> pd.DataFrame:
         """Calculate MACD, signal line, and histogram."""
+        # Early MACD values remain NaN until the EMA lookback has enough rows.
         ema_fast = df['Close'].ewm(span=fast, min_periods=5, adjust=False).mean()
         ema_slow = df['Close'].ewm(span=slow, min_periods=5, adjust=False).mean()
         df['macd'] = ema_fast - ema_slow
@@ -71,6 +83,7 @@ def calculate_data(data: pd.DataFrame) -> pd.DataFrame:
 
     def calculate_obv(df: pd.DataFrame) -> pd.DataFrame:
         """Calculate On-Balance Volume."""
+        # OBV is cumulative over the provided single-ticker order.
         df['obv'] = (np.sign(df['Close'].diff()) * df['Volume']).fillna(0).cumsum()
         return df
 
@@ -82,6 +95,7 @@ def calculate_data(data: pd.DataFrame) -> pd.DataFrame:
 
     def calculate_bollinger_bands(df: pd.DataFrame, period: int = 20, std_dev: float = 2.0) -> pd.DataFrame:
         """Calculate Bollinger Bands."""
+        # Bollinger bands intentionally start after a minimum lookback window.
         df['BB_Middle'] = df['Close'].rolling(window=period, min_periods=5).mean()
         df['BB_Std'] = df['Close'].rolling(window=period, min_periods=5).std()
         df['BB_Upper'] = df['BB_Middle'] + std_dev * df['BB_Std']
@@ -116,14 +130,16 @@ def calculate_data(data: pd.DataFrame) -> pd.DataFrame:
         return df
 
     def calculate_ichimoku_cloud(df: pd.DataFrame) -> pd.DataFrame:
-        """Calculate Ichimoku Cloud components."""
+        """Calculate Ichimoku-style features using only current and past rows."""
         df['tenkan_sen'] = (df['High'].rolling(window=9, min_periods=5).max() +
                             df['Low'].rolling(window=9, min_periods=5).min()) / 2
         df['kijun_sen'] = (df['High'].rolling(window=26, min_periods=5).max() +
                            df['Low'].rolling(window=26, min_periods=5).min()) / 2
+        # Positive shifts move historical cloud values forward; they do not expose future rows.
         df['senkou_span_a'] = ((df['tenkan_sen'] + df['kijun_sen']) / 2).shift(26)
         df['senkou_span_b'] = ((df['High'].rolling(window=52, min_periods=5).max() +
                                df['Low'].rolling(window=52, min_periods=5).min()) / 2).shift(26)
+        # Chikou-inspired ML features use a past close, not the future-shifted charting span.
         df['chikou_lag_close_26'] = df['Close'].shift(26)
         df['chikou_return_26'] = (df['Close'] - df['Close'].shift(26)) / df['Close'].shift(26)
         df['chikou_above_lag_26'] = (df['Close'] > df['Close'].shift(26)).astype(int)
