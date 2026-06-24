@@ -1,8 +1,13 @@
+"""Central project configuration for training, artifacts, and feature contracts."""
+
+# Training/evaluation defaults shared by trainer.py.
 LOG_FILE = 'training.log'
 EARLY_STOPPING_ROUNDS = 20
 PREDICTION_DAYS = 5
 TEST_SIZE = 0.2
 CV_FOLDS = 5
+
+# XGBoost model parameters. Keep changes deliberate because they affect comparability.
 XG_PARAMS_CLASSIFIER = {
     'n_estimators': 1000,
     'max_depth': 5,
@@ -36,6 +41,7 @@ XG_PARAMS_REGRESSOR = {
     'reg_lambda': 5.0
 }
 
+# Artifact keys are compatibility-sensitive: trainer.py writes them and predictor.py reads them.
 MODEL_PATHS = {
     'linear': 'models/linear_regression_model.pkl',
     'linear_scaler': 'models/linear_regression_scaler.pkl',
@@ -45,7 +51,8 @@ MODEL_PATHS = {
     'features': 'models/feature_names.pkl',
     'model_metadata': 'models/model_metadata.pkl'
 }
-#These are the 150 tickers I am currently training on
+
+# Default training universe used by trainer.py; not a guarantee of robustness or uniqueness.
 TRAINING_TICKERS = [
     "SPY", "XLU", "XLE", "XLV", "VOOG",
     "VOOV", "VB", "TSLA", "LAD", "JPM",
@@ -78,6 +85,8 @@ TRAINING_TICKERS = [
     "BDX", "ZBH", "BMRN", "BIIB", "ILMN", 
     "O", "SPG", "AMT", "PLD", "EQIX"
     ]
+
+# Shared feature contract after technical indicator generation and before model training/prediction.
 REQUIRED_COLUMNS = [
     'Open', 'High', 'Low', 'Close', 'Volume',
     '5_day_avg', '10_day_avg', '20_day_avg',
