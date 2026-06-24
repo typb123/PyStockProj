@@ -12,6 +12,11 @@ from sklearn.metrics import (
 
 
 def build_classification_report(y_true, y_pred):
+    """Measure directional classification quality against simple always-up/down baselines.
+
+    Inputs are one-dimensional true and predicted direction labels, where 1 means up
+    and 0 means down.
+    """
     y_true = np.asarray(y_true).astype(int)
     y_pred = np.asarray(y_pred).astype(int)
 
@@ -29,6 +34,11 @@ def build_classification_report(y_true, y_pred):
 
 
 def build_regression_report(y_true, y_pred, y_train=None):
+    """Measure return-prediction error against zero-return and train-mean baselines.
+
+    y_true and y_pred are one-dimensional future-return arrays. y_train is optional
+    and is used only to build the train-mean baseline.
+    """
     y_true = np.asarray(y_true, dtype=float)
     y_pred = np.asarray(y_pred, dtype=float)
     zero_pred = np.zeros_like(y_true)
@@ -56,6 +66,11 @@ def build_regression_report(y_true, y_pred, y_train=None):
 
 
 def build_trading_relevance_report(actual_returns, predicted_returns, predicted_direction):
+    """Summarize realized returns for rows the classifier called up or down.
+
+    Empty up/down groups return NaN for their averages, which means that side had
+    no selected rows rather than zero return.
+    """
     actual_returns = np.asarray(actual_returns, dtype=float)
     predicted_returns = np.asarray(predicted_returns, dtype=float)
     predicted_direction = np.asarray(predicted_direction).astype(int)
@@ -80,6 +95,10 @@ def build_trading_relevance_report(actual_returns, predicted_returns, predicted_
 
 
 def build_probability_summary(probability_up):
+    """Describe the distribution of predicted-up probabilities.
+
+    probability_up is a one-dimensional array from classifier predict_proba(...)[..., 1].
+    """
     probability_up = np.asarray(probability_up, dtype=float)
     if len(probability_up) == 0:
         raise ValueError("probability_up must contain at least one value.")
@@ -99,6 +118,11 @@ def build_probability_summary(probability_up):
 
 
 def build_probability_tail_report(probability_up, actual_returns):
+    """Compare actual returns in the highest and lowest probability buckets.
+
+    This tests whether classifier probabilities rank opportunities, even when the
+    default hard class prediction is weak.
+    """
     probability_up = np.asarray(probability_up, dtype=float)
     actual_returns = np.asarray(actual_returns, dtype=float)
     _validate_probability_inputs(probability_up, actual_returns)
@@ -117,6 +141,11 @@ def build_probability_threshold_report(
     actual_returns,
     thresholds=(0.50, 0.55, 0.60, 0.65, 0.70),
 ):
+    """Evaluate selected rows above each predicted-up probability threshold.
+
+    Returns a report dictionary keyed by threshold.
+    NaN precision or average return means a threshold selected no rows.
+    """
     probability_up = np.asarray(probability_up, dtype=float)
     actual_returns = np.asarray(actual_returns, dtype=float)
     _validate_probability_inputs(probability_up, actual_returns)
@@ -144,6 +173,13 @@ def build_validation_selected_threshold_report(
     min_selected_count=25,
     selection_metric="avg_actual_return",
 ):
+    """Choose a probability threshold on validation data, then evaluate it on test.
+
+    This avoids tuning on the test set: validation selects the rule, and test is
+    only the out-of-sample check of that already-selected rule.
+    Returns validation candidate stats plus the selected threshold and selected
+    test stats, or None fields when no threshold is eligible.
+    """
     if min_selected_count < 1:
         raise ValueError("min_selected_count must be at least 1.")
     if selection_metric != "avg_actual_return":
@@ -200,6 +236,12 @@ def build_validation_selected_threshold_report(
 
 
 def build_predicted_return_quantile_report(actual_returns, predicted_returns):
+    """Measure whether predicted returns rank outcomes across top/bottom buckets.
+
+    Ranking diagnostics are separate from MSE/MAE/R2 because a return model can
+    rank opportunities usefully even when exact return magnitudes are noisy.
+    Returns top and bottom predicted-return bucket stats.
+    """
     actual_returns = np.asarray(actual_returns, dtype=float)
     predicted_returns = np.asarray(predicted_returns, dtype=float)
     _validate_return_inputs(actual_returns, predicted_returns)
@@ -230,6 +272,11 @@ def build_predicted_return_quantile_report(actual_returns, predicted_returns):
 
 
 def build_return_correlation_report(actual_returns, predicted_returns):
+    """Report linear and rank correlation between predicted and actual returns.
+
+    Pearson measures raw return fit; Spearman measures ranking signal.
+    Returns both values in a small dictionary.
+    """
     actual_returns = np.asarray(actual_returns, dtype=float)
     predicted_returns = np.asarray(predicted_returns, dtype=float)
     _validate_return_inputs(actual_returns, predicted_returns)
