@@ -1,3 +1,10 @@
+"""Yahoo Finance data access helpers.
+
+The main training path uses daily OHLCV history for technical indicators. EPS
+helpers are optional fundamental-data utilities and are not currently part of
+the required model feature path.
+"""
+
 import pandas as pd
 import logging
 import yfinance as yf
@@ -12,7 +19,10 @@ logging.basicConfig(
 
 def fetch_stock_data(ticker: str, period: str = "5y") -> pd.DataFrame:
     """
-    Fetch historical stock data from Yahoo Finance.
+    Fetch historical stock data with yfinance Ticker.history(period=period).
+
+    Provider-specific extra columns such as Dividends, Stock Splits, or Capital
+    Gains may be present and are cleaned or ignored downstream.
 
     Args:
         ticker (str): The stock ticker symbol.
@@ -31,17 +41,22 @@ def fetch_stock_data(ticker: str, period: str = "5y") -> pd.DataFrame:
         return data
     except Exception as e:
         logging.error(f"Error fetching data for {ticker}: {e}")
-        return pd.DataFrame()  # Return empty DataFrame instead of None
+        # Keep callers on a single DataFrame path; training skips empty ticker results.
+        return pd.DataFrame()
+
 
 def fetch_eps_data(ticker: str) -> pd.DataFrame:
     """
-    Fetch earnings date from Yahoo Finance.
+    Fetch optional reported EPS data from Yahoo Finance.
+
+    EPS is a fundamental-data helper and is not currently required by the core
+    technical-indicator training features.
 
     Args:
         ticker (str): The stock ticker symbol.
 
     Returns:
-        pd.DataFrame: The earnings date.
+        pd.DataFrame: Reported EPS values by date, or empty DataFrame if unavailable.
     """
     try:
         stock = yf.Ticker(ticker)
@@ -58,13 +73,16 @@ def fetch_eps_data(ticker: str) -> pd.DataFrame:
         logging.error(f"Error fetching EPS data for {ticker}: {e}")
         return pd.DataFrame()
 
+
 def add_eps_to_daily_data(daily_data: pd.DataFrame, eps_data: pd.DataFrame) -> pd.DataFrame:
     """
-    Add EPS data to daily stock data.
+    Attach optional EPS values to daily price data using the latest prior report.
+
+    This helper is kept separate from the core technical-indicator path.
 
     Args:
         daily_data (pd.DataFrame): The daily stock data.
-        eps_data (pd.DataFrame): The earnings date.
+        eps_data (pd.DataFrame): Reported EPS data by date.
 
     Returns:
         pd.DataFrame: The daily stock data with EPS data.
