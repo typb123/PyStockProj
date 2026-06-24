@@ -97,11 +97,12 @@ class DataPreparator:
         x = df[self.feature_columns].values
         y = df['targetReturns'].values
 
-        # Scale the features
-        x = self.scalar.fit_transform(x)
-
         #Split the data into training and test sets
         x_train, x_test, y_train, y_test = train_test_split(x, y, test_size=test_size, shuffle=False)
+
+        # Scale the features
+        x_train = self.scalar.fit_transform(x_train)
+        x_test = self.scalar.transform(x_test)
 
         return {
             'x_train': x_train,
