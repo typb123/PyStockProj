@@ -1,3 +1,9 @@
+"""Training entry point for the stock return prediction models.
+
+The pipeline keeps Linear Regression as a separate baseline artifact, while
+XGBoost trains a direction classifier and a return-magnitude regressor.
+"""
+
 import joblib
 import pandas as pd
 import numpy as np
@@ -42,7 +48,10 @@ logging.basicConfig(
 )
 def validate_input_data(data):
     """
-    Validate the input data structure before model preparation.
+    Validate the input data structure before feature/target preparation.
+
+    Missing values are logged but not filled here; DataPreparator handles required
+    feature/target row dropping without future-looking imputation.
     """
     if data.empty:
         raise ValueError("Input data is empty.")
@@ -60,6 +69,12 @@ def validate_input_data(data):
     return data
             
 def fetch_tickers_data(ticker, period="5y"):
+    """
+    Fetch one ticker and generate indicators before ticker-level concatenation.
+
+    calculate_data is order-dependent and not grouped internally, so the current
+    fetch path calls it while each DataFrame still contains one ticker only.
+    """
     try:
         stock_data = fetch_stock_data(ticker, period=period)
         if stock_data.empty:
@@ -84,6 +99,7 @@ def fetch_tickers_data(ticker, period="5y"):
 
     
 def prepare_data_parallel(tickers, period="5y") -> pd.DataFrame:
+    """Fetch and prepare each ticker independently, then concatenate valid results."""
     logging.info(f"Fetching data for {len(tickers)} tickers...")
     
     with ThreadPoolExecutor(max_workers=10) as executor:
@@ -125,6 +141,7 @@ def cross_validate_model(x, y, model=None, cv=5):
     
 
 def evaluate_model(model, x_test, y_test, model_type="regression"):
+    """Log a compact regression or classification report for a held-out split."""
     y_pred = model.predict(x_test)
 
     if model_type == "regression":
@@ -148,6 +165,12 @@ def log_xgboost_test_report(
     classifier_probability_up,
     regressor_predictions,
 ):
+    """
+    Log final XGBoost diagnostics on test data without tuning on that test data.
+
+    Validation probabilities may select a classifier threshold; test probabilities
+    only evaluate the already-selected rule.
+    """
     classification_report_data = build_classification_report(
         (y_test > 0).astype(int), classifier_predictions
     )
@@ -200,6 +223,7 @@ def build_model_metadata(
     regressor_features,
     prediction_days,
 ):
+    """Build prediction-time metadata needed to align saved artifacts and features."""
     return {
         "linear_features": linear_features,
         "classifier_features": classifier_features,
@@ -212,16 +236,22 @@ def build_model_metadata(
     
     
 def train_models(data: pd.DataFrame) -> None:
+    """
+    Train the linear baseline, XGBoost classifier, and XGBoost regressor.
+
+    Validation data is used for XGBoost eval_set and threshold research; test data
+    is reserved for final diagnostics.
+    """
     logging.info("Training models with explicitly defined feature arrays.")
 
-    # Validate and prepare data
+    # DataPreparator owns target creation, chronological splits, and shared scaling.
     data = validate_input_data(data)
     data_preparator = DataPreparator()
     prepared_data = data_preparator.prepare_for_train(
         data, prediction_days=PREDICTION_DAYS, test_size=TEST_SIZE
     )
 
-    # Extract train/test datasets with feature names
+    # Rebuild DataFrames so explicit feature lists preserve their trained column order.
     all_features = prepared_data["feature_names"]
     x_train_full = pd.DataFrame(prepared_data["x_train"], columns=all_features)
     x_val_full = pd.DataFrame(prepared_data["x_val"], columns=all_features)
@@ -230,7 +260,7 @@ def train_models(data: pd.DataFrame) -> None:
     y_val = prepared_data["y_val"]
     y_test = prepared_data["y_test"]
 
-    # Define feature sets for each model
+    # Feature lists are intentionally inline for now; prediction metadata mirrors them.
     linear_features = [
         'tenkan_sen', 'kijun_sen', 'senkou_span_a', 'senkou_span_b',
         'chikou_lag_close_26', 'chikou_return_26', 'chikou_above_lag_26',
@@ -239,9 +269,7 @@ def train_models(data: pd.DataFrame) -> None:
         'macdHistogram',  'vma_20',  'High', 'Low', 'BB_Middle', 
         'BB_Upper', 'BB_Lower','stoch_k', 'stoch_d', 'Volume', 
         '10_day_avg', 'volatility', 'vma_10', '5_day_avg',
-    ] 
-    # REMOVED FROM LINEAR REGRESSION:   
-    #  
+    ]
     classifier_features = [
         'Open', 'High', 'Low', 'Close', 'Volume',
         '5_day_avg', '10_day_avg', '20_day_avg',
@@ -265,13 +293,12 @@ def train_models(data: pd.DataFrame) -> None:
         'ATR', 'stoch_k', 'stoch_d'
     ] 
 
-    # Standardize features for Linear Regression
+    # Linear Regression is a separate scaled baseline, not a stacked XGBoost feature.
     scaler_lr = StandardScaler()
     x_train_lr_scaled = scaler_lr.fit_transform(x_train_full[linear_features])
     x_val_lr_scaled = scaler_lr.transform(x_val_full[linear_features])
     x_test_lr_scaled = scaler_lr.transform(x_test_full[linear_features])
 
-    # Train Linear Regression on scaled features
     logging.info("Training Linear Regression model...")
     linear_model = LinearRegression()
     linear_model.fit(x_train_lr_scaled, y_train)
@@ -297,12 +324,11 @@ def train_models(data: pd.DataFrame) -> None:
     x_val_regressor = x_val_full[regressor_features]
     x_test_regressor = x_test_full[regressor_features]
 
-    # Binary labels for classifier
+    # The classifier predicts direction only; the regressor predicts return magnitude.
     direction_y_train = (y_train > 0).astype(int)
     direction_y_val = (y_val > 0).astype(int)
     direction_y_test = (y_test > 0).astype(int)
 
-    # Train XGBoost Classifier
     logging.info("Training XGBoost Classifier...")
     classifier = XGBClassifier(**XG_PARAMS_CLASSIFIER)
     classifier.fit(
@@ -321,7 +347,6 @@ def train_models(data: pd.DataFrame) -> None:
     for _, row in feature_importance_clf.iterrows():
         logging.info(f"{row['feature']}: {row['importance']:.4f}")
 
-    # Train XGBoost Regressor
     logging.info("Training XGBoost Regressor...")
     regressor = XGBRegressor(**XG_PARAMS_REGRESSOR)
     regressor.fit(
@@ -350,7 +375,7 @@ def train_models(data: pd.DataFrame) -> None:
     for _, row in feature_importance_reg.iterrows():
         logging.info(f"{row['feature']}: {row['importance']:.4f}")
 
-    # Save models
+    # Save all preprocessing and feature metadata needed to reproduce training inputs.
     model_metadata = build_model_metadata(
         linear_features,
         classifier_features,
