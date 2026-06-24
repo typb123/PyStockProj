@@ -100,9 +100,9 @@ def validate_input_data(data):
     logging.info("Data validation complete - no NaN values remain.")
     return data
             
-def fetch_tickers_data(ticker):
+def fetch_tickers_data(ticker, period="5y"):
     try:
-        stock_data = fetch_stock_data(ticker, period="5y")
+        stock_data = fetch_stock_data(ticker, period=period)
         if stock_data.empty:
             logging.warning(f"No data returned for {ticker}. Skipping...")
             return None
@@ -128,7 +128,7 @@ def prepare_data_parallel(tickers, period="5y") -> pd.DataFrame:
     logging.info(f"Fetching data for {len(tickers)} tickers...")
     
     with ThreadPoolExecutor(max_workers=10) as executor:
-        results = executor.map(fetch_tickers_data, tickers)
+        results = executor.map(lambda ticker: fetch_tickers_data(ticker, period=period), tickers)
     
     all_data = [data for data in results if data is not None and not data.empty]
     
