@@ -135,6 +135,70 @@ def build_probability_threshold_report(
     return report
 
 
+def build_validation_selected_threshold_report(
+    validation_probability_up,
+    validation_actual_returns,
+    test_probability_up,
+    test_actual_returns,
+    thresholds=(0.50, 0.55, 0.60, 0.65, 0.70),
+    min_selected_count=25,
+    selection_metric="avg_actual_return",
+):
+    if min_selected_count < 1:
+        raise ValueError("min_selected_count must be at least 1.")
+    if selection_metric != "avg_actual_return":
+        raise ValueError("Unsupported selection_metric. Use 'avg_actual_return'.")
+
+    thresholds = tuple(thresholds)
+
+    # Select thresholds on validation only so test stays out-of-sample.
+    validation_threshold_report = build_probability_threshold_report(
+        validation_probability_up,
+        validation_actual_returns,
+        thresholds=thresholds,
+    )
+    # Validate test inputs even when no validation threshold is eligible.
+    build_probability_threshold_report(
+        test_probability_up,
+        test_actual_returns,
+        thresholds=thresholds,
+    )
+
+    # Ignore tiny validation tails because they are often just noise.
+    eligible_thresholds = [
+        threshold
+        for threshold, stats in validation_threshold_report.items()
+        if stats["selected_count"] >= min_selected_count
+    ]
+
+    selected_threshold = None
+    selected_validation_stats = None
+    selected_test_stats = None
+
+    if eligible_thresholds:
+        selected_threshold = max(
+            eligible_thresholds,
+            key=lambda threshold: validation_threshold_report[threshold][selection_metric],
+        )
+        selected_validation_stats = validation_threshold_report[selected_threshold]
+        # Apply the selected rule to test once; test results must not affect selection.
+        selected_test_stats = build_probability_threshold_report(
+            test_probability_up,
+            test_actual_returns,
+            thresholds=(selected_threshold,),
+        )[selected_threshold]
+
+    return {
+        "thresholds": thresholds,
+        "min_selected_count": min_selected_count,
+        "selection_metric": selection_metric,
+        "validation_threshold_report": validation_threshold_report,
+        "selected_threshold": selected_threshold,
+        "selected_validation_stats": selected_validation_stats,
+        "selected_test_stats": selected_test_stats,
+    }
+
+
 def build_predicted_return_quantile_report(actual_returns, predicted_returns):
     actual_returns = np.asarray(actual_returns, dtype=float)
     predicted_returns = np.asarray(predicted_returns, dtype=float)

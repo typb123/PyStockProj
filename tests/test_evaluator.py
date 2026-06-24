@@ -6,6 +6,7 @@ from src.train.evaluator import (
     build_probability_summary,
     build_probability_tail_report,
     build_probability_threshold_report,
+    build_validation_selected_threshold_report,
     build_predicted_return_quantile_report,
     build_regression_report,
     build_return_correlation_report,
@@ -133,6 +134,103 @@ def test_build_probability_threshold_report_summarizes_selected_rows():
     assert report[0.70]["selected_fraction"] == 0.2
     assert report[0.70]["precision"] == 1.0
     assert report[0.70]["avg_actual_return"] == 0.05
+
+
+def test_validation_selected_threshold_report_selects_best_validation_threshold():
+    report = build_validation_selected_threshold_report(
+        validation_probability_up=np.array([0.40, 0.52, 0.56, 0.62, 0.72]),
+        validation_actual_returns=np.array([-0.03, 0.01, -0.02, 0.06, 0.08]),
+        test_probability_up=np.array([0.51, 0.63, 0.74]),
+        test_actual_returns=np.array([0.01, 0.02, -0.03]),
+        thresholds=(0.50, 0.55, 0.60, 0.70),
+        min_selected_count=1,
+    )
+
+    assert report["thresholds"] == (0.50, 0.55, 0.60, 0.70)
+    assert report["min_selected_count"] == 1
+    assert report["selection_metric"] == "avg_actual_return"
+    assert report["selected_threshold"] == 0.70
+    assert report["selected_validation_stats"] == report["validation_threshold_report"][0.70]
+
+
+def test_validation_selected_threshold_report_chooses_eligible_threshold():
+    report = build_validation_selected_threshold_report(
+        validation_probability_up=np.array([0.40, 0.52, 0.56, 0.62, 0.72]),
+        validation_actual_returns=np.array([-0.03, 0.01, -0.02, 0.06, 0.08]),
+        test_probability_up=np.array([0.51, 0.63, 0.74]),
+        test_actual_returns=np.array([0.01, 0.02, -0.03]),
+        thresholds=(0.50, 0.55, 0.60, 0.70),
+        min_selected_count=2,
+    )
+
+    assert report["selected_threshold"] == 0.60
+    assert report["selected_validation_stats"]["selected_count"] == 2
+
+
+def test_validation_selected_threshold_report_handles_no_eligible_threshold():
+    report = build_validation_selected_threshold_report(
+        validation_probability_up=np.array([0.40, 0.52, 0.56]),
+        validation_actual_returns=np.array([-0.03, 0.01, -0.02]),
+        test_probability_up=np.array([0.51, 0.63, 0.74]),
+        test_actual_returns=np.array([0.01, 0.02, -0.03]),
+        thresholds=(0.50, 0.55, 0.60),
+        min_selected_count=10,
+    )
+
+    assert report["selected_threshold"] is None
+    assert report["selected_validation_stats"] is None
+    assert report["selected_test_stats"] is None
+
+
+def test_validation_selected_threshold_report_evaluates_selected_threshold_on_test():
+    report = build_validation_selected_threshold_report(
+        validation_probability_up=np.array([0.40, 0.52, 0.56, 0.62, 0.72]),
+        validation_actual_returns=np.array([-0.03, 0.01, -0.02, 0.06, 0.08]),
+        test_probability_up=np.array([0.51, 0.63, 0.74]),
+        test_actual_returns=np.array([0.01, 0.02, -0.03]),
+        thresholds=(0.50, 0.55, 0.60, 0.70),
+        min_selected_count=2,
+    )
+
+    assert report["selected_threshold"] == 0.60
+    assert report["selected_test_stats"]["selected_count"] == 2
+    assert report["selected_test_stats"]["selected_fraction"] == 2 / 3
+    assert report["selected_test_stats"]["precision"] == 0.5
+    assert np.isclose(report["selected_test_stats"]["avg_actual_return"], -0.005)
+
+
+def test_validation_selected_threshold_report_rejects_invalid_inputs():
+    valid_probabilities = np.array([0.50, 0.60])
+    valid_returns = np.array([0.01, -0.02])
+
+    with pytest.raises(ValueError, match="probability_up"):
+        build_validation_selected_threshold_report(
+            np.array([]), np.array([]), valid_probabilities, valid_returns
+        )
+    with pytest.raises(ValueError, match="probability_up"):
+        build_validation_selected_threshold_report(
+            valid_probabilities, valid_returns, np.array([]), np.array([])
+        )
+    with pytest.raises(ValueError, match="same length"):
+        build_validation_selected_threshold_report(
+            np.array([0.50, 0.60]), np.array([0.01]), valid_probabilities, valid_returns
+        )
+    with pytest.raises(ValueError, match="same length"):
+        build_validation_selected_threshold_report(
+            valid_probabilities, valid_returns, np.array([0.50]), np.array([0.01, 0.02])
+        )
+    with pytest.raises(ValueError, match="min_selected_count"):
+        build_validation_selected_threshold_report(
+            valid_probabilities, valid_returns, valid_probabilities, valid_returns, min_selected_count=0
+        )
+    with pytest.raises(ValueError, match="selection_metric"):
+        build_validation_selected_threshold_report(
+            valid_probabilities,
+            valid_returns,
+            valid_probabilities,
+            valid_returns,
+            selection_metric="precision",
+        )
 
 
 def test_build_predicted_return_quantile_report_summarizes_ranking_buckets():

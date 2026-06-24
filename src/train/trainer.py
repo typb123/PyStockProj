@@ -20,6 +20,7 @@ from src.train.evaluator import (
     build_regression_report,
     build_return_correlation_report,
     build_trading_relevance_report,
+    build_validation_selected_threshold_report,
 )
 from xgboost import XGBRegressor, XGBClassifier
 from typing import Optional
@@ -140,8 +141,10 @@ def evaluate_model(model, x_test, y_test, model_type="regression"):
 
 def log_xgboost_test_report(
     y_train,
+    y_val,
     y_test,
     classifier_predictions,
+    classifier_validation_probability_up,
     classifier_probability_up,
     regressor_predictions,
 ):
@@ -161,6 +164,12 @@ def log_xgboost_test_report(
     probability_threshold_report = build_probability_threshold_report(
         classifier_probability_up, y_test
     )
+    validation_selected_threshold_report = build_validation_selected_threshold_report(
+        classifier_validation_probability_up,
+        y_val,
+        classifier_probability_up,
+        y_test,
+    )
     predicted_return_quantile_report = build_predicted_return_quantile_report(
         y_test, regressor_predictions
     )
@@ -175,6 +184,9 @@ def log_xgboost_test_report(
     logging.info(f"XGBoost Classifier Probability Tail Report: {probability_tail_report}")
     logging.info(
         f"XGBoost Classifier Probability Threshold Report: {probability_threshold_report}"
+    )
+    logging.info(
+        f"XGBoost Classifier Validation-Selected Threshold Report: {validation_selected_threshold_report}"
     )
     logging.info(
         f"XGBoost Regressor Predicted Return Quantile Report: {predicted_return_quantile_report}"
@@ -317,10 +329,13 @@ def train_models(data: pd.DataFrame) -> None:
         eval_set=[(x_val_regressor, y_val)],
     )
     evaluate_model(regressor, x_test_regressor, y_test, model_type="regression")
+    # Validation probabilities choose the threshold; test probabilities evaluate that chosen rule.
     log_xgboost_test_report(
         y_train,
+        y_val,
         y_test,
         classifier.predict(x_test_classifier),
+        classifier.predict_proba(x_val_classifier)[:, 1],
         classifier.predict_proba(x_test_classifier)[:, 1],
         regressor.predict(x_test_regressor),
     )
