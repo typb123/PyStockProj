@@ -79,12 +79,12 @@ def predict_price(ticker: str) -> dict:
         # Add Linear Regression Prediction as a feature
         linear_features = model_metadata["linear_features"]
         lr_features = scaler_lr.transform(latest_features_df[linear_features])
-        lr_prediction = linear_model.predict(lr_features).reshape(-1, 1)
+        lr_prediction = linear_model.predict(lr_features)[0]
 
         classifier_features = model_metadata["classifier_features"]
         regressor_features = model_metadata["regressor_features"]
-        classifier_input = np.column_stack((latest_features_df[classifier_features], lr_prediction))
-        regressor_input = np.column_stack((latest_features_df[regressor_features], lr_prediction))
+        classifier_input = latest_features_df[classifier_features]
+        regressor_input = latest_features_df[regressor_features]
 
         # Make predictions
         predicted_direction = xgb_classifier.predict(classifier_input)[0]
@@ -97,6 +97,7 @@ def predict_price(ticker: str) -> dict:
 
         result = {
             'direction': direction,
+            'linear_predicted_return': lr_prediction,
             'predicted_return': predicted_return,
             'expected_price': expected_price
         }

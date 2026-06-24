@@ -138,6 +138,22 @@ def evaluate_model(model, x_test, y_test, model_type="regression"):
         #print(f" Accuracy: {accuracy:.4%}")
         #print(f" Classification Report:\n{report}")
 
+
+def build_model_metadata(
+    linear_features,
+    classifier_features,
+    regressor_features,
+    prediction_days,
+):
+    return {
+        "linear_features": linear_features,
+        "classifier_features": classifier_features,
+        "regressor_features": regressor_features,
+        "classifier_feature_names": classifier_features,
+        "regressor_feature_names": regressor_features,
+        "prediction_days": prediction_days,
+    }
+
     
     
 def train_models(data: pd.DataFrame) -> None:
@@ -216,21 +232,15 @@ def train_models(data: pd.DataFrame) -> None:
     for _, row in feature_importance_lr.iterrows():
         logging.info(f"{row['feature']}: {row['importance']:.4f}")
 
-    # Generate Linear Regression predictions as additional feature
-    train_lr_preds = linear_model.predict(x_train_lr_scaled).reshape(-1, 1)
-    val_lr_preds = linear_model.predict(x_val_lr_scaled).reshape(-1, 1)
-    test_lr_preds = linear_model.predict(x_test_lr_scaled).reshape(-1, 1)
+    classifier_feature_names = classifier_features
+    regressor_feature_names = regressor_features
 
-    # Add LR predictions to Classifier and Regressor feature sets
-    classifier_feature_names = classifier_features + ["LinearRegression_Prediction"]
-    regressor_feature_names  = regressor_features + ["LinearRegression_Prediction"]
-
-    x_train_classifier = np.column_stack((x_train_full[classifier_features], train_lr_preds))
-    x_val_classifier = np.column_stack((x_val_full[classifier_features], val_lr_preds))
-    x_test_classifier = np.column_stack((x_test_full[classifier_features], test_lr_preds))
-    x_train_regressor = np.column_stack((x_train_full[regressor_features], train_lr_preds))
-    x_val_regressor = np.column_stack((x_val_full[regressor_features], val_lr_preds))
-    x_test_regressor = np.column_stack((x_test_full[regressor_features], test_lr_preds))
+    x_train_classifier = x_train_full[classifier_features]
+    x_val_classifier = x_val_full[classifier_features]
+    x_test_classifier = x_test_full[classifier_features]
+    x_train_regressor = x_train_full[regressor_features]
+    x_val_regressor = x_val_full[regressor_features]
+    x_test_regressor = x_test_full[regressor_features]
 
     # Binary labels for classifier
     direction_y_train = (y_train > 0).astype(int)
@@ -276,14 +286,12 @@ def train_models(data: pd.DataFrame) -> None:
         logging.info(f"{row['feature']}: {row['importance']:.4f}")
 
     # Save models
-    model_metadata = {
-        "linear_features": linear_features,
-        "classifier_features": classifier_features,
-        "regressor_features": regressor_features,
-        "classifier_feature_names": classifier_feature_names,
-        "regressor_feature_names": regressor_feature_names,
-        "prediction_days": PREDICTION_DAYS,
-    }
+    model_metadata = build_model_metadata(
+        linear_features,
+        classifier_features,
+        regressor_features,
+        PREDICTION_DAYS,
+    )
     joblib.dump(linear_model, MODEL_PATHS["linear"])
     joblib.dump(scaler_lr, MODEL_PATHS["linear_scaler"])
     joblib.dump(data_preparator, MODEL_PATHS["preparator"])

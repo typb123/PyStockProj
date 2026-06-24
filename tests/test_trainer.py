@@ -43,3 +43,17 @@ def test_validate_input_data_does_not_fill_missing_values():
     assert pd.isna(result.loc[2, "Volume"])
     assert result.loc[2, "Close"] == 500.0
     assert result.loc[1, "Volume"] == 1100.0
+
+
+def test_model_metadata_does_not_include_linear_regression_prediction():
+    metadata = trainer.build_model_metadata(
+        linear_features=["Close"],
+        classifier_features=["Close", "Volume"],
+        regressor_features=["Close", "Volume"],
+        prediction_days=5,
+    )
+
+    assert "LinearRegression_Prediction" not in metadata["classifier_features"]
+    assert "LinearRegression_Prediction" not in metadata["regressor_features"]
+    assert "LinearRegression_Prediction" not in metadata["classifier_feature_names"]
+    assert "LinearRegression_Prediction" not in metadata["regressor_feature_names"]
