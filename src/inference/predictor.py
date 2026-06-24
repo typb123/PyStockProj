@@ -4,62 +4,21 @@ import copy
 import pandas as pd
 import numpy as np
 from xgboost import XGBRegressor, XGBClassifier
-from config import (
+from src.config import (
     MODEL_PATHS,
     REQUIRED_COLUMNS,
-    XG_PARAMS,
-    LOG_FILE
+    LOG_FILE,
+    XG_PARAMS_CLASSIFIER,
+    XG_PARAMS_REGRESSOR,
 )
-from technical_indicators import CalculateData
-import yfinance as yf
-from pandas.tseries.offsets import BDay
-
+from src.data.technical_indicators import CalculateData
+from src.data.data_fetch import fetch_stock_data
 logging.basicConfig(
     filename=LOG_FILE,
     level=logging.INFO,
     format='%(asctime)s: - %(levelname)s -%(message)s'
 )
-
-def fetchStockData(ticker: str, period: str = "5y") -> pd.DataFrame:
-    import yfinance as yf
-    try:
-        #logging.info(f"Fetching data for {ticker} with period={period}...")
-        stock = yf.Ticker(ticker)
-        data = stock.history(period=period)
-        
-        if data.empty:
-            logging.warning(f"No data found for {ticker}. DataFrame is empty.")
-        else:
-            pass
-            #logging.info(f"Data fetched for {ticker}: {data.shape[0]} rows.")
-        
-        return data
-    except Exception as e:
-        logging.error(f"Error fetching data for {ticker}: {e}")
-        return pd.DataFrame()  # Return empty DataFrame instead of None
-
-def getFuturePredictionDate(stockData: pd.DataFrame, tradingDaysAhead: int) -> str:
-    """
-    Returns the projected date `tradingDaysAhead` from the most recent date in the stock data,
-    skipping non-trading days (weekends and holidays).
-
-    Parameters:
-        stockData (pd.DataFrame): A DataFrame with a datetime index (yfinance format).
-        tradingDaysAhead (int): The number of trading days ahead to predict.
-
-    Returns:
-        str: The projected future date (formatted MM/DD/YYYY).
-    """
-    try:
-        last_trading_date = stockData.index.max()  # Get the most recent trading date
-        future_date = last_trading_date + BDay(tradingDaysAhead)  # Add business days
-        return future_date.strftime("%m/%d/%Y")  # Format the date as MM/DD/YYYY
-    except Exception as e:
-        logging.error(f"Error calculating future prediction date: {e}")
-        raise
-
-
-def predictPrice(ticker: str) -> dict:
+def predict_price(ticker: str) -> dict:
     """
     Predict price movement using trained models
     
@@ -76,7 +35,7 @@ def predictPrice(ticker: str) -> dict:
         linear_model = joblib.load(MODEL_PATHS['linear'])
         
         # Load XGBoost models - create with same parameters used during training
-        params = copy.deepcopy(XG_PARAMS)
+        params = copy.deepcopy(XG_PARAMS_CLASSIFIER)  # Use the same parameters for both models
         
         # Create fresh instances with the same parameters
         xgb_classifier = XGBClassifier(**params)
@@ -91,7 +50,7 @@ def predictPrice(ticker: str) -> dict:
         feature_columns = data_preparator.featureColumns 
         
         # Fetch recent stock data
-        data = fetchStockData(ticker, period="5y")   
+        data = fetch_stock_data(ticker, period="5y")   
         processed_data = CalculateData(data)
         
         missing_cols = set(REQUIRED_COLUMNS) - set(processed_data.columns)

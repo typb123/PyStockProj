@@ -15,20 +15,20 @@ from sklearn.metrics import (
     classification_report,
     accuracy_score
 )
-from data_prep import DataPreparator
-from technical_indicators import CalculateData
-from main import fetchStockData
+from sklearn.preprocessing import StandardScaler
+from src.data.data_prep import DataPreparator
+from src.data.technical_indicators import CalculateData
+from app import fetchStockData
 from xgboost import XGBRegressor, XGBClassifier
 from typing import Optional
-from config import (
-    XG_PARAMS, 
+from src.config import (
+    XG_PARAMS_CLASSIFIER,
+    XG_PARAMS_REGRESSOR, 
     MODEL_PATHS,
     TRAINING_TICKERS,
-    REQUIRED_COLUMNS,
     EARLY_STOPPING_ROUNDS,
     PREDICTION_DAYS,
     TEST_SIZE,
-    CV_FOLDS
 )
 
 
@@ -101,7 +101,7 @@ def validate_input_data(data):
     logging.info("Data validation complete - no NaN values remain.")
     return data
             
-def fetchTickersData(ticker):
+def fetch_tickers_data(ticker):
     try:
         stockData = fetchStockData(ticker, period="5y")
         if stockData.empty:
@@ -125,11 +125,11 @@ def fetchTickersData(ticker):
     
 
     
-def prepareDataParallel(tickers, period="5y") -> pd.DataFrame:
+def prepare_data_parallel(tickers, period="5y") -> pd.DataFrame:
     logging.info(f"Fetching data for {len(tickers)} tickers...")
     
     with ThreadPoolExecutor(max_workers=10) as executor:
-        results = executor.map(fetchTickersData, tickers)
+        results = executor.map(fetch_tickers_data, tickers)
     
     allData = [data for data in results if data is not None and not data.empty]
     
@@ -141,7 +141,7 @@ def prepareDataParallel(tickers, period="5y") -> pd.DataFrame:
     
     return pd.concat(allData, ignore_index=True)
 
-def crossValidateModel(X, Y, model=None, cv=5):
+def cross_validate_model(X, Y, model=None, cv=5):
     """
     Perform cross-validation on the given model and data.
     
@@ -180,112 +180,164 @@ def evaluate_model(model, XTest, YTest, model_type="regression"):
         mae = mean_absolute_error(YTest, YPred)
         r2 = r2_score(YTest, YPred)
         logging.info(f"MSE: {mse:.4f}, MAE: {mae:.4f}, R²: {r2:.4f}")
-        print(f" MSE: {mse:.4f}, MAE: {mae:.4f}, R²: {r2:.4f}")
+        #print(f" MSE: {mse:.4f}, MAE: {mae:.4f}, R²: {r2:.4f}")
 
     elif model_type == "classification":
         accuracy = accuracy_score(YTest.astype(int), YPred.astype(int))
         report = classification_report(YTest.astype(int), YPred.astype(int))
         logging.info(f"Accuracy: {accuracy:.4%}")
         logging.info(f"Classification Report:\n{report}")
-        print(f" Accuracy: {accuracy:.4%}")
-        print(f" Classification Report:\n{report}")
+        #print(f" Accuracy: {accuracy:.4%}")
+        #print(f" Classification Report:\n{report}")
 
     
     
-def trainAndEvaluate(data: pd.DataFrame) -> None:
-    """
-    Trains three models: 
-        - Linear Regression for baseline prediction
-        - XGBoost Classifier for direction prediction
-        - XGBoost Regressor for price prediction
+def train_models(data: pd.DataFrame) -> None:
+    logging.info("Training models with explicitly defined feature arrays.")
 
-    Parameters:
-        data (pd.DataFrame): Cleaned stock data with technical indicators
-        predictionDays (int): Number of days ahead for prediction
-        testSize (float): Proportion of data reserved for testing
-        cv (int): Number of folds for cross-validation
-
-    Returns:
-        None
-    """
-    logging.info("Preparing data for training...")
-    validate_input_data(data)
-    
+    # Validate and prepare data
+    data = validate_input_data(data)
     dataPreparator = DataPreparator()
-    preparedData = dataPreparator.prepareForTrain(data, PREDICTION_DAYS, TEST_SIZE)
+    preparedData = dataPreparator.prepareForTrain(
+        data, predictionDays=PREDICTION_DAYS, testSize=TEST_SIZE
+    )
 
-    XTrain = preparedData["XTrain"]
-    XTest = preparedData["XTest"]
-    YTrain = preparedData["YTrain"]
-    YTest = preparedData["YTest"]
-    #featureNames = preparedData["featureNames"]    ***ADD THIS BACK IN LATER***
-    featureNames = [
-    'Open', 'Close', 'Volume',
-    '5_day_avg', '20_day_avg',
-    'volatility', 'rsi', 'obv', 'vma_10',
-    'tenkan_sen', 'kijun_sen', 'senkou_span_a', 'senkou_span_b', 
-    'chikou_span', 'BB_Std', 'BB_Middle', 'BB_Upper', 'BB_Lower', 
-    'macd', 'signalLine', 'macdHistogram', 'vma_20', 'High', 
-    'Low', 'stoch_k', 'stoch_d', '10_day_avg', 'dailyReturn','ATR']
-    #REMOVED: 
-    
-    logging.info("\nTraining Linear Regression model...")
+    # Extract train/test datasets with feature names
+    all_features = preparedData["featureNames"]
+    XTrain_full = pd.DataFrame(preparedData["XTrain"], columns=all_features)
+    XTest_full  = pd.DataFrame(preparedData["XTest"],  columns=all_features)
+    YTrain      = preparedData["YTrain"]
+    YTest       = preparedData["YTest"]
+
+    # Define feature sets for each model
+    linear_features = [
+        'tenkan_sen', 'kijun_sen', 'senkou_span_a', 'senkou_span_b', 'chikou_span', 
+        'Open', 'Close', 'rsi', 'signalLine', 'ATR', 
+        '20_day_avg', 'macd', 'BB_Std', 'obv', 'dailyReturn', 
+        'macdHistogram',  'vma_20',  'High', 'Low', 'BB_Middle', 
+        'BB_Upper', 'BB_Lower','stoch_k', 'stoch_d', 'Volume', 
+        '10_day_avg', 'volatility', 'vma_10', HERE:   '5_day_avg',
+    ] 
+    # REMOVED FROM LINEAR REGRESSION:   
+    #  
+    classifier_features = [
+        'Open', 'High', 'Low', 'Close', 'Volume',
+        '5_day_avg', '10_day_avg', '20_day_avg',
+        'dailyReturn', 'volatility', 'rsi',
+        'macd', 'signalLine', 'macdHistogram',
+        'obv', 'vma_10', 'vma_20',
+        'tenkan_sen', 'kijun_sen', 'senkou_span_a', 'senkou_span_b', 'chikou_span',
+        'BB_Middle', 'BB_Upper', 'BB_Lower', 'BB_Std',
+        'ATR', 'stoch_k', 'stoch_d', 'EPS'
+    ]
+    regressor_features  = [
+        'Open', 'High', 'Low', 'Close', 'Volume',
+        '5_day_avg', '10_day_avg', '20_day_avg',
+        'dailyReturn', 'volatility', 'rsi',
+        'macd', 'signalLine', 'macdHistogram',
+        'obv', 'vma_10', 'vma_20',
+        'tenkan_sen', 'kijun_sen', 'senkou_span_a', 'senkou_span_b', 'chikou_span',
+        'BB_Middle', 'BB_Upper', 'BB_Lower', 'BB_Std',
+        'ATR', 'stoch_k', 'stoch_d', 'EPS'
+    ] 
+
+    # Standardize features for Linear Regression
+    scaler_lr = StandardScaler()
+    XTrain_lr_scaled = scaler_lr.fit_transform(XTrain_full[linear_features])
+    XTest_lr_scaled = scaler_lr.transform(XTest_full[linear_features])
+
+    # Train Linear Regression on scaled features
+    logging.info("Training Linear Regression model...")
     linear_model = LinearRegression()
-    linear_model.fit(XTrain, YTrain)
-    
-    #Add linear regression model as a feature
-    train_lr_predictions = linear_model.predict(XTrain).reshape(-1, 1)
-    test_lr_predictions = linear_model.predict(XTest).reshape(-1, 1)
-    XTrain = np.column_stack((XTrain, train_lr_predictions))
-    XTest = np.column_stack((XTest, test_lr_predictions))
-    featureNames.append("LinearRegression_Prediction")
-    
-    # Convert to cupy arrays for GPU processing
-    XTrain = cp.array(XTrain)
-    XTest = cp.array(XTest)
-    YTrain = cp.array(YTrain)
-    YTest = cp.array(YTest)
-    #Train XGBoost Model for Direction 
-    logging.info("\nTraining XGBoost Classifier for direction prediction...")
-    params = copy.deepcopy(XG_PARAMS)
+    linear_model.fit(XTrain_lr_scaled, YTrain)
+    evaluate_model(linear_model, XTest_lr_scaled, YTest, model_type="regression")
 
-    directionTrain = cp.asnumpy((YTrain > 0).astype(float))
-    directionTest = cp.asnumpy((YTest > 0).astype(float))
+    # Log feature importances for Linear Regression
+    importances_lr = np.abs(linear_model.coef_)
+    feature_importance_lr = pd.DataFrame({
+        'feature': linear_features,
+        'importance': importances_lr
+    }).sort_values(by='importance', ascending=False)
+    logging.info("Feature Importances for Linear Regression:")
+    for _, row in feature_importance_lr.iterrows():
+        logging.info(f"{row['feature']}: {row['importance']:.4f}")
 
+    # Generate Linear Regression predictions as additional feature
+    train_lr_preds = linear_model.predict(XTrain_lr_scaled).reshape(-1, 1)
+    test_lr_preds  = linear_model.predict(XTest_lr_scaled).reshape(-1, 1)
 
-    classifier = XGBClassifier(**params)
-    classifier.fit(XTrain, directionTrain, eval_set=[(XTest, directionTest)])
+    # Add LR predictions to Classifier and Regressor feature sets
+    classifier_feature_names = classifier_features + ["LinearRegression_Prediction"]
+    regressor_feature_names  = regressor_features + ["LinearRegression_Prediction"]
 
+    XTrain_classifier = np.column_stack((XTrain_full[classifier_features], train_lr_preds))
+    XTest_classifier  = np.column_stack((XTest_full[classifier_features], test_lr_preds))
+    XTrain_regressor  = np.column_stack((XTrain_full[regressor_features], train_lr_preds))
+    XTest_regressor   = np.column_stack((XTest_full[regressor_features], test_lr_preds))
 
-    # XGBoost Regressor
-    logging.info("\nTraining XGBoost Regressor for price prediction...")
-    regressor = XGBRegressor(**params)
-    regressor.fit(XTrain, YTrain, eval_set=[(XTest, YTest)])
+    # Convert to CuPy arrays for GPU acceleration
+    XTrain_classifier_cp = cp.array(XTrain_classifier)
+    XTest_classifier_cp  = cp.array(XTest_classifier)
+    XTrain_regressor_cp  = cp.array(XTrain_regressor)
+    XTest_regressor_cp   = cp.array(XTest_regressor)
 
-    # Evaluate models
-    evaluate_model(classifier, XTest, directionTest, model_type="classification")
-    evaluate_model(regressor, XTest, YTest, model_type="regression")
+    # Binary labels for classifier
+    direction_YTrain = (YTrain > 0).astype(int)
+    direction_YTest  = (YTest > 0).astype(int)
 
-    # Print model types before saving (for debugging)
-    print(f"Linear model type: {type(linear_model)}")
-    print(f"Classifier type: {type(classifier)}")
-    print(f"Regressor type: {type(regressor)}")
+    # Train XGBoost Classifier
+    logging.info("Training XGBoost Classifier...")
+    classifier = XGBClassifier(**XG_PARAMS_CLASSIFIER)
+    classifier.fit(
+        XTrain_classifier_cp, direction_YTrain,
+        eval_set=[(XTest_classifier_cp, direction_YTest)],
+    )
+    evaluate_model(classifier, XTest_classifier_cp, direction_YTest, model_type="classification")
 
-    # Save models - linear_model with joblib, XGBoost models with their native format
-    joblib.dump(linear_model, MODEL_PATHS['linear'])
-    classifier.save_model(MODEL_PATHS['classifier'].replace('.pkl', '.json'))
-    regressor.save_model(MODEL_PATHS['regressor'].replace('.pkl', '.json'))
-    joblib.dump(dataPreparator, MODEL_PATHS['preparator'])
-    joblib.dump(featureNames, MODEL_PATHS['features'])
+    # Log feature importances for XGBoost Classifier
+    importances_clf = classifier.feature_importances_
+    feature_importance_clf = pd.DataFrame({
+        'feature': classifier_feature_names,
+        'importance': importances_clf
+    }).sort_values(by='importance', ascending=False)
+    logging.info("Feature Importances for XGBoost Classifier:")
+    for _, row in feature_importance_clf.iterrows():
+        logging.info(f"{row['feature']}: {row['importance']:.4f}")
 
+    # Train XGBoost Regressor
+    logging.info("Training XGBoost Regressor...")
+    regressor = XGBRegressor(**XG_PARAMS_REGRESSOR)
+    regressor.fit(
+        XTrain_regressor_cp, YTrain,
+        eval_set=[(XTest_regressor_cp, YTest)],
+    )
+    evaluate_model(regressor, XTest_regressor_cp, YTest, model_type="regression")
+
+    # Log feature importances for XGBoost Regressor
+    importances_reg = regressor.feature_importances_
+    feature_importance_reg = pd.DataFrame({
+        'feature': regressor_feature_names,
+        'importance': importances_reg
+    }).sort_values(by='importance', ascending=False)
+    logging.info("Feature Importances for XGBoost Regressor:")
+    for _, row in feature_importance_reg.iterrows():
+        logging.info(f"{row['feature']}: {row['importance']:.4f}")
+
+    # Save models
+    joblib.dump(linear_model, MODEL_PATHS["linear"])
+    classifier.save_model(MODEL_PATHS["classifier"].replace(".pkl", ".json"))
+    regressor.save_model(MODEL_PATHS["regressor"].replace(".pkl", ".json"))
+    logging.info("Training completed. Models saved successfully.")
 
 def main():
-    data = prepareDataParallel(TRAINING_TICKERS, period="5y")
+    data = prepare_data_parallel(TRAINING_TICKERS, period="5y")
     if data.empty:
         logging.error("No data fetched for training. Exiting...")
         return
     
     logging.info("Starting model training...")
-    trainAndEvaluate(data)
+    train_models(data)
+    logging.info("Model training completed.")
+    print("Model training completed. Check training.log for details.")
 if __name__ == "__main__":
     main()

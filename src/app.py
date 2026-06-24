@@ -1,4 +1,4 @@
-from helper_functions import fetchStockData, getFuturePredictionDate, predictPrice
+from src.helpers import fetchStockData, getFuturePredictionDate, predictPrice
 import yfinance as yf
 
 #Constants 

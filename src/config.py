@@ -3,13 +3,29 @@ EARLY_STOPPING_ROUNDS = 20
 PREDICTION_DAYS = 5
 TEST_SIZE = 0.2
 CV_FOLDS = 5
-XG_PARAMS = {
+XG_PARAMS_CLASSIFIER = {
     'n_estimators': 1000,
     'max_depth': 5,
     'learning_rate': 0.05,
     'tree_method': 'hist',
     'device': 'cuda',
-    'verbosity': 2,
+    'verbosity': 0,
+    'scale_pos_weight': 1.2, 
+    'early_stopping_rounds': 20,
+    'subsample': 0.8,
+    'colsample_bytree': 0.8,
+    'min_child_weight': 5,
+    'gamma': 0.05,
+    'reg_alpha': 0.5,
+    'reg_lambda': 5.0
+}
+XG_PARAMS_REGRESSOR = {
+    'n_estimators': 1000,
+    'max_depth': 5,
+    'learning_rate': 0.05,
+    'tree_method': 'hist',
+    'device': 'cuda',
+    'verbosity': 0,
     'scale_pos_weight': 1.2, 
     'early_stopping_rounds': 20,
     'subsample': 0.8,
