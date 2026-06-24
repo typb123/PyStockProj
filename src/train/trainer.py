@@ -32,7 +32,7 @@ from xgboost import XGBRegressor, XGBClassifier
 from typing import Optional
 from src.config import (
     XG_PARAMS_CLASSIFIER,
-    XG_PARAMS_REGRESSOR, 
+    XG_PARAMS_REGRESSOR,
     MODEL_PATHS,
     TRAINING_TICKERS,
     EARLY_STOPPING_ROUNDS,
@@ -42,10 +42,12 @@ from src.config import (
 
 
 logging.basicConfig(
-    filename='training.log',
+    filename="training.log",
     level=logging.INFO,
-    format='%(asctime)s: - %(levelname)s -%(message)s'
+    format="%(asctime)s: - %(levelname)s -%(message)s",
 )
+
+
 def validate_input_data(data):
     """
     Validate the input data structure before feature/target preparation.
@@ -63,11 +65,14 @@ def validate_input_data(data):
         nan_by_column = data.isnull().sum()
         nan_columns = [col for col in data.columns if nan_by_column[col] > 0]
         for col in nan_columns:
-            logging.info(f"Column {col}: {nan_by_column[col]} NaN values ({nan_by_column[col]/len(data)*100:.2f}%)")
+            logging.info(
+                f"Column {col}: {nan_by_column[col]} NaN values ({nan_by_column[col] / len(data) * 100:.2f}%)"
+            )
 
     logging.info("Data validation complete.")
     return data
-            
+
+
 def fetch_tickers_data(ticker, period="5y"):
     """
     Fetch one ticker and generate indicators before ticker-level concatenation.
@@ -80,65 +85,69 @@ def fetch_tickers_data(ticker, period="5y"):
         if stock_data.empty:
             logging.warning(f"No data returned for {ticker}. Skipping...")
             return None
-        
+
         # Log data size before processing
         logging.info(f"Data size before processing for {ticker}: {stock_data.shape}")
-        
+
         stock_data = calculate_data(stock_data)
         stock_data["Ticker"] = ticker
-        
+
         # Log data size after processing
         logging.info(f"Data size after processing for {ticker}: {stock_data.shape}")
-        
+
         time.sleep(0.2)  # Small delay to avoid rate limits
         return stock_data
     except Exception as e:
         logging.warning(f"Failed to fetch data for {ticker}: {e}")
         return None
-    
 
-    
+
 def prepare_data_parallel(tickers, period="5y") -> pd.DataFrame:
     """Fetch and prepare each ticker independently, then concatenate valid results."""
     logging.info(f"Fetching data for {len(tickers)} tickers...")
-    
+
     with ThreadPoolExecutor(max_workers=10) as executor:
-        results = executor.map(lambda ticker: fetch_tickers_data(ticker, period=period), tickers)
-    
+        results = executor.map(
+            lambda ticker: fetch_tickers_data(ticker, period=period), tickers
+        )
+
     all_data = [data for data in results if data is not None and not data.empty]
-    
+
     logging.info(f"Total tickers fetched with valid data: {len(all_data)}")
 
     if not all_data:
         logging.error("No data fetched for training. Exiting...")
         raise ValueError("No data was fetched for any ticker.")
-    
+
     return pd.concat(all_data, ignore_index=True)
+
 
 def cross_validate_model(x, y, model=None, cv=5):
     """
     Perform cross-validation on the given model and data.
-    
+
     Parameters:
         X (np.ndarray): Feature matrix.
         Y (np.ndarray): Target variable.
         model: Scikit-learn model (default: LinearRegression).
         cv (int): Number of cross-validation folds.
-    
+
     Returns:
         float: Average cross-validated MSE.
     """
     if model is None:
         model = LinearRegression()
-    
+
     # Define custom scoring for negative MSE
-    scores = cross_val_score(model, x, y, scoring='neg_mean_squared_error', cv=cv)
+    scores = cross_val_score(model, x, y, scoring="neg_mean_squared_error", cv=cv)
     if scores is None:
-        raise ValueError("Cross-validation scoring failed. Please check your model and data.")
+        raise ValueError(
+            "Cross-validation scoring failed. Please check your model and data."
+        )
     avg_mse = -np.mean(scores)
     logging.info(f"Cross-Validated MSE (cv={cv}): {avg_mse:.4f}")
     return avg_mse
-    
+
 
 def evaluate_model(model, x_test, y_test, model_type="regression"):
     """Log a compact regression or classification report for a held-out split."""
@@ -204,7 +213,9 @@ def log_xgboost_test_report(
     logging.info(f"XGBoost Test Regression Report: {regression_report_data}")
     logging.info(f"XGBoost Trading Relevance Report: {trading_report_data}")
     logging.info(f"XGBoost Classifier Probability Summary: {probability_summary}")
-    logging.info(f"XGBoost Classifier Probability Tail Report: {probability_tail_report}")
+    logging.info(
+        f"XGBoost Classifier Probability Tail Report: {probability_tail_report}"
+    )
     logging.info(
         f"XGBoost Classifier Probability Threshold Report: {probability_threshold_report}"
     )
@@ -214,7 +225,9 @@ def log_xgboost_test_report(
     logging.info(
         f"XGBoost Regressor Predicted Return Quantile Report: {predicted_return_quantile_report}"
     )
-    logging.info(f"XGBoost Regressor Return Correlation Report: {return_correlation_report}")
+    logging.info(
+        f"XGBoost Regressor Return Correlation Report: {return_correlation_report}"
+    )
 
 
 def build_model_metadata(
@@ -233,9 +246,13 @@ def build_model_metadata(
         "prediction_days": prediction_days,
     }
 
-    
-    
-def train_models(data: pd.DataFrame) -> None:
+
+def train_models(
+    data: pd.DataFrame,
+    prediction_days: int = PREDICTION_DAYS,
+    classifier_params: dict | None = None,
+    regressor_params: dict | None = None,
+) -> None:
     """
     Train the linear baseline, XGBoost classifier, and XGBoost regressor.
 
@@ -248,7 +265,7 @@ def train_models(data: pd.DataFrame) -> None:
     data = validate_input_data(data)
     data_preparator = DataPreparator()
     prepared_data = data_preparator.prepare_for_train(
-        data, prediction_days=PREDICTION_DAYS, test_size=TEST_SIZE
+        data, prediction_days=prediction_days, test_size=TEST_SIZE
     )
 
     # Rebuild DataFrames so explicit feature lists preserve their trained column order.
@@ -262,36 +279,104 @@ def train_models(data: pd.DataFrame) -> None:
 
     # Feature lists are intentionally inline for now; prediction metadata mirrors them.
     linear_features = [
-        'tenkan_sen', 'kijun_sen', 'senkou_span_a', 'senkou_span_b',
-        'chikou_lag_close_26', 'chikou_return_26', 'chikou_above_lag_26',
-        'Open', 'Close', 'rsi', 'signalLine', 'ATR', 
-        '20_day_avg', 'macd', 'BB_Std', 'obv', 'dailyReturn', 
-        'macdHistogram',  'vma_20',  'High', 'Low', 'BB_Middle', 
-        'BB_Upper', 'BB_Lower','stoch_k', 'stoch_d', 'Volume', 
-        '10_day_avg', 'volatility', 'vma_10', '5_day_avg',
+        "tenkan_sen",
+        "kijun_sen",
+        "senkou_span_a",
+        "senkou_span_b",
+        "chikou_lag_close_26",
+        "chikou_return_26",
+        "chikou_above_lag_26",
+        "Open",
+        "Close",
+        "rsi",
+        "signalLine",
+        "ATR",
+        "20_day_avg",
+        "macd",
+        "BB_Std",
+        "obv",
+        "dailyReturn",
+        "macdHistogram",
+        "vma_20",
+        "High",
+        "Low",
+        "BB_Middle",
+        "BB_Upper",
+        "BB_Lower",
+        "stoch_k",
+        "stoch_d",
+        "Volume",
+        "10_day_avg",
+        "volatility",
+        "vma_10",
+        "5_day_avg",
     ]
     classifier_features = [
-        'Open', 'High', 'Low', 'Close', 'Volume',
-        '5_day_avg', '10_day_avg', '20_day_avg',
-        'dailyReturn', 'volatility', 'rsi',
-        'macd', 'signalLine', 'macdHistogram',
-        'obv', 'vma_10', 'vma_20',
-        'tenkan_sen', 'kijun_sen', 'senkou_span_a', 'senkou_span_b',
-        'chikou_lag_close_26', 'chikou_return_26', 'chikou_above_lag_26',
-        'BB_Middle', 'BB_Upper', 'BB_Lower', 'BB_Std',
-        'ATR', 'stoch_k', 'stoch_d'
+        "Open",
+        "High",
+        "Low",
+        "Close",
+        "Volume",
+        "5_day_avg",
+        "10_day_avg",
+        "20_day_avg",
+        "dailyReturn",
+        "volatility",
+        "rsi",
+        "macd",
+        "signalLine",
+        "macdHistogram",
+        "obv",
+        "vma_10",
+        "vma_20",
+        "tenkan_sen",
+        "kijun_sen",
+        "senkou_span_a",
+        "senkou_span_b",
+        "chikou_lag_close_26",
+        "chikou_return_26",
+        "chikou_above_lag_26",
+        "BB_Middle",
+        "BB_Upper",
+        "BB_Lower",
+        "BB_Std",
+        "ATR",
+        "stoch_k",
+        "stoch_d",
     ]
-    regressor_features  = [
-        'Open', 'High', 'Low', 'Close', 'Volume',
-        '5_day_avg', '10_day_avg', '20_day_avg',
-        'dailyReturn', 'volatility', 'rsi',
-        'macd', 'signalLine', 'macdHistogram',
-        'obv', 'vma_10', 'vma_20',
-        'tenkan_sen', 'kijun_sen', 'senkou_span_a', 'senkou_span_b',
-        'chikou_lag_close_26', 'chikou_return_26', 'chikou_above_lag_26',
-        'BB_Middle', 'BB_Upper', 'BB_Lower', 'BB_Std',
-        'ATR', 'stoch_k', 'stoch_d'
-    ] 
+    regressor_features = [
+        "Open",
+        "High",
+        "Low",
+        "Close",
+        "Volume",
+        "5_day_avg",
+        "10_day_avg",
+        "20_day_avg",
+        "dailyReturn",
+        "volatility",
+        "rsi",
+        "macd",
+        "signalLine",
+        "macdHistogram",
+        "obv",
+        "vma_10",
+        "vma_20",
+        "tenkan_sen",
+        "kijun_sen",
+        "senkou_span_a",
+        "senkou_span_b",
+        "chikou_lag_close_26",
+        "chikou_return_26",
+        "chikou_above_lag_26",
+        "BB_Middle",
+        "BB_Upper",
+        "BB_Lower",
+        "BB_Std",
+        "ATR",
+        "stoch_k",
+        "stoch_d",
+    ]
 
     # Linear Regression is a separate scaled baseline, not a stacked XGBoost feature.
     scaler_lr = StandardScaler()
@@ -306,10 +391,9 @@ def train_models(data: pd.DataFrame) -> None:
 
     # Log feature importances for Linear Regression
     importances_lr = np.abs(linear_model.coef_)
-    feature_importance_lr = pd.DataFrame({
-        'feature': linear_features,
-        'importance': importances_lr
-    }).sort_values(by='importance', ascending=False)
+    feature_importance_lr = pd.DataFrame(
+        {"feature": linear_features, "importance": importances_lr}
+    ).sort_values(by="importance", ascending=False)
     logging.info("Feature Importances for Linear Regression:")
     for _, row in feature_importance_lr.iterrows():
         logging.info(f"{row['feature']}: {row['importance']:.4f}")
@@ -330,27 +414,30 @@ def train_models(data: pd.DataFrame) -> None:
     direction_y_test = (y_test > 0).astype(int)
 
     logging.info("Training XGBoost Classifier...")
-    classifier = XGBClassifier(**XG_PARAMS_CLASSIFIER)
+    classifier = XGBClassifier(**(classifier_params or XG_PARAMS_CLASSIFIER))
     classifier.fit(
-        x_train_classifier, direction_y_train,
+        x_train_classifier,
+        direction_y_train,
         eval_set=[(x_val_classifier, direction_y_val)],
     )
-    evaluate_model(classifier, x_test_classifier, direction_y_test, model_type="classification")
+    evaluate_model(
+        classifier, x_test_classifier, direction_y_test, model_type="classification"
+    )
 
     # Log feature importances for XGBoost Classifier
     importances_clf = classifier.feature_importances_
-    feature_importance_clf = pd.DataFrame({
-        'feature': classifier_feature_names,
-        'importance': importances_clf
-    }).sort_values(by='importance', ascending=False)
+    feature_importance_clf = pd.DataFrame(
+        {"feature": classifier_feature_names, "importance": importances_clf}
+    ).sort_values(by="importance", ascending=False)
     logging.info("Feature Importances for XGBoost Classifier:")
     for _, row in feature_importance_clf.iterrows():
         logging.info(f"{row['feature']}: {row['importance']:.4f}")
 
     logging.info("Training XGBoost Regressor...")
-    regressor = XGBRegressor(**XG_PARAMS_REGRESSOR)
+    regressor = XGBRegressor(**(regressor_params or XG_PARAMS_REGRESSOR))
     regressor.fit(
-        x_train_regressor, y_train,
+        x_train_regressor,
+        y_train,
         eval_set=[(x_val_regressor, y_val)],
     )
     evaluate_model(regressor, x_test_regressor, y_test, model_type="regression")
@@ -367,10 +454,9 @@ def train_models(data: pd.DataFrame) -> None:
 
     # Log feature importances for XGBoost Regressor
     importances_reg = regressor.feature_importances_
-    feature_importance_reg = pd.DataFrame({
-        'feature': regressor_feature_names,
-        'importance': importances_reg
-    }).sort_values(by='importance', ascending=False)
+    feature_importance_reg = pd.DataFrame(
+        {"feature": regressor_feature_names, "importance": importances_reg}
+    ).sort_values(by="importance", ascending=False)
     logging.info("Feature Importances for XGBoost Regressor:")
     for _, row in feature_importance_reg.iterrows():
         logging.info(f"{row['feature']}: {row['importance']:.4f}")
@@ -380,7 +466,7 @@ def train_models(data: pd.DataFrame) -> None:
         linear_features,
         classifier_features,
         regressor_features,
-        PREDICTION_DAYS,
+        prediction_days,
     )
     joblib.dump(linear_model, MODEL_PATHS["linear"])
     joblib.dump(scaler_lr, MODEL_PATHS["linear_scaler"])
@@ -391,15 +477,18 @@ def train_models(data: pd.DataFrame) -> None:
     regressor.save_model(MODEL_PATHS["regressor"])
     logging.info("Training completed. Models saved successfully.")
 
+
 def main():
     data = prepare_data_parallel(TRAINING_TICKERS, period="5y")
     if data.empty:
         logging.error("No data fetched for training. Exiting...")
         return
-    
+
     logging.info("Starting model training...")
     train_models(data)
     logging.info("Model training completed.")
     print("Model training completed. Check training.log for details.")
+
+
 if __name__ == "__main__":
     main()
