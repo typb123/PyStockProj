@@ -7,17 +7,15 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from sklearn.model_selection import cross_val_score
 from sklearn.linear_model import LinearRegression
-from sklearn.metrics import (
-    mean_squared_error, 
-    mean_absolute_error, 
-    r2_score, 
-    classification_report,
-    accuracy_score
-)
 from sklearn.preprocessing import StandardScaler
 from src.data.data_prep import DataPreparator
 from src.data.technical_indicators import calculate_data
 from src.data.data_fetch import fetch_stock_data
+from src.train.evaluator import (
+    build_classification_report,
+    build_regression_report,
+    build_trading_relevance_report,
+)
 from xgboost import XGBRegressor, XGBClassifier
 from typing import Optional
 from src.config import (
@@ -124,19 +122,36 @@ def evaluate_model(model, x_test, y_test, model_type="regression"):
     y_pred = model.predict(x_test)
 
     if model_type == "regression":
-        mse = mean_squared_error(y_test, y_pred)
-        mae = mean_absolute_error(y_test, y_pred)
-        r2 = r2_score(y_test, y_pred)
-        logging.info(f"MSE: {mse:.4f}, MAE: {mae:.4f}, R²: {r2:.4f}")
-        #print(f" MSE: {mse:.4f}, MAE: {mae:.4f}, R²: {r2:.4f}")
+        report = build_regression_report(y_test, y_pred)
+        logging.info(
+            f"MSE: {report['mse']:.4f}, MAE: {report['mae']:.4f}, R²: {report['r2']:.4f}"
+        )
 
     elif model_type == "classification":
-        accuracy = accuracy_score(y_test.astype(int), y_pred.astype(int))
-        report = classification_report(y_test.astype(int), y_pred.astype(int))
-        logging.info(f"Accuracy: {accuracy:.4%}")
-        logging.info(f"Classification Report:\n{report}")
-        #print(f" Accuracy: {accuracy:.4%}")
-        #print(f" Classification Report:\n{report}")
+        report = build_classification_report(y_test, y_pred)
+        logging.info(f"Accuracy: {report['accuracy']:.4%}")
+        logging.info(f"Classification Report: {report}")
+
+
+def log_xgboost_test_report(
+    y_train,
+    y_test,
+    classifier_predictions,
+    regressor_predictions,
+):
+    classification_report_data = build_classification_report(
+        (y_test > 0).astype(int), classifier_predictions
+    )
+    regression_report_data = build_regression_report(
+        y_test, regressor_predictions, y_train=y_train
+    )
+    trading_report_data = build_trading_relevance_report(
+        y_test, regressor_predictions, classifier_predictions
+    )
+
+    logging.info(f"XGBoost Test Classification Report: {classification_report_data}")
+    logging.info(f"XGBoost Test Regression Report: {regression_report_data}")
+    logging.info(f"XGBoost Trading Relevance Report: {trading_report_data}")
 
 
 def build_model_metadata(
@@ -274,6 +289,12 @@ def train_models(data: pd.DataFrame) -> None:
         eval_set=[(x_val_regressor, y_val)],
     )
     evaluate_model(regressor, x_test_regressor, y_test, model_type="regression")
+    log_xgboost_test_report(
+        y_train,
+        y_test,
+        classifier.predict(x_test_classifier),
+        regressor.predict(x_test_regressor),
+    )
 
     # Log feature importances for XGBoost Regressor
     importances_reg = regressor.feature_importances_
