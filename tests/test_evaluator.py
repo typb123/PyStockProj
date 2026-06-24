@@ -6,7 +6,9 @@ from src.train.evaluator import (
     build_probability_summary,
     build_probability_tail_report,
     build_probability_threshold_report,
+    build_predicted_return_quantile_report,
     build_regression_report,
+    build_return_correlation_report,
     build_trading_relevance_report,
 )
 
@@ -131,3 +133,47 @@ def test_build_probability_threshold_report_summarizes_selected_rows():
     assert report[0.70]["selected_fraction"] == 0.2
     assert report[0.70]["precision"] == 1.0
     assert report[0.70]["avg_actual_return"] == 0.05
+
+
+def test_build_predicted_return_quantile_report_summarizes_ranking_buckets():
+    predicted_returns = np.array([0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0])
+    actual_returns = np.array([-0.10, -0.05, -0.02, 0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.07])
+
+    report = build_predicted_return_quantile_report(actual_returns, predicted_returns)
+
+    assert report["top_10_pct"]["count"] == 1
+    assert report["top_10_pct"]["avg_actual_return"] == 0.07
+    assert report["top_10_pct"]["avg_predicted_return"] == 1.0
+    assert report["top_10_pct"]["precision"] == 1.0
+    assert report["top_20_pct"]["count"] == 2
+    assert report["top_20_pct"]["avg_actual_return"] == 0.065
+    assert report["top_20_pct"]["avg_predicted_return"] == 0.95
+    assert report["bottom_10_pct"]["count"] == 1
+    assert report["bottom_10_pct"]["avg_actual_return"] == -0.10
+    assert report["bottom_10_pct"]["avg_predicted_return"] == 0.1
+    assert report["bottom_10_pct"]["precision"] == 0.0
+    assert report["bottom_20_pct"]["count"] == 2
+    assert report["bottom_20_pct"]["avg_actual_return"] == -0.07500000000000001
+    assert report["bottom_20_pct"]["avg_predicted_return"] == 0.15000000000000002
+
+
+def test_build_return_correlation_report_summarizes_linear_and_rank_signal():
+    actual_returns = np.array([10.0, 20.0, 30.0, 40.0])
+    predicted_returns = np.array([1.0, 2.0, 4.0, 3.0])
+
+    report = build_return_correlation_report(actual_returns, predicted_returns)
+
+    assert np.isclose(report["pearson"], np.corrcoef(actual_returns, predicted_returns)[0, 1])
+    assert np.isclose(report["spearman"], 0.8)
+
+
+def test_predicted_return_reports_reject_empty_and_mismatched_inputs():
+    with pytest.raises(ValueError, match="actual_returns"):
+        build_predicted_return_quantile_report(np.array([]), np.array([]))
+
+    for report_builder in [
+        build_predicted_return_quantile_report,
+        build_return_correlation_report,
+    ]:
+        with pytest.raises(ValueError, match="same length"):
+            report_builder(np.array([0.01, -0.02]), np.array([0.01]))

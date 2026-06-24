@@ -16,7 +16,9 @@ from src.train.evaluator import (
     build_probability_summary,
     build_probability_tail_report,
     build_probability_threshold_report,
+    build_predicted_return_quantile_report,
     build_regression_report,
+    build_return_correlation_report,
     build_trading_relevance_report,
 )
 from xgboost import XGBRegressor, XGBClassifier
@@ -159,6 +161,12 @@ def log_xgboost_test_report(
     probability_threshold_report = build_probability_threshold_report(
         classifier_probability_up, y_test
     )
+    predicted_return_quantile_report = build_predicted_return_quantile_report(
+        y_test, regressor_predictions
+    )
+    return_correlation_report = build_return_correlation_report(
+        y_test, regressor_predictions
+    )
 
     logging.info(f"XGBoost Test Classification Report: {classification_report_data}")
     logging.info(f"XGBoost Test Regression Report: {regression_report_data}")
@@ -168,6 +176,10 @@ def log_xgboost_test_report(
     logging.info(
         f"XGBoost Classifier Probability Threshold Report: {probability_threshold_report}"
     )
+    logging.info(
+        f"XGBoost Regressor Predicted Return Quantile Report: {predicted_return_quantile_report}"
+    )
+    logging.info(f"XGBoost Regressor Return Correlation Report: {return_correlation_report}")
 
 
 def build_model_metadata(

@@ -135,6 +135,50 @@ def build_probability_threshold_report(
     return report
 
 
+def build_predicted_return_quantile_report(actual_returns, predicted_returns):
+    actual_returns = np.asarray(actual_returns, dtype=float)
+    predicted_returns = np.asarray(predicted_returns, dtype=float)
+    _validate_return_inputs(actual_returns, predicted_returns)
+    order = np.argsort(predicted_returns)
+
+    return {
+        "top_10_pct": _return_bucket_stats(
+            order[-_tail_count(predicted_returns, 0.10):],
+            actual_returns,
+            predicted_returns,
+        ),
+        "top_20_pct": _return_bucket_stats(
+            order[-_tail_count(predicted_returns, 0.20):],
+            actual_returns,
+            predicted_returns,
+        ),
+        "bottom_10_pct": _return_bucket_stats(
+            order[:_tail_count(predicted_returns, 0.10)],
+            actual_returns,
+            predicted_returns,
+        ),
+        "bottom_20_pct": _return_bucket_stats(
+            order[:_tail_count(predicted_returns, 0.20)],
+            actual_returns,
+            predicted_returns,
+        ),
+    }
+
+
+def build_return_correlation_report(actual_returns, predicted_returns):
+    actual_returns = np.asarray(actual_returns, dtype=float)
+    predicted_returns = np.asarray(predicted_returns, dtype=float)
+    _validate_return_inputs(actual_returns, predicted_returns)
+
+    return {
+        "pearson": _correlation_or_nan(actual_returns, predicted_returns),
+        "spearman": _correlation_or_nan(
+            _rank_values(actual_returns),
+            _rank_values(predicted_returns),
+        ),
+    }
+
+
 def _mean_or_nan(values):
     if len(values) == 0:
         return np.nan
@@ -146,6 +190,13 @@ def _validate_probability_inputs(probability_up, actual_returns):
         raise ValueError("probability_up must contain at least one value.")
     if len(probability_up) != len(actual_returns):
         raise ValueError("probability_up and actual_returns must have the same length.")
+
+
+def _validate_return_inputs(actual_returns, predicted_returns):
+    if len(actual_returns) == 0:
+        raise ValueError("actual_returns must contain at least one value.")
+    if len(actual_returns) != len(predicted_returns):
+        raise ValueError("actual_returns and predicted_returns must have the same length.")
 
 
 def _up_rate_or_nan(returns):
@@ -165,3 +216,37 @@ def _tail_stats(indices, actual_returns):
         "avg_actual_return": _mean_or_nan(selected_returns),
         "precision": _up_rate_or_nan(selected_returns),
     }
+
+
+def _return_bucket_stats(indices, actual_returns, predicted_returns):
+    selected_actual_returns = actual_returns[indices]
+    selected_predicted_returns = predicted_returns[indices]
+    return {
+        "count": int(len(indices)),
+        "avg_actual_return": _mean_or_nan(selected_actual_returns),
+        "avg_predicted_return": _mean_or_nan(selected_predicted_returns),
+        "precision": _up_rate_or_nan(selected_actual_returns),
+    }
+
+
+def _correlation_or_nan(left, right):
+    if len(left) < 2 or np.std(left) == 0 or np.std(right) == 0:
+        return np.nan
+    return float(np.corrcoef(left, right)[0, 1])
+
+
+def _rank_values(values):
+    order = np.argsort(values, kind="mergesort")
+    ranks = np.empty(len(values), dtype=float)
+    sorted_values = values[order]
+    start = 0
+
+    while start < len(values):
+        end = start + 1
+        while end < len(values) and sorted_values[end] == sorted_values[start]:
+            end += 1
+        average_rank = (start + end - 1) / 2.0
+        ranks[order[start:end]] = average_rank
+        start = end
+
+    return ranks
