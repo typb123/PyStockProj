@@ -14,6 +14,10 @@ def get_stock_info(ticker):
         one_month_stock_data = fetch_stock_data(ticker, period="1mo")
         one_year_stock_data = fetch_stock_data(ticker, period="1y")
 
+        if one_month_stock_data.empty or one_year_stock_data.empty:
+            print(f"No price data found for {ticker}. Check the ticker symbol and try again.")
+            return
+
         # Calculate 1-month high and low
         one_month_high = one_month_stock_data['High'].max()
         one_month_low = one_month_stock_data['Low'].min()
@@ -59,28 +63,17 @@ def main_menu():
     print(WELCOME_MESSAGE)
 
     while True:
-        print("1. Enter Ticker Symbol")
-        print("2. Exit")
+        user_input = input("Enter a ticker symbol, or q to quit: ").strip()
 
-        try:
-            #Take user input and validate it
-            user_choice = int(input("Please enter an option: ").strip())
-        except ValueError:
+        if user_input.lower() in {"q", "quit", "exit", "2"}:
+            print(GOODBYE)
+            break
+
+        if not user_input:
             print(INVALID)
             continue
 
-        if user_choice == 1:
-            ticker = input("Enter a ticker symbol (e.g AAPL): ").strip().upper()
-            if ticker:
-                get_stock_info(ticker)
-            else:
-                print(INVALID)
-                continue
-        elif user_choice == 2:
-            print(GOODBYE)
-            break
-        else:
-            print(INVALID) 
+        get_stock_info(user_input.upper())
 
 
 
@@ -98,4 +91,3 @@ if __name__ == "__main__":
 
 
     
-
