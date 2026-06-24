@@ -3,6 +3,7 @@ import numpy as np
 from typing import List, Dict
 from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import train_test_split
+from src.config import REQUIRED_COLUMNS
 
 class DataPreparator:
     """
@@ -84,7 +85,10 @@ class DataPreparator:
         df = self.create_target(df, predictionDays)
 
         #Identify feature columns
-        self.featureColumns = self.getFeatureColumns(df)
+        missing_columns = [col for col in REQUIRED_COLUMNS if col not in df.columns]
+        if missing_columns:
+            raise ValueError(f"Missing required feature columns: {missing_columns}")
+        self.featureColumns = list(REQUIRED_COLUMNS)
 
         #Drop and rows with Nan Vals
         df = df.dropna()
