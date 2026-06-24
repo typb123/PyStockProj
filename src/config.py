@@ -38,10 +38,12 @@ XG_PARAMS_REGRESSOR = {
 
 MODEL_PATHS = {
     'linear': 'models/linear_regression_model.pkl',
+    'linear_scaler': 'models/linear_regression_scaler.pkl',
     'classifier': 'models/xgboost_classifier.pkl',
     'regressor': 'models/xgboost_regressor.pkl',
     'preparator': 'models/data_preparator.pkl',
-    'features': 'models/feature_names.pkl'
+    'features': 'models/feature_names.pkl',
+    'model_metadata': 'models/model_metadata.pkl'
 }
 #These are the 150 tickers I am currently training on
 TRAINING_TICKERS = [

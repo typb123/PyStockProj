@@ -318,7 +318,19 @@ def train_models(data: pd.DataFrame) -> None:
         logging.info(f"{row['feature']}: {row['importance']:.4f}")
 
     # Save models
+    model_metadata = {
+        "linear_features": linear_features,
+        "classifier_features": classifier_features,
+        "regressor_features": regressor_features,
+        "classifier_feature_names": classifier_feature_names,
+        "regressor_feature_names": regressor_feature_names,
+        "prediction_days": PREDICTION_DAYS,
+    }
     joblib.dump(linear_model, MODEL_PATHS["linear"])
+    joblib.dump(scaler_lr, MODEL_PATHS["linear_scaler"])
+    joblib.dump(data_preparator, MODEL_PATHS["preparator"])
+    joblib.dump(all_features, MODEL_PATHS["features"])
+    joblib.dump(model_metadata, MODEL_PATHS["model_metadata"])
     classifier.save_model(MODEL_PATHS["classifier"].replace(".pkl", ".json"))
     regressor.save_model(MODEL_PATHS["regressor"].replace(".pkl", ".json"))
     logging.info("Training completed. Models saved successfully.")
