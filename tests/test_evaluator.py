@@ -2,6 +2,7 @@ import numpy as np
 import pytest
 
 from src.train.evaluator import (
+    build_actual_return_baseline_report,
     build_classification_report,
     build_combined_signal_report,
     build_probability_summary,
@@ -59,6 +60,29 @@ def test_build_trading_relevance_report_splits_by_classifier_direction():
     assert report["avg_actual_return_when_predicted_down"] == 0.004999999999999999
     assert report["avg_predicted_return_when_predicted_up"] == 0.045
     assert report["avg_predicted_return_when_predicted_down"] == 0.005000000000000001
+
+
+def test_build_actual_return_baseline_report_summarizes_full_test_returns():
+    report = build_actual_return_baseline_report(np.array([0.10, -0.05, 0.00, 0.03]))
+
+    assert report["count"] == 4
+    assert report["avg_actual_return"] == 0.02
+    assert report["positive_return_rate"] == 0.5
+    assert report["precision"] == 0.5
+
+
+def test_build_actual_return_baseline_report_rejects_empty_input():
+    with pytest.raises(ValueError, match="actual_returns"):
+        build_actual_return_baseline_report(np.array([]))
+
+
+def test_build_actual_return_baseline_report_preserves_nan_inf_behavior():
+    report = build_actual_return_baseline_report(np.array([np.nan, np.inf, -0.01]))
+
+    assert report["count"] == 3
+    assert np.isnan(report["avg_actual_return"])
+    assert report["positive_return_rate"] == 1 / 3
+    assert report["precision"] == 1 / 3
 
 
 def test_build_probability_summary_reports_distribution():

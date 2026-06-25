@@ -18,6 +18,7 @@ from src.data.data_prep import DataPreparator
 from src.data.technical_indicators import calculate_data
 from src.data.data_fetch import fetch_stock_data
 from src.train.evaluator import (
+    build_actual_return_baseline_report,
     build_classification_report,
     build_combined_signal_report,
     build_probability_summary,
@@ -187,6 +188,7 @@ def log_xgboost_test_report(
     regression_report_data = build_regression_report(
         y_test, regressor_predictions, y_train=y_train
     )
+    actual_return_baseline_report = build_actual_return_baseline_report(y_test)
     trading_report_data = build_trading_relevance_report(
         y_test, regressor_predictions, classifier_predictions
     )
@@ -217,6 +219,9 @@ def log_xgboost_test_report(
 
     logging.info(f"XGBoost Test Classification Report: {classification_report_data}")
     logging.info(f"XGBoost Test Regression Report: {regression_report_data}")
+    logging.info(
+        f"XGBoost Actual Return Baseline Report: {actual_return_baseline_report}"
+    )
     logging.info(f"XGBoost Trading Relevance Report: {trading_report_data}")
     logging.info(f"XGBoost Classifier Probability Summary: {probability_summary}")
     logging.info(

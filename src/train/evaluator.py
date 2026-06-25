@@ -94,6 +94,21 @@ def build_trading_relevance_report(actual_returns, predicted_returns, predicted_
     }
 
 
+def build_actual_return_baseline_report(actual_returns):
+    """Summarize the full test-set return level before signal filtering."""
+    actual_returns = np.asarray(actual_returns, dtype=float)
+    if len(actual_returns) == 0:
+        raise ValueError("actual_returns must contain at least one value.")
+
+    positive_return_rate = _up_rate_or_nan(actual_returns)
+    return {
+        "count": int(len(actual_returns)),
+        "avg_actual_return": _mean_or_nan(actual_returns),
+        "positive_return_rate": positive_return_rate,
+        "precision": positive_return_rate,
+    }
+
+
 def build_probability_summary(probability_up):
     """Describe the distribution of predicted-up probabilities.
 
