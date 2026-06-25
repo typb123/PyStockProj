@@ -5,6 +5,8 @@ pipeline while allowing small parameter and prediction-horizon overrides.
 """
 
 import sys
+import ast
+import math
 from copy import deepcopy
 from pathlib import Path
 
@@ -29,6 +31,10 @@ TICKERS = [
 ]
 PERIOD = "5y"
 SELECTED_EXPERIMENT = "baseline_10d"
+TRAINING_LOG = PROJECT_ROOT / "training.log"
+VALIDATION_THRESHOLD_LABEL = "XGBoost Classifier Validation-Selected Threshold Report"
+REGRESSOR_QUANTILE_LABEL = "XGBoost Regressor Predicted Return Quantile Report"
+COMBINED_SIGNAL_LABEL = "XGBoost Combined Signal Report"
 
 
 def build_experiments() -> dict:
@@ -86,6 +92,92 @@ def build_experiments() -> dict:
     }
 
 
+def _extract_report_from_log(log_path: Path, label: str):
+    if not log_path.exists():
+        return None
+
+    marker = f"{label}: "
+    matching_line = None
+    for line in log_path.read_text().splitlines():
+        if marker in line:
+            matching_line = line
+
+    if matching_line is None:
+        return None
+
+    report_text = matching_line.split(marker, 1)[1]
+    try:
+        return ast.literal_eval(report_text.replace("nan", "None"))
+    except (SyntaxError, ValueError):
+        return None
+
+
+def _format_percent(value):
+    if value is None or (isinstance(value, float) and math.isnan(value)):
+        return "unavailable"
+    return f"{value:.2%}"
+
+
+def _print_report_section(title, stats, count_key="selected_count"):
+    print(f"\n{title}:")
+    if not stats:
+        print("- unavailable")
+        return
+
+    print(f"- selected count: {stats.get(count_key, 'unavailable')}")
+    print(f"- avg actual return: {_format_percent(stats.get('avg_actual_return'))}")
+    print(f"- precision: {_format_percent(stats.get('precision'))}")
+
+
+def _print_experiment_summary(experiment_name, experiment, log_path=TRAINING_LOG):
+    validation_threshold_report = _extract_report_from_log(
+        log_path,
+        VALIDATION_THRESHOLD_LABEL,
+    )
+    regressor_quantile_report = _extract_report_from_log(
+        log_path,
+        REGRESSOR_QUANTILE_LABEL,
+    )
+    combined_signal_report = _extract_report_from_log(log_path, COMBINED_SIGNAL_LABEL)
+
+    validation_stats = (
+        validation_threshold_report.get("selected_test_stats")
+        if validation_threshold_report
+        else None
+    )
+    regressor_top_20_stats = (
+        regressor_quantile_report.get("top_20_pct")
+        if regressor_quantile_report
+        else None
+    )
+
+    print("\n=== Experiment Summary ===")
+    print(f"Experiment: {experiment_name}")
+    print(f"Prediction horizon: {experiment['prediction_days']} trading days")
+    _print_report_section("Validation-selected threshold only", validation_stats)
+    _print_report_section("Regressor top 20% only", regressor_top_20_stats, "count")
+    _print_report_section("Combined signal", combined_signal_report)
+
+    candidates = [
+        ("validation threshold", validation_stats),
+        ("regressor top 20%", regressor_top_20_stats),
+        ("combined signal", combined_signal_report),
+    ]
+    available_candidates = [
+        (name, stats["avg_actual_return"])
+        for name, stats in candidates
+        if stats and stats.get("avg_actual_return") is not None
+    ]
+
+    print("\nQuick read:")
+    if not available_candidates:
+        print("- Not enough report data to compare signals.")
+        return
+
+    best_name, best_return = max(available_candidates, key=lambda item: item[1])
+    print(f"- Highest avg actual return: {best_name} ({_format_percent(best_return)})")
+
+
 def main() -> None:
     experiments = build_experiments()
 
@@ -104,6 +196,7 @@ def main() -> None:
 
     data = prepare_data_parallel(TICKERS, period=PERIOD)
     train_models(data, **experiment)
+    _print_experiment_summary(SELECTED_EXPERIMENT, experiment)
 
     print("=== Sample predictions after training ===")
     for ticker in ["AAPL", "MSFT", "ARM", "XSD", "ROK", "VCIT", "SPY"]:
