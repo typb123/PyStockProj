@@ -21,3 +21,8 @@ Experiment notes - raw return baseline
 - Added a combined signal report using classifier probability >= 0.60 and top 20% regressor rank.
 - Added a readable experiment summary so I do not have to dig through raw training logs every run.
 - In the small test, regressor top 20% looked stronger than the combined signal.
+- core_25 had some classifier-threshold edge
+- core_50 was basically baseline/noise
+- broad_200 had a tiny high-confidence classifier pocket but weak regressor edge
+- combined signal underperformed
+- raw forward return is probably not the final target
