@@ -290,6 +290,41 @@ def build_return_correlation_report(actual_returns, predicted_returns):
     }
 
 
+def build_combined_signal_report(
+    probability_up,
+    actual_returns,
+    predicted_returns,
+    probability_threshold=0.60,
+    top_return_fraction=0.20,
+):
+    """Evaluate rows selected by both classifier probability and regressor rank."""
+    probability_up = np.asarray(probability_up, dtype=float)
+    actual_returns = np.asarray(actual_returns, dtype=float)
+    predicted_returns = np.asarray(predicted_returns, dtype=float)
+    _validate_probability_inputs(probability_up, actual_returns)
+    _validate_return_inputs(actual_returns, predicted_returns)
+
+    probability_mask = probability_up >= probability_threshold
+    order = np.argsort(predicted_returns)
+    top_return_indices = order[-_tail_count(predicted_returns, top_return_fraction):]
+    top_return_mask = np.zeros(len(predicted_returns), dtype=bool)
+    top_return_mask[top_return_indices] = True
+
+    selected = probability_mask & top_return_mask
+    selected_actual_returns = actual_returns[selected]
+    selected_predicted_returns = predicted_returns[selected]
+
+    return {
+        "probability_threshold": probability_threshold,
+        "top_return_fraction": top_return_fraction,
+        "selected_count": int(np.sum(selected)),
+        "selected_fraction": float(np.mean(selected)),
+        "avg_actual_return": _mean_or_nan(selected_actual_returns),
+        "avg_predicted_return": _mean_or_nan(selected_predicted_returns),
+        "precision": _up_rate_or_nan(selected_actual_returns),
+    }
+
+
 def _mean_or_nan(values):
     if len(values) == 0:
         return np.nan

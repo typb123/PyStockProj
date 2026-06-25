@@ -3,6 +3,7 @@ import pytest
 
 from src.train.evaluator import (
     build_classification_report,
+    build_combined_signal_report,
     build_probability_summary,
     build_probability_tail_report,
     build_probability_threshold_report,
@@ -150,7 +151,10 @@ def test_validation_selected_threshold_report_selects_best_validation_threshold(
     assert report["min_selected_count"] == 1
     assert report["selection_metric"] == "avg_actual_return"
     assert report["selected_threshold"] == 0.70
-    assert report["selected_validation_stats"] == report["validation_threshold_report"][0.70]
+    assert (
+        report["selected_validation_stats"]
+        == report["validation_threshold_report"][0.70]
+    )
 
 
 def test_validation_selected_threshold_report_chooses_eligible_threshold():
@@ -221,7 +225,11 @@ def test_validation_selected_threshold_report_rejects_invalid_inputs():
         )
     with pytest.raises(ValueError, match="min_selected_count"):
         build_validation_selected_threshold_report(
-            valid_probabilities, valid_returns, valid_probabilities, valid_returns, min_selected_count=0
+            valid_probabilities,
+            valid_returns,
+            valid_probabilities,
+            valid_returns,
+            min_selected_count=0,
         )
     with pytest.raises(ValueError, match="selection_metric"):
         build_validation_selected_threshold_report(
@@ -235,7 +243,9 @@ def test_validation_selected_threshold_report_rejects_invalid_inputs():
 
 def test_build_predicted_return_quantile_report_summarizes_ranking_buckets():
     predicted_returns = np.array([0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0])
-    actual_returns = np.array([-0.10, -0.05, -0.02, 0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.07])
+    actual_returns = np.array(
+        [-0.10, -0.05, -0.02, 0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.07]
+    )
 
     report = build_predicted_return_quantile_report(actual_returns, predicted_returns)
 
@@ -261,8 +271,41 @@ def test_build_return_correlation_report_summarizes_linear_and_rank_signal():
 
     report = build_return_correlation_report(actual_returns, predicted_returns)
 
-    assert np.isclose(report["pearson"], np.corrcoef(actual_returns, predicted_returns)[0, 1])
+    assert np.isclose(
+        report["pearson"], np.corrcoef(actual_returns, predicted_returns)[0, 1]
+    )
     assert np.isclose(report["spearman"], 0.8)
+
+
+def test_build_combined_signal_report_selects_probability_and_return_rank_overlap():
+    probability_up = np.array([0.55, 0.65, 0.70, 0.80, 0.50])
+    actual_returns = np.array([-0.02, 0.03, -0.01, 0.05, 0.02])
+    predicted_returns = np.array([0.01, 0.04, 0.03, 0.05, 0.02])
+
+    report = build_combined_signal_report(
+        probability_up,
+        actual_returns,
+        predicted_returns,
+        probability_threshold=0.60,
+        top_return_fraction=0.40,
+    )
+
+    assert report["probability_threshold"] == 0.60
+    assert report["top_return_fraction"] == 0.40
+    assert report["selected_count"] == 2
+    assert report["selected_fraction"] == 0.4
+    assert np.isclose(report["avg_actual_return"], 0.04)
+    assert np.isclose(report["avg_predicted_return"], 0.045)
+    assert report["precision"] == 1.0
+
+
+def test_build_combined_signal_report_rejects_mismatched_inputs():
+    with pytest.raises(ValueError, match="same length"):
+        build_combined_signal_report(
+            np.array([0.60, 0.70]),
+            np.array([0.01, -0.02]),
+            np.array([0.03]),
+        )
 
 
 def test_predicted_return_reports_reject_empty_and_mismatched_inputs():

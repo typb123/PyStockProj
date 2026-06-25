@@ -19,6 +19,7 @@ from src.data.technical_indicators import calculate_data
 from src.data.data_fetch import fetch_stock_data
 from src.train.evaluator import (
     build_classification_report,
+    build_combined_signal_report,
     build_probability_summary,
     build_probability_tail_report,
     build_probability_threshold_report,
@@ -208,6 +209,11 @@ def log_xgboost_test_report(
     return_correlation_report = build_return_correlation_report(
         y_test, regressor_predictions
     )
+    combined_signal_report = build_combined_signal_report(
+        classifier_probability_up,
+        y_test,
+        regressor_predictions,
+    )
 
     logging.info(f"XGBoost Test Classification Report: {classification_report_data}")
     logging.info(f"XGBoost Test Regression Report: {regression_report_data}")
@@ -228,6 +234,7 @@ def log_xgboost_test_report(
     logging.info(
         f"XGBoost Regressor Return Correlation Report: {return_correlation_report}"
     )
+    logging.info(f"XGBoost Combined Signal Report: {combined_signal_report}")
 
 
 def build_model_metadata(
