@@ -3,7 +3,7 @@
 # Training/evaluation defaults shared by trainer.py.
 LOG_FILE = "training.log"
 EARLY_STOPPING_ROUNDS = 20
-PREDICTION_DAYS = 5
+PREDICTION_DAYS = 10
 TEST_SIZE = 0.2
 CV_FOLDS = 5
 

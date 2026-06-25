@@ -28,7 +28,7 @@ TICKERS = [
     "SPY",
 ]
 PERIOD = "5y"
-SELECTED_EXPERIMENT = "baseline_5d"
+SELECTED_EXPERIMENT = "baseline_10d"
 
 
 def build_experiments() -> dict:
@@ -77,6 +77,11 @@ def build_experiments() -> dict:
             "prediction_days": 10,
             "classifier_params": baseline_classifier,
             "regressor_params": baseline_regressor,
+        },
+        "regressor_looser_10d": {
+            "prediction_days": 10,
+            "classifier_params": baseline_classifier,
+            "regressor_params": regressor_looser,
         },
     }
 
