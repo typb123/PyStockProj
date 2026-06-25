@@ -4,6 +4,12 @@ This script is a repeatable research helper, not a unit test. It trains on a
 fixed 10-ticker universe, then prints one AAPL prediction using the saved models.
 """
 
+import sys
+from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(PROJECT_ROOT))
+
 from src.inference.predictor import predict_price
 from src.train.trainer import prepare_data_parallel, train_models
 

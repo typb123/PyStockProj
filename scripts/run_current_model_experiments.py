@@ -4,12 +4,16 @@ This script is for research only. It intentionally reuses the current training
 pipeline while allowing small parameter and prediction-horizon overrides.
 """
 
+import sys
 from copy import deepcopy
+from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.config import XG_PARAMS_CLASSIFIER, XG_PARAMS_REGRESSOR
 from src.inference.predictor import predict_price
 from src.train.trainer import prepare_data_parallel, train_models
-
 
 TICKERS = [
     "AAPL",
