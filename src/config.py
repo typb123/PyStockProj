@@ -2,10 +2,8 @@
 
 # Training/evaluation defaults shared by trainer.py.
 LOG_FILE = "training.log"
-EARLY_STOPPING_ROUNDS = 20
 PREDICTION_DAYS = 10
 TEST_SIZE = 0.2
-CV_FOLDS = 5
 
 # XGBoost model parameters. Keep changes deliberate because they affect comparability.
 XG_PARAMS_CLASSIFIER = {
@@ -32,7 +30,6 @@ XG_PARAMS_REGRESSOR = {
     "tree_method": "hist",
     "device": "cpu",
     "verbosity": 0,
-    "scale_pos_weight": 1.2,
     "early_stopping_rounds": 20,
     "subsample": 0.8,
     "colsample_bytree": 0.8,

@@ -7,7 +7,7 @@ bleed across ticker boundaries.
 
 import pandas as pd
 import numpy as np
-from typing import List, Optional
+from typing import List
 
 
 def calculate_data(data: pd.DataFrame) -> pd.DataFrame:

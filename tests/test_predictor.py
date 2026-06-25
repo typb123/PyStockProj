@@ -1,5 +1,6 @@
 import numpy as np
 import pandas as pd
+import pytest
 
 import src.inference.predictor as predictor
 from src.config import MODEL_PATHS
@@ -95,12 +96,9 @@ def test_predict_price_rejects_invalid_latest_features(monkeypatch):
         latest_row={"Close": np.nan, "Volume": np.inf},
     )
 
-    try:
+    with pytest.raises(ValueError) as exc_info:
         predictor.predict_price("AAPL")
-    except ValueError as exc:
-        message = str(exc)
-    else:
-        raise AssertionError("Expected ValueError for invalid latest features")
 
+    message = str(exc_info.value)
     assert "Close" in message
     assert "Volume" in message

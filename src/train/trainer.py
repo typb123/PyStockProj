@@ -7,7 +7,6 @@ XGBoost trains a direction classifier and a return-magnitude regressor.
 import joblib
 import pandas as pd
 import numpy as np
-import copy
 import logging
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -31,13 +30,11 @@ from src.train.evaluator import (
     build_validation_selected_threshold_report,
 )
 from xgboost import XGBRegressor, XGBClassifier
-from typing import Optional
 from src.config import (
     XG_PARAMS_CLASSIFIER,
     XG_PARAMS_REGRESSOR,
     MODEL_PATHS,
     TRAINING_TICKERS,
-    EARLY_STOPPING_ROUNDS,
     PREDICTION_DAYS,
     TEST_SIZE,
 )
@@ -393,7 +390,6 @@ def train_models(
     # Linear Regression is a separate scaled baseline, not a stacked XGBoost feature.
     scaler_lr = StandardScaler()
     x_train_lr_scaled = scaler_lr.fit_transform(x_train_full[linear_features])
-    x_val_lr_scaled = scaler_lr.transform(x_val_full[linear_features])
     x_test_lr_scaled = scaler_lr.transform(x_test_full[linear_features])
 
     logging.info("Training Linear Regression model...")

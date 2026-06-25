@@ -1,5 +1,6 @@
 import numpy as np
 import pandas as pd
+import pytest
 
 from src.config import REQUIRED_COLUMNS
 from src.data.data_prep import DataPreparator
@@ -128,9 +129,5 @@ def test_prepare_for_train_rejects_invalid_split_sizes():
     ]
 
     for kwargs in invalid_split_args:
-        try:
+        with pytest.raises(ValueError):
             preparator.prepare_for_train(df, prediction_days=1, **kwargs)
-        except ValueError:
-            pass
-        else:
-            raise AssertionError(f"Expected ValueError for {kwargs}")
