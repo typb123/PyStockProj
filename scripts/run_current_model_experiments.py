@@ -17,20 +17,48 @@ from src.config import XG_PARAMS_CLASSIFIER, XG_PARAMS_REGRESSOR
 from src.inference.predictor import predict_price
 from src.train.trainer import prepare_data_parallel, train_models
 
-TICKERS = [
-    "AAPL",
-    "MSFT",
-    "GOOGL",
-    "AMZN",
-    "META",
-    "NVDA",
-    "JPM",
-    "UNH",
-    "XOM",
-    "SPY",
-]
+TICKER_UNIVERSES = {
+    "small_10": [
+        "AAPL", "MSFT", "GOOGL", "AMZN", "META", "NVDA", "JPM", "UNH", "XOM", "SPY",
+    ],
+    "core_25": [
+        "AAPL", "MSFT", "GOOGL", "AMZN", "META", "NVDA", "JPM", "UNH", "XOM", "SPY",
+        "V", "MA", "HD", "COST", "WMT", "PG", "JNJ", "LLY", "CVX", "CAT",
+        "KO", "PEP", "AVGO", "QQQ", "IWM",
+    ],
+    "core_50": [
+        "AAPL", "MSFT", "GOOGL", "AMZN", "META", "NVDA", "JPM", "UNH", "XOM", "SPY",
+        "V", "MA", "HD", "COST", "WMT", "PG", "JNJ", "LLY", "CVX", "CAT",
+        "KO", "PEP", "AVGO", "QQQ", "IWM", "BRK-B", "BAC", "WFC", "MS", "GS",
+        "ABBV", "MRK", "PFE", "TMO", "ABT", "ORCL", "CRM", "ADBE", "AMD", "QCOM",
+        "LIN", "HON", "GE", "DE", "UPS", "NEE", "DUK", "AMT", "PLD", "TLT",
+    ],
+    "broad_200": [
+        "AAPL", "MSFT", "GOOGL", "GOOG", "AMZN", "META", "NVDA", "TSLA", "AVGO", "ORCL",
+        "ADBE", "CRM", "AMD", "QCOM", "TXN", "INTC", "AMAT", "MU", "LRCX", "KLAC",
+        "ADI", "PANW", "CRWD", "NOW", "SNOW", "DDOG", "NET", "FTNT", "ZS", "IBM",
+        "CSCO", "SHOP", "UBER", "PYPL", "SQ", "NFLX", "ROKU", "SPY", "QQQ", "IWM",
+        "DIA", "VTI", "VOO", "XLK", "XLF", "XLE", "XLV", "XLI", "XLY", "XLP",
+        "XLU", "XLB", "XLRE", "XLC", "JPM", "BAC", "WFC", "C", "GS", "MS",
+        "SCHW", "BLK", "AXP", "V", "MA", "COF", "USB", "PNC", "TFC", "CME",
+        "ICE", "SPGI", "MCO", "BRK-B", "UNH", "JNJ", "LLY", "MRK", "ABBV", "PFE",
+        "TMO", "ABT", "DHR", "ISRG", "SYK", "MDT", "BSX", "BMY", "AMGN", "GILD",
+        "REGN", "VRTX", "BIIB", "BMRN", "CVS", "CI", "HUM", "ELV", "XOM", "CVX",
+        "COP", "EOG", "SLB", "HAL", "OXY", "PSX", "VLO", "MPC", "KMI", "WMB",
+        "NEE", "DUK", "SO", "D", "AEP", "EXC", "SRE", "PEG", "ED", "XEL",
+        "HD", "LOW", "COST", "WMT", "TGT", "SBUX", "MCD", "NKE", "LULU", "TJX",
+        "BKNG", "MAR", "HLT", "CMG", "ORLY", "AZO", "F", "GM", "RCL", "CCL",
+        "PG", "KO", "PEP", "MDLZ", "CL", "KMB", "KHC", "GIS", "HSY", "MKC",
+        "STZ", "PM", "MO", "TAP", "CAT", "DE", "GE", "HON", "RTX", "LMT",
+        "NOC", "GD", "BA", "UPS", "FDX", "UNP", "CSX", "NSC", "ETN", "EMR",
+        "MMM", "ITW", "PH", "ROK", "LIN", "SHW", "APD", "ECL", "FCX", "NEM",
+        "DOW", "DD", "ALB", "MOS", "AMT", "PLD", "EQIX", "SPG", "O", "CCI",
+        "PSA", "DLR", "WELL", "VICI", "TLT", "IEF", "LQD", "HYG", "GLD", "SLV",
+    ],
+}
 PERIOD = "5y"
 SELECTED_EXPERIMENT = "baseline_10d"
+SELECTED_UNIVERSE = "small_10"
 TRAINING_LOG = PROJECT_ROOT / "training.log"
 VALIDATION_THRESHOLD_LABEL = "XGBoost Classifier Validation-Selected Threshold Report"
 REGRESSOR_QUANTILE_LABEL = "XGBoost Regressor Predicted Return Quantile Report"
@@ -129,7 +157,13 @@ def _print_report_section(title, stats, count_key="selected_count"):
     print(f"- precision: {_format_percent(stats.get('precision'))}")
 
 
-def _print_experiment_summary(experiment_name, experiment, log_path=TRAINING_LOG):
+def _print_experiment_summary(
+    experiment_name,
+    experiment,
+    universe_name,
+    ticker_count,
+    log_path=TRAINING_LOG,
+):
     validation_threshold_report = _extract_report_from_log(
         log_path,
         VALIDATION_THRESHOLD_LABEL,
@@ -153,6 +187,8 @@ def _print_experiment_summary(experiment_name, experiment, log_path=TRAINING_LOG
 
     print("\n=== Experiment Summary ===")
     print(f"Experiment: {experiment_name}")
+    print(f"Universe: {universe_name}")
+    print(f"Ticker count: {ticker_count}")
     print(f"Prediction horizon: {experiment['prediction_days']} trading days")
     _print_report_section("Validation-selected threshold only", validation_stats)
     _print_report_section("Regressor top 20% only", regressor_top_20_stats, "count")
@@ -186,17 +222,30 @@ def main() -> None:
             f"Unknown experiment {SELECTED_EXPERIMENT!r}. "
             f"Available experiments: {sorted(experiments)}"
         )
+    if SELECTED_UNIVERSE not in TICKER_UNIVERSES:
+        raise ValueError(
+            f"Unknown ticker universe {SELECTED_UNIVERSE!r}. "
+            f"Available universes: {sorted(TICKER_UNIVERSES)}"
+        )
 
     experiment = experiments[SELECTED_EXPERIMENT]
+    tickers = TICKER_UNIVERSES[SELECTED_UNIVERSE]
 
     print(f"=== Running experiment: {SELECTED_EXPERIMENT} ===")
+    print(f"Ticker universe: {SELECTED_UNIVERSE}")
+    print(f"Ticker count: {len(tickers)}")
     print(f"Prediction days: {experiment['prediction_days']}")
     print(f"Classifier params: {experiment['classifier_params']}")
     print(f"Regressor params: {experiment['regressor_params']}")
 
-    data = prepare_data_parallel(TICKERS, period=PERIOD)
+    data = prepare_data_parallel(tickers, period=PERIOD)
     train_models(data, **experiment)
-    _print_experiment_summary(SELECTED_EXPERIMENT, experiment)
+    _print_experiment_summary(
+        SELECTED_EXPERIMENT,
+        experiment,
+        SELECTED_UNIVERSE,
+        len(tickers),
+    )
 
     print("=== Sample predictions after training ===")
     for ticker in ["AAPL", "MSFT", "ARM", "XSD", "ROK", "VCIT", "SPY"]:
