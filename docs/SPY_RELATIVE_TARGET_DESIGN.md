@@ -101,12 +101,13 @@ Alternative clearer naming:
 
 ```text
 raw_forward_return
-spy_forward_return
+benchmark_forward_return
 excess_forward_return
-beat_spy_target
+beat_benchmark_target
 ```
 
-If this alternative is used, trainer code should explicitly select the target column instead of assuming `targetReturns`.
+This branch currently uses the clearer benchmark naming while keeping `targetReturns`
+as a compatibility alias for `excess_forward_return`.
 
 ## Leakage Risks
 
@@ -191,9 +192,9 @@ _source_index
 Ticker
 prediction_date
 raw_forward_return
-spy_forward_return
+benchmark_forward_return
 excess_forward_return
-beat_spy_target
+beat_benchmark_target
 ```
 
 Important: SPY forward return, raw forward return, and excess forward return are label/evaluation fields only. They must not be included as model features.

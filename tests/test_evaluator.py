@@ -16,7 +16,7 @@ from src.train.evaluator import (
 )
 
 
-def test_build_classification_report_includes_baselines_and_counts():
+def test_build_classification_report_includes_beat_benchmark_baselines_and_counts():
     report = build_classification_report(
         y_true=np.array([1, 0, 1, 0]),
         y_pred=np.array([1, 1, 0, 0]),
@@ -33,7 +33,7 @@ def test_build_classification_report_includes_baselines_and_counts():
     assert report["predicted_down_count"] == 2
 
 
-def test_build_regression_report_includes_zero_and_train_mean_baselines():
+def test_build_regression_report_includes_excess_return_baselines():
     report = build_regression_report(
         y_true=np.array([0.10, -0.10]),
         y_pred=np.array([0.05, -0.05]),
@@ -49,7 +49,7 @@ def test_build_regression_report_includes_zero_and_train_mean_baselines():
     assert report["mean_train_return_baseline_mae"] == 0.1
 
 
-def test_build_trading_relevance_report_splits_by_classifier_direction():
+def test_build_trading_relevance_report_splits_by_beat_benchmark_classification():
     report = build_trading_relevance_report(
         actual_returns=np.array([0.10, -0.05, 0.03, -0.02]),
         predicted_returns=np.array([0.08, 0.01, 0.04, -0.03]),
@@ -62,7 +62,7 @@ def test_build_trading_relevance_report_splits_by_classifier_direction():
     assert report["avg_predicted_return_when_predicted_down"] == 0.005000000000000001
 
 
-def test_build_actual_return_baseline_report_summarizes_full_test_returns():
+def test_build_actual_return_baseline_report_summarizes_full_test_excess_returns():
     report = build_actual_return_baseline_report(np.array([0.10, -0.05, 0.00, 0.03]))
 
     assert report["count"] == 4
@@ -85,7 +85,7 @@ def test_build_actual_return_baseline_report_preserves_nan_inf_behavior():
     assert report["precision"] == 1 / 3
 
 
-def test_build_probability_summary_reports_distribution():
+def test_build_probability_summary_reports_beat_benchmark_distribution():
     probabilities = np.array([0.1, 0.2, 0.5, 0.8, 0.9])
 
     report = build_probability_summary(probabilities)
@@ -107,7 +107,7 @@ def test_build_probability_summary_rejects_empty_input():
         build_probability_summary(np.array([]))
 
 
-def test_build_probability_tail_report_summarizes_top_and_bottom_tails():
+def test_build_probability_tail_report_summarizes_beat_benchmark_tails():
     probabilities = np.array([0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0])
     actual_returns = np.array(
         [-0.10, -0.05, -0.02, 0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.07]
@@ -141,7 +141,7 @@ def test_probability_tail_and_threshold_reports_reject_mismatched_lengths():
             report_builder(probabilities, actual_returns)
 
 
-def test_build_probability_threshold_report_summarizes_selected_rows():
+def test_build_probability_threshold_report_summarizes_beat_benchmark_selected_rows():
     probabilities = np.array([0.40, 0.50, 0.56, 0.61, 0.72])
     actual_returns = np.array([-0.03, 0.01, -0.02, 0.04, 0.05])
 
@@ -161,7 +161,7 @@ def test_build_probability_threshold_report_summarizes_selected_rows():
     assert report[0.70]["avg_actual_return"] == 0.05
 
 
-def test_validation_selected_threshold_report_selects_best_validation_threshold():
+def test_validation_selected_threshold_report_selects_best_beat_benchmark_threshold():
     report = build_validation_selected_threshold_report(
         validation_probability_up=np.array([0.40, 0.52, 0.56, 0.62, 0.72]),
         validation_actual_returns=np.array([-0.03, 0.01, -0.02, 0.06, 0.08]),
@@ -265,7 +265,7 @@ def test_validation_selected_threshold_report_rejects_invalid_inputs():
         )
 
 
-def test_build_predicted_return_quantile_report_summarizes_ranking_buckets():
+def test_build_predicted_return_quantile_report_summarizes_excess_return_ranking_buckets():
     predicted_returns = np.array([0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0])
     actual_returns = np.array(
         [-0.10, -0.05, -0.02, 0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.07]
@@ -289,7 +289,7 @@ def test_build_predicted_return_quantile_report_summarizes_ranking_buckets():
     assert report["bottom_20_pct"]["avg_predicted_return"] == 0.15000000000000002
 
 
-def test_build_return_correlation_report_summarizes_linear_and_rank_signal():
+def test_build_return_correlation_report_summarizes_excess_return_signal():
     actual_returns = np.array([10.0, 20.0, 30.0, 40.0])
     predicted_returns = np.array([1.0, 2.0, 4.0, 3.0])
 
@@ -301,7 +301,7 @@ def test_build_return_correlation_report_summarizes_linear_and_rank_signal():
     assert np.isclose(report["spearman"], 0.8)
 
 
-def test_build_combined_signal_report_selects_probability_and_return_rank_overlap():
+def test_build_combined_signal_report_selects_beat_probability_and_excess_return_rank_overlap():
     probability_up = np.array([0.55, 0.65, 0.70, 0.80, 0.50])
     actual_returns = np.array([-0.02, 0.03, -0.01, 0.05, 0.02])
     predicted_returns = np.array([0.01, 0.04, 0.03, 0.05, 0.02])

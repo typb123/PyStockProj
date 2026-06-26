@@ -12,10 +12,10 @@ from sklearn.metrics import (
 
 
 def build_classification_report(y_true, y_pred):
-    """Measure directional classification quality against simple always-up/down baselines.
+    """Measure beat-benchmark classification quality against simple baselines.
 
-    Inputs are one-dimensional true and predicted direction labels, where 1 means up
-    and 0 means down.
+    Inputs are one-dimensional true and predicted labels, where 1 means the stock
+    beat the benchmark and 0 means it did not.
     """
     y_true = np.asarray(y_true).astype(int)
     y_pred = np.asarray(y_pred).astype(int)
@@ -34,10 +34,10 @@ def build_classification_report(y_true, y_pred):
 
 
 def build_regression_report(y_true, y_pred, y_train=None):
-    """Measure return-prediction error against zero-return and train-mean baselines.
+    """Measure SPY-relative excess-return error against simple baselines.
 
-    y_true and y_pred are one-dimensional future-return arrays. y_train is optional
-    and is used only to build the train-mean baseline.
+    y_true and y_pred are one-dimensional excess-return arrays. y_train is optional
+    and is used only to build the train-mean excess-return baseline.
     """
     y_true = np.asarray(y_true, dtype=float)
     y_pred = np.asarray(y_pred, dtype=float)
@@ -66,10 +66,10 @@ def build_regression_report(y_true, y_pred, y_train=None):
 
 
 def build_trading_relevance_report(actual_returns, predicted_returns, predicted_direction):
-    """Summarize realized returns for rows the classifier called up or down.
+    """Summarize excess returns for rows classified as beat or not beat benchmark.
 
-    Empty up/down groups return NaN for their averages, which means that side had
-    no selected rows rather than zero return.
+    Empty groups return NaN for their averages, which means that side had no
+    selected rows rather than zero excess return.
     """
     actual_returns = np.asarray(actual_returns, dtype=float)
     predicted_returns = np.asarray(predicted_returns, dtype=float)
@@ -95,7 +95,7 @@ def build_trading_relevance_report(actual_returns, predicted_returns, predicted_
 
 
 def build_actual_return_baseline_report(actual_returns):
-    """Summarize the full test-set return level before signal filtering."""
+    """Summarize full test-set excess returns before signal filtering."""
     actual_returns = np.asarray(actual_returns, dtype=float)
     if len(actual_returns) == 0:
         raise ValueError("actual_returns must contain at least one value.")
@@ -110,9 +110,10 @@ def build_actual_return_baseline_report(actual_returns):
 
 
 def build_probability_summary(probability_up):
-    """Describe the distribution of predicted-up probabilities.
+    """Describe predicted probabilities of beating the benchmark.
 
-    probability_up is a one-dimensional array from classifier predict_proba(...)[..., 1].
+    probability_up is the legacy parameter name for predict_proba(...)[..., 1],
+    now interpreted as probability of beating SPY.
     """
     probability_up = np.asarray(probability_up, dtype=float)
     if len(probability_up) == 0:
@@ -133,10 +134,10 @@ def build_probability_summary(probability_up):
 
 
 def build_probability_tail_report(probability_up, actual_returns):
-    """Compare actual returns in the highest and lowest probability buckets.
+    """Compare excess returns in highest/lowest beat-benchmark probability buckets.
 
-    This tests whether classifier probabilities rank opportunities, even when the
-    default hard class prediction is weak.
+    This tests whether classifier probabilities rank SPY-relative opportunities,
+    even when the default hard class prediction is weak.
     """
     probability_up = np.asarray(probability_up, dtype=float)
     actual_returns = np.asarray(actual_returns, dtype=float)
@@ -156,10 +157,10 @@ def build_probability_threshold_report(
     actual_returns,
     thresholds=(0.50, 0.55, 0.60, 0.65, 0.70),
 ):
-    """Evaluate selected rows above each predicted-up probability threshold.
+    """Evaluate rows above each beat-benchmark probability threshold.
 
     Returns a report dictionary keyed by threshold.
-    NaN precision or average return means a threshold selected no rows.
+    NaN precision or average excess return means a threshold selected no rows.
     """
     probability_up = np.asarray(probability_up, dtype=float)
     actual_returns = np.asarray(actual_returns, dtype=float)
@@ -188,7 +189,7 @@ def build_validation_selected_threshold_report(
     min_selected_count=25,
     selection_metric="avg_actual_return",
 ):
-    """Choose a probability threshold on validation data, then evaluate it on test.
+    """Choose a beat-benchmark probability threshold on validation, then test it.
 
     This avoids tuning on the test set: validation selects the rule, and test is
     only the out-of-sample check of that already-selected rule.
@@ -251,11 +252,11 @@ def build_validation_selected_threshold_report(
 
 
 def build_predicted_return_quantile_report(actual_returns, predicted_returns):
-    """Measure whether predicted returns rank outcomes across top/bottom buckets.
+    """Measure whether predicted excess returns rank SPY-relative outcomes.
 
     Ranking diagnostics are separate from MSE/MAE/R2 because a return model can
-    rank opportunities usefully even when exact return magnitudes are noisy.
-    Returns top and bottom predicted-return bucket stats.
+    rank opportunities usefully even when exact excess-return magnitudes are
+    noisy. Returns top and bottom predicted-excess-return bucket stats.
     """
     actual_returns = np.asarray(actual_returns, dtype=float)
     predicted_returns = np.asarray(predicted_returns, dtype=float)
@@ -287,9 +288,9 @@ def build_predicted_return_quantile_report(actual_returns, predicted_returns):
 
 
 def build_return_correlation_report(actual_returns, predicted_returns):
-    """Report linear and rank correlation between predicted and actual returns.
+    """Report correlation between predicted and actual excess returns.
 
-    Pearson measures raw return fit; Spearman measures ranking signal.
+    Pearson measures excess-return fit; Spearman measures ranking signal.
     Returns both values in a small dictionary.
     """
     actual_returns = np.asarray(actual_returns, dtype=float)
@@ -312,7 +313,7 @@ def build_combined_signal_report(
     probability_threshold=0.60,
     top_return_fraction=0.20,
 ):
-    """Evaluate rows selected by both classifier probability and regressor rank."""
+    """Evaluate rows selected by beat-benchmark probability and excess-return rank."""
     probability_up = np.asarray(probability_up, dtype=float)
     actual_returns = np.asarray(actual_returns, dtype=float)
     predicted_returns = np.asarray(predicted_returns, dtype=float)

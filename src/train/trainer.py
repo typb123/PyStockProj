@@ -1,7 +1,7 @@
-"""Training entry point for the stock return prediction models.
+"""Training entry point for SPY-relative stock prediction models.
 
 The pipeline keeps Linear Regression as a separate baseline artifact, while
-XGBoost trains a direction classifier and a return-magnitude regressor.
+XGBoost trains a beat-benchmark classifier and an excess-return regressor.
 """
 
 import joblib
@@ -175,10 +175,11 @@ def log_xgboost_test_report(
     regressor_predictions,
 ):
     """
-    Log final XGBoost diagnostics on test data without tuning on that test data.
+    Log final SPY-relative XGBoost diagnostics without tuning on test data.
 
-    Validation probabilities may select a classifier threshold; test probabilities
-    only evaluate the already-selected rule.
+    Validation probabilities may select a beat-benchmark threshold; test
+    probabilities only evaluate the already-selected rule. y values are excess
+    returns relative to SPY.
     """
     classification_report_data = build_classification_report(
         (y_test > 0).astype(int), classifier_predictions
@@ -215,27 +216,31 @@ def log_xgboost_test_report(
         regressor_predictions,
     )
 
-    logging.info(f"XGBoost Test Classification Report: {classification_report_data}")
-    logging.info(f"XGBoost Test Regression Report: {regression_report_data}")
     logging.info(
-        f"XGBoost Actual Return Baseline Report: {actual_return_baseline_report}"
+        f"XGBoost Beat-Benchmark Classification Report: {classification_report_data}"
     )
-    logging.info(f"XGBoost Trading Relevance Report: {trading_report_data}")
-    logging.info(f"XGBoost Classifier Probability Summary: {probability_summary}")
+    logging.info(f"XGBoost Excess Return Regression Report: {regression_report_data}")
     logging.info(
-        f"XGBoost Classifier Probability Tail Report: {probability_tail_report}"
+        f"XGBoost Excess Return Baseline Report: {actual_return_baseline_report}"
     )
+    logging.info(f"XGBoost Beat-Benchmark Relevance Report: {trading_report_data}")
     logging.info(
-        f"XGBoost Classifier Probability Threshold Report: {probability_threshold_report}"
+        f"XGBoost Beat-Benchmark Probability Summary: {probability_summary}"
     )
     logging.info(
-        f"XGBoost Classifier Validation-Selected Threshold Report: {validation_selected_threshold_report}"
+        f"XGBoost Beat-Benchmark Probability Tail Report: {probability_tail_report}"
     )
     logging.info(
-        f"XGBoost Regressor Predicted Return Quantile Report: {predicted_return_quantile_report}"
+        f"XGBoost Beat-Benchmark Probability Threshold Report: {probability_threshold_report}"
     )
     logging.info(
-        f"XGBoost Regressor Return Correlation Report: {return_correlation_report}"
+        f"XGBoost Beat-Benchmark Validation-Selected Threshold Report: {validation_selected_threshold_report}"
+    )
+    logging.info(
+        f"XGBoost Regressor Predicted Excess Return Quantile Report: {predicted_return_quantile_report}"
+    )
+    logging.info(
+        f"XGBoost Regressor Excess Return Correlation Report: {return_correlation_report}"
     )
     logging.info(f"XGBoost Combined Signal Report: {combined_signal_report}")
 
@@ -264,7 +269,7 @@ def train_models(
     regressor_params: dict | None = None,
 ) -> None:
     """
-    Train the linear baseline, XGBoost classifier, and XGBoost regressor.
+    Train the linear baseline, beat-benchmark classifier, and excess-return regressor.
 
     Validation data is used for XGBoost eval_set and threshold research; test data
     is reserved for final diagnostics.
@@ -417,7 +422,7 @@ def train_models(
     x_val_regressor = x_val_full[regressor_features]
     x_test_regressor = x_test_full[regressor_features]
 
-    # The classifier predicts direction only; the regressor predicts return magnitude.
+    # The classifier predicts beat-SPY labels; the regressor predicts excess return.
     direction_y_train = prepared_data["direction_y_train"]
     direction_y_val = prepared_data["direction_y_val"]
     direction_y_test = prepared_data["direction_y_test"]
@@ -450,7 +455,7 @@ def train_models(
         eval_set=[(x_val_regressor, y_val)],
     )
     evaluate_model(regressor, x_test_regressor, y_test, model_type="regression")
-    # Validation probabilities choose the threshold; test probabilities evaluate that chosen rule.
+    # Validation probabilities choose the beat-benchmark threshold; test evaluates it once.
     log_xgboost_test_report(
         y_train,
         y_val,
