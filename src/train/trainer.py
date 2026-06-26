@@ -46,6 +46,7 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s: - %(levelname)s -%(message)s",
 )
+logging.getLogger("yfinance").setLevel(logging.CRITICAL)
 
 
 def validate_input_data(data):
@@ -83,23 +84,21 @@ def fetch_tickers_data(ticker, period="5y"):
     try:
         stock_data = fetch_stock_data(ticker, period=period)
         if stock_data.empty:
-            logging.warning(f"No data returned for {ticker}. Skipping...")
+            logging.debug(f"No data returned for {ticker}. Skipping...")
             return None
 
-        # Log data size before processing
-        logging.info(f"Data size before processing for {ticker}: {stock_data.shape}")
+        logging.debug(f"Data size before processing for {ticker}: {stock_data.shape}")
 
         stock_data = calculate_data(stock_data)
         stock_data["prediction_date"] = stock_data.index
         stock_data["Ticker"] = ticker
 
-        # Log data size after processing
-        logging.info(f"Data size after processing for {ticker}: {stock_data.shape}")
+        logging.debug(f"Data size after processing for {ticker}: {stock_data.shape}")
 
         time.sleep(0.2)  # Small delay to avoid rate limits
         return stock_data
     except Exception as e:
-        logging.warning(f"Failed to fetch data for {ticker}: {e}")
+        logging.debug(f"Failed to fetch data for {ticker}: {e}", exc_info=True)
         return None
 
 
@@ -108,13 +107,26 @@ def prepare_data_parallel(tickers, period="5y") -> pd.DataFrame:
     logging.info(f"Fetching data for {len(tickers)} tickers...")
 
     with ThreadPoolExecutor(max_workers=10) as executor:
-        results = executor.map(
-            lambda ticker: fetch_tickers_data(ticker, period=period), tickers
+        results = list(
+            executor.map(
+                lambda ticker: fetch_tickers_data(ticker, period=period), tickers
+            )
         )
 
     all_data = [data for data in results if data is not None and not data.empty]
+    skipped_tickers = [
+        ticker
+        for ticker, data in zip(tickers, results)
+        if data is None or data.empty
+    ]
 
-    logging.info(f"Total tickers fetched with valid data: {len(all_data)}")
+    logging.info(
+        f"Fetched valid data for {len(all_data)} of {len(tickers)} requested tickers."
+    )
+    if skipped_tickers:
+        logging.warning(
+            f"Skipped {len(skipped_tickers)} tickers with no usable data: {skipped_tickers}"
+        )
 
     if not all_data:
         logging.error("No data fetched for training. Exiting...")

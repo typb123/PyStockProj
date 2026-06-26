@@ -1,3 +1,4 @@
+import logging
 import pandas as pd
 import numpy as np
 
@@ -29,6 +30,36 @@ def test_prepare_data_parallel_passes_period_to_fetch_stock_data(monkeypatch):
     assert set(result["Ticker"]) == {"AAPL", "MSFT"}
     assert "prediction_date" in result.columns
     assert set(result["prediction_date"]) == {pd.Timestamp("2024-01-02")}
+
+
+def test_prepare_data_parallel_summarizes_skipped_tickers(monkeypatch, caplog):
+    calls = []
+
+    def fake_fetch_stock_data(ticker, period="5y"):
+        calls.append((ticker, period))
+        if ticker == "BAD":
+            return pd.DataFrame()
+        return pd.DataFrame(
+            {
+                "Close": [100.0],
+            },
+            index=pd.to_datetime(["2024-01-02"]),
+        )
+
+    def fake_calculate_data(df):
+        return df
+
+    monkeypatch.setattr(trainer, "fetch_stock_data", fake_fetch_stock_data)
+    monkeypatch.setattr(trainer, "calculate_data", fake_calculate_data)
+
+    with caplog.at_level(logging.INFO):
+        result = trainer.prepare_data_parallel(["AAPL", "BAD", "MSFT"], period="1y")
+
+    assert calls == [("AAPL", "1y"), ("BAD", "1y"), ("MSFT", "1y")]
+    assert set(result["Ticker"]) == {"AAPL", "MSFT"}
+    assert "Fetched valid data for 2 of 3 requested tickers." in caplog.text
+    assert "Skipped 1 tickers with no usable data: ['BAD']" in caplog.text
+    assert "No data returned for BAD. Skipping..." not in caplog.text
 
 
 def test_validate_input_data_does_not_fill_missing_values():

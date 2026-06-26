@@ -16,6 +16,7 @@ logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s: - %(levelname)s -%(message)s'
 )
+logging.getLogger("yfinance").setLevel(logging.CRITICAL)
 
 def fetch_stock_data(ticker: str, period: str = "5y") -> pd.DataFrame:
     """
@@ -36,11 +37,11 @@ def fetch_stock_data(ticker: str, period: str = "5y") -> pd.DataFrame:
         data = stock.history(period=period)
 
         if data.empty:
-            logging.warning(f"No data found for {ticker}. DataFrame is empty.")
+            logging.debug(f"No data found for {ticker}. DataFrame is empty.")
 
         return data
     except Exception as e:
-        logging.error(f"Error fetching data for {ticker}: {e}")
+        logging.debug(f"Error fetching data for {ticker}: {e}", exc_info=True)
         # Keep callers on a single DataFrame path; training skips empty ticker results.
         return pd.DataFrame()
 
