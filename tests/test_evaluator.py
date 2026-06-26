@@ -352,6 +352,7 @@ def make_ranked_selection_metadata():
             "benchmark_forward_return": [0.01, 0.01, 0.01, 0.02, 0.02, 0.02],
             "excess_forward_return": [0.09, 0.01, -0.02, 0.01, 0.18, -0.06],
             "beat_benchmark_target": [1, 1, 0, 1, 1, 0],
+            "dailyReturn": [0.01, 0.05, -0.02, 0.04, 0.03, 0.10],
         }
     )
 
@@ -366,7 +367,7 @@ def test_top_n_ranked_selection_is_per_date_not_global():
         top_n_values=(1,),
     )
 
-    top_1 = report["top_1"]
+    top_1 = report["top_1"]["model"]
     assert top_1["date_count"] == 2
     assert top_1["selected_row_count"] == 2
     assert np.isclose(top_1["average_selected_raw_forward_return"], 0.03)
@@ -386,9 +387,10 @@ def test_top_n_ranked_selection_uses_min_available_candidates_per_date():
         top_n_values=(5,),
     )
 
-    assert report["top_5"]["date_count"] == 2
-    assert report["top_5"]["selected_row_count"] == 6
-    assert report["top_5"]["average_number_of_candidates_per_date"] == 3.0
+    assert report["top_5"]["model"]["date_count"] == 2
+    assert report["top_5"]["model"]["selected_row_count"] == 6
+    assert report["top_5"]["model"]["average_number_of_candidates_per_date"] == 3.0
+    assert report["top_5"]["random_baseline"]["selected_row_count"] == 6
 
 
 def test_top_n_ranked_selection_computes_universe_relative_return():
@@ -406,12 +408,16 @@ def test_top_n_ranked_selection_computes_universe_relative_return():
     universe_date_2 = (0.03 + 0.20 + -0.04) / 3
     expected_universe_mean = (universe_date_1 + universe_date_2) / 2
     assert np.isclose(
-        report["top_1"]["average_equal_weight_universe_forward_return"],
+        report["top_1"]["model"]["average_equal_weight_universe_forward_return"],
         expected_universe_mean,
     )
     assert np.isclose(
-        report["top_1"]["average_selected_return_minus_universe_return"],
+        report["top_1"]["model"]["average_selected_return_minus_universe_return"],
         selected_raw_mean - expected_universe_mean,
+    )
+    assert np.isclose(
+        report["top_1"]["universe"]["average_equal_weight_universe_forward_return"],
+        expected_universe_mean,
     )
 
 
@@ -426,13 +432,19 @@ def test_top_n_ranked_selection_reports_multiple_buckets():
     )
 
     assert set(report) == {"top_1", "top_2"}
-    assert report["top_1"]["selected_row_count"] == 2
-    assert report["top_2"]["selected_row_count"] == 4
+    assert set(report["top_1"]) == {
+        "model",
+        "random_baseline",
+        "momentum_baseline",
+        "universe",
+    }
+    assert report["top_1"]["model"]["selected_row_count"] == 2
+    assert report["top_2"]["model"]["selected_row_count"] == 4
     assert np.isclose(
-        report["top_2"]["median_selected_excess_return_vs_benchmark"],
+        report["top_2"]["model"]["median_selected_excess_return_vs_benchmark"],
         0.05,
     )
-    assert report["top_2"]["positive_raw_return_rate"] == 0.75
+    assert report["top_2"]["model"]["positive_raw_return_rate"] == 0.75
 
 
 def test_top_n_ranked_selection_ignores_benchmark_rows_if_present():
@@ -445,6 +457,7 @@ def test_top_n_ranked_selection_ignores_benchmark_rows_if_present():
             "benchmark_forward_return": [0.50],
             "excess_forward_return": [0.00],
             "beat_benchmark_target": [0],
+            "dailyReturn": [1.00],
         }
     )
     metadata = pd.concat([metadata, spy_row], ignore_index=True)
@@ -456,8 +469,104 @@ def test_top_n_ranked_selection_ignores_benchmark_rows_if_present():
         top_n_values=(1,),
     )
 
-    assert report["top_1"]["selected_row_count"] == 2
-    assert np.isclose(report["top_1"]["average_selected_raw_forward_return"], 0.03)
+    assert report["top_1"]["model"]["selected_row_count"] == 2
+    assert report["top_1"]["random_baseline"]["selected_row_count"] == 2
+    assert report["top_1"]["universe"]["candidate_row_count"] == 6
+    assert np.isclose(
+        report["top_1"]["model"]["average_selected_raw_forward_return"],
+        0.03,
+    )
+
+
+def test_top_n_random_baseline_is_deterministic_with_fixed_seed():
+    metadata = make_ranked_selection_metadata()
+    predicted_excess_returns = np.array([0.90, 0.80, 0.70, 0.10, 0.20, 0.30])
+
+    first_report = build_top_n_ranked_selection_report(
+        metadata,
+        predicted_excess_returns,
+        top_n_values=(1,),
+        random_seed=7,
+        random_trials=5,
+    )
+    second_report = build_top_n_ranked_selection_report(
+        metadata,
+        predicted_excess_returns,
+        top_n_values=(1,),
+        random_seed=7,
+        random_trials=5,
+    )
+
+    assert (
+        first_report["top_1"]["random_baseline"]
+        == second_report["top_1"]["random_baseline"]
+    )
+    assert first_report["top_1"]["random_baseline"]["random_seed"] == 7
+    assert first_report["top_1"]["random_baseline"]["random_baseline_trials"] == 5
+
+
+def test_top_n_random_baseline_selects_within_date_not_globally():
+    metadata = make_ranked_selection_metadata()
+    predicted_excess_returns = np.array([0.90, 0.80, 0.70, 0.10, 0.20, 0.30])
+
+    report = build_top_n_ranked_selection_report(
+        metadata,
+        predicted_excess_returns,
+        top_n_values=(1,),
+        random_seed=42,
+        random_trials=1,
+    )
+
+    random_baseline = report["top_1"]["random_baseline"]
+    assert random_baseline["date_count"] == 2
+    assert random_baseline["selected_row_count"] == 2
+    assert random_baseline["average_number_of_candidates_per_date"] == 3.0
+    assert np.isclose(
+        random_baseline["average_selected_raw_forward_return"],
+        (0.10 + -0.04) / 2,
+    )
+
+
+def test_top_n_momentum_baseline_ranks_within_date():
+    metadata = make_ranked_selection_metadata()
+    predicted_excess_returns = np.array([0.90, 0.80, 0.70, 0.10, 0.20, 0.30])
+
+    report = build_top_n_ranked_selection_report(
+        metadata,
+        predicted_excess_returns,
+        top_n_values=(1,),
+    )
+
+    momentum_baseline = report["top_1"]["momentum_baseline"]
+    assert momentum_baseline["available"] is True
+    assert momentum_baseline["momentum_score_column"] == "dailyReturn"
+    assert momentum_baseline["date_count"] == 2
+    assert momentum_baseline["selected_row_count"] == 2
+    assert np.isclose(
+        momentum_baseline["average_selected_raw_forward_return"],
+        (0.02 + -0.04) / 2,
+    )
+    assert np.isclose(
+        momentum_baseline["average_dailyReturn"],
+        (0.05 + 0.10) / 2,
+    )
+
+
+def test_top_n_momentum_baseline_reports_missing_score_column_explicitly():
+    metadata = make_ranked_selection_metadata().drop(columns=["dailyReturn"])
+    predicted_excess_returns = np.array([0.90, 0.80, 0.70, 0.10, 0.20, 0.30])
+
+    report = build_top_n_ranked_selection_report(
+        metadata,
+        predicted_excess_returns,
+        top_n_values=(1,),
+    )
+
+    momentum_baseline = report["top_1"]["momentum_baseline"]
+    assert momentum_baseline["available"] is False
+    assert momentum_baseline["momentum_score_column"] == "dailyReturn"
+    assert "not present" in momentum_baseline["reason"]
+    assert np.isnan(momentum_baseline["average_selected_raw_forward_return"])
 
 
 def test_top_n_ranked_selection_rejects_mismatched_lengths():

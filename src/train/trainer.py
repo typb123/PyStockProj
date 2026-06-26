@@ -89,6 +89,66 @@ def log_feature_importances(model_name, feature_importances, top_n=5):
         logging.debug(f"{row['feature']}: {row['importance']:.4f}")
 
 
+def format_top_n_ranked_selection_summary(top_n_report):
+    """Format nested Top-N ranked-selection diagnostics for readable INFO logs."""
+    lines = ["XGBoost Top-N Ranked Selection Summary:"]
+
+    for bucket_name, bucket_report in top_n_report.items():
+        model = bucket_report.get("model", {})
+        random_baseline = bucket_report.get("random_baseline", {})
+        momentum_baseline = bucket_report.get("momentum_baseline", {})
+        universe = bucket_report.get("universe", {})
+
+        model_excess = model.get("average_selected_excess_return_vs_benchmark")
+        random_excess = random_baseline.get(
+            "average_selected_excess_return_vs_benchmark"
+        )
+        momentum_excess = momentum_baseline.get(
+            "average_selected_excess_return_vs_benchmark"
+        )
+        universe_excess = universe.get("average_excess_return_vs_benchmark")
+        beat_rate = model.get("beat_benchmark_rate")
+
+        lines.append(f"{bucket_name}:")
+        if momentum_baseline.get("available", True):
+            momentum_text = _format_percent(momentum_excess)
+            minus_momentum_text = _format_percent_delta(
+                model_excess,
+                momentum_excess,
+            )
+        else:
+            momentum_text = "unavailable"
+            minus_momentum_text = "unavailable"
+
+        lines.append(
+            "  "
+            f"model excess={_format_percent(model_excess)}, "
+            f"random excess={_format_percent(random_excess)}, "
+            f"momentum excess={momentum_text}, "
+            f"universe excess={_format_percent(universe_excess)}"
+        )
+        lines.append(
+            "  "
+            f"model minus random={_format_percent_delta(model_excess, random_excess)}, "
+            f"model minus momentum={minus_momentum_text}, "
+            f"model beat rate={_format_percent(beat_rate)}"
+        )
+
+    return "\n".join(lines)
+
+
+def _format_percent(value):
+    if value is None or pd.isna(value):
+        return "n/a"
+    return f"{float(value):.2%}"
+
+
+def _format_percent_delta(left, right):
+    if left is None or right is None or pd.isna(left) or pd.isna(right):
+        return "n/a"
+    return f"{float(left) - float(right):.2%}"
+
+
 def fetch_tickers_data(ticker, period="5y"):
     """
     Fetch one ticker and generate indicators before ticker-level concatenation.
@@ -277,7 +337,8 @@ def log_xgboost_test_report(
         f"XGBoost Regressor Excess Return Correlation Report: {return_correlation_report}"
     )
     logging.info(f"XGBoost Combined Signal Report: {combined_signal_report}")
-    logging.info(
+    logging.info(format_top_n_ranked_selection_summary(top_n_ranked_selection_report))
+    logging.debug(
         f"XGBoost Top-N Ranked Selection Report: {top_n_ranked_selection_report}"
     )
 

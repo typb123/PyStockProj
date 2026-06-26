@@ -133,6 +133,65 @@ def test_log_feature_importances_summarizes_info_and_keeps_full_debug(caplog):
     assert "f3: 0.1111" in caplog.text
 
 
+def test_format_top_n_ranked_selection_summary_formats_percentages():
+    report = {
+        "top_5": {
+            "model": {
+                "average_selected_excess_return_vs_benchmark": 0.0123,
+                "beat_benchmark_rate": 0.5288,
+            },
+            "random_baseline": {
+                "average_selected_excess_return_vs_benchmark": 0.004,
+            },
+            "momentum_baseline": {
+                "available": True,
+                "average_selected_excess_return_vs_benchmark": 0.008,
+            },
+            "universe": {
+                "average_excess_return_vs_benchmark": 0.0015,
+            },
+        }
+    }
+
+    summary = trainer.format_top_n_ranked_selection_summary(report)
+
+    assert summary == (
+        "XGBoost Top-N Ranked Selection Summary:\n"
+        "top_5:\n"
+        "  model excess=1.23%, random excess=0.40%, "
+        "momentum excess=0.80%, universe excess=0.15%\n"
+        "  model minus random=0.83%, model minus momentum=0.43%, "
+        "model beat rate=52.88%"
+    )
+
+
+def test_format_top_n_ranked_selection_summary_handles_unavailable_momentum():
+    report = {
+        "top_10": {
+            "model": {
+                "average_selected_excess_return_vs_benchmark": 0.01,
+                "beat_benchmark_rate": 0.5,
+            },
+            "random_baseline": {
+                "average_selected_excess_return_vs_benchmark": 0.002,
+            },
+            "momentum_baseline": {
+                "available": False,
+                "average_selected_excess_return_vs_benchmark": np.nan,
+            },
+            "universe": {
+                "average_excess_return_vs_benchmark": -0.001,
+            },
+        }
+    }
+
+    summary = trainer.format_top_n_ranked_selection_summary(report)
+
+    assert "momentum excess=unavailable" in summary
+    assert "model minus momentum=unavailable" in summary
+    assert "universe excess=-0.10%" in summary
+
+
 def test_model_metadata_does_not_include_linear_regression_prediction():
     metadata = trainer.build_model_metadata(
         linear_features=["Close"],
@@ -205,3 +264,131 @@ def test_log_xgboost_test_report_uses_explicit_direction_labels(monkeypatch):
     pd.testing.assert_frame_equal(captured["split_metadata"], test_split_metadata)
     np.testing.assert_array_equal(captured["ranked_predictions"], regressor_predictions)
     assert not np.array_equal(captured["y_true"], (y_test > 0).astype(int))
+
+
+def test_log_xgboost_test_report_logs_top_n_summary_at_info_and_full_report_at_debug(
+    monkeypatch,
+    caplog,
+):
+    top_n_report = {
+        "top_5": {
+            "model": {
+                "average_selected_excess_return_vs_benchmark": 0.0123,
+                "beat_benchmark_rate": 0.5288,
+            },
+            "random_baseline": {
+                "average_selected_excess_return_vs_benchmark": 0.004,
+            },
+            "momentum_baseline": {
+                "available": True,
+                "average_selected_excess_return_vs_benchmark": 0.008,
+            },
+            "universe": {
+                "average_excess_return_vs_benchmark": 0.0015,
+            },
+        }
+    }
+
+    monkeypatch.setattr(
+        trainer,
+        "build_classification_report",
+        lambda *args, **kwargs: {"accuracy": 1.0},
+    )
+    monkeypatch.setattr(
+        trainer,
+        "build_regression_report",
+        lambda *args, **kwargs: {"mse": 0.1},
+    )
+    monkeypatch.setattr(
+        trainer,
+        "build_actual_return_baseline_report",
+        lambda *args, **kwargs: {"count": 1},
+    )
+    monkeypatch.setattr(
+        trainer,
+        "build_trading_relevance_report",
+        lambda *args, **kwargs: {"relevance": 1},
+    )
+    monkeypatch.setattr(
+        trainer,
+        "build_probability_summary",
+        lambda *args, **kwargs: {"count": 1},
+    )
+    monkeypatch.setattr(
+        trainer,
+        "build_probability_tail_report",
+        lambda *args, **kwargs: {"top": 1},
+    )
+    monkeypatch.setattr(
+        trainer,
+        "build_probability_threshold_report",
+        lambda *args, **kwargs: {0.5: {"selected_count": 1}},
+    )
+    monkeypatch.setattr(
+        trainer,
+        "build_validation_selected_threshold_report",
+        lambda *args, **kwargs: {"selected_threshold": 0.5},
+    )
+    monkeypatch.setattr(
+        trainer,
+        "build_predicted_return_quantile_report",
+        lambda *args, **kwargs: {"top_10_pct": {}},
+    )
+    monkeypatch.setattr(
+        trainer,
+        "build_return_correlation_report",
+        lambda *args, **kwargs: {"pearson": 0.0},
+    )
+    monkeypatch.setattr(
+        trainer,
+        "build_combined_signal_report",
+        lambda *args, **kwargs: {"selected_count": 0},
+    )
+    monkeypatch.setattr(
+        trainer,
+        "build_top_n_ranked_selection_report",
+        lambda *args, **kwargs: top_n_report,
+    )
+
+    with caplog.at_level(logging.INFO):
+        trainer.log_xgboost_test_report(
+            y_train=np.array([0.01]),
+            y_val=np.array([0.02]),
+            y_test=np.array([0.03]),
+            direction_y_test=np.array([1]),
+            test_split_metadata=pd.DataFrame(),
+            classifier_predictions=np.array([1]),
+            classifier_validation_probability_up=np.array([0.55]),
+            classifier_probability_up=np.array([0.60]),
+            regressor_predictions=np.array([0.03]),
+        )
+
+    info_messages = [
+        record.getMessage()
+        for record in caplog.records
+        if record.levelno == logging.INFO
+    ]
+    assert any(
+        message.startswith("XGBoost Top-N Ranked Selection Summary:")
+        for message in info_messages
+    )
+    assert not any(
+        message.startswith("XGBoost Top-N Ranked Selection Report:")
+        for message in info_messages
+    )
+
+    caplog.clear()
+    with caplog.at_level(logging.DEBUG):
+        trainer.log_xgboost_test_report(
+            y_train=np.array([0.01]),
+            y_val=np.array([0.02]),
+            y_test=np.array([0.03]),
+            direction_y_test=np.array([1]),
+            test_split_metadata=pd.DataFrame(),
+            classifier_predictions=np.array([1]),
+            classifier_validation_probability_up=np.array([0.55]),
+            classifier_probability_up=np.array([0.60]),
+            regressor_predictions=np.array([0.03]),
+        )
+
+    assert "XGBoost Top-N Ranked Selection Report:" in caplog.text

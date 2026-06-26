@@ -150,6 +150,7 @@ class DataPreparator:
             "_source_index",
             "Ticker",
             "prediction_date",
+            "dailyReturn",
             "raw_forward_return",
             "benchmark_forward_return",
             "excess_forward_return",
