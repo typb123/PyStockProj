@@ -4,12 +4,14 @@ The pipeline keeps Linear Regression as a separate baseline artifact, while
 XGBoost trains a beat-benchmark classifier and an excess-return regressor.
 """
 
+import argparse
 import joblib
 import pandas as pd
 import numpy as np
 import logging
 import time
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 from sklearn.model_selection import cross_val_score
 from sklearn.linear_model import LinearRegression
 from sklearn.preprocessing import StandardScaler
@@ -48,6 +50,8 @@ logging.basicConfig(
     format="%(asctime)s: - %(levelname)s -%(message)s",
 )
 logging.getLogger("yfinance").setLevel(logging.CRITICAL)
+
+ALL_HORIZONS = [5, 10, 20, 50]
 
 
 def validate_input_data(data):
@@ -183,6 +187,41 @@ def format_top_n_basket_backtest_summary(top_n_report):
             f"model minus momentum={minus_momentum_text}, "
             f"beat benchmark rate={_format_percent(beat_rate)}"
         )
+
+    return "\n".join(lines)
+
+
+def format_horizon_comparison_summary(horizon_reports):
+    """Format basket backtest metrics across prediction horizons."""
+    lines = ["Horizon Comparison Summary:"]
+
+    for prediction_days in sorted(horizon_reports):
+        lines.append(f"{prediction_days}d:")
+        basket_report = horizon_reports[prediction_days].get("basket_backtest", {})
+
+        for bucket_name, bucket_report in basket_report.items():
+            model = bucket_report.get("model", {})
+            random_baseline = bucket_report.get("random_baseline", {})
+            momentum_baseline = bucket_report.get("momentum_baseline", {})
+            universe = bucket_report.get("universe", {})
+            benchmark = bucket_report.get("benchmark", {})
+
+            if momentum_baseline.get("available", True):
+                momentum_text = _format_percent(
+                    momentum_baseline.get("average_basket_excess_return")
+                )
+            else:
+                momentum_text = "unavailable"
+
+            lines.append(
+                "  "
+                f"{bucket_name} "
+                f"model excess={_format_percent(model.get('average_basket_excess_return'))}, "
+                f"random={_format_percent(random_baseline.get('average_basket_excess_return'))}, "
+                f"momentum={momentum_text}, "
+                f"universe={_format_percent(universe.get('average_basket_excess_return'))}, "
+                f"benchmark raw={_format_percent(benchmark.get('average_basket_raw_return'))}"
+            )
 
     return "\n".join(lines)
 
@@ -399,6 +438,10 @@ def log_xgboost_test_report(
     logging.debug(
         f"XGBoost Top-N Basket Backtest Report: {top_n_basket_backtest_report}"
     )
+    return {
+        "ranked_selection": top_n_ranked_selection_report,
+        "basket_backtest": top_n_basket_backtest_report,
+    }
 
 
 def build_model_metadata(
@@ -418,6 +461,81 @@ def build_model_metadata(
     }
 
 
+def build_horizon_model_paths(prediction_days: int) -> dict:
+    """Return artifact paths for one prediction horizon."""
+    horizon_dir = Path("models") / f"horizon_{prediction_days}"
+    return {
+        "linear": str(horizon_dir / "linear_regression_model.pkl"),
+        "linear_scaler": str(horizon_dir / "linear_regression_scaler.pkl"),
+        "classifier": str(horizon_dir / "xgboost_classifier.json"),
+        "regressor": str(horizon_dir / "xgboost_regressor.json"),
+        "preparator": str(horizon_dir / "data_preparator.pkl"),
+        "features": str(horizon_dir / "feature_names.pkl"),
+        "model_metadata": str(horizon_dir / "model_metadata.pkl"),
+    }
+
+
+def save_model_artifacts(
+    artifact_paths,
+    linear_model,
+    scaler_lr,
+    data_preparator,
+    all_features,
+    model_metadata,
+    classifier,
+    regressor,
+):
+    """Save trained artifacts to one complete path set."""
+    for path in artifact_paths.values():
+        Path(path).parent.mkdir(parents=True, exist_ok=True)
+
+    joblib.dump(linear_model, artifact_paths["linear"])
+    joblib.dump(scaler_lr, artifact_paths["linear_scaler"])
+    joblib.dump(data_preparator, artifact_paths["preparator"])
+    joblib.dump(all_features, artifact_paths["features"])
+    joblib.dump(model_metadata, artifact_paths["model_metadata"])
+    classifier.save_model(artifact_paths["classifier"])
+    regressor.save_model(artifact_paths["regressor"])
+
+
+def save_horizon_model_artifacts(
+    prediction_days,
+    linear_model,
+    scaler_lr,
+    data_preparator,
+    all_features,
+    model_metadata,
+    classifier,
+    regressor,
+):
+    """Save horizon-specific artifacts and preserve legacy paths for default horizon."""
+    horizon_paths = build_horizon_model_paths(prediction_days)
+    save_model_artifacts(
+        horizon_paths,
+        linear_model,
+        scaler_lr,
+        data_preparator,
+        all_features,
+        model_metadata,
+        classifier,
+        regressor,
+    )
+
+    if prediction_days == PREDICTION_DAYS:
+        save_model_artifacts(
+            MODEL_PATHS,
+            linear_model,
+            scaler_lr,
+            data_preparator,
+            all_features,
+            model_metadata,
+            classifier,
+            regressor,
+        )
+
+    return horizon_paths
+
+
 def train_models(
     data: pd.DataFrame,
     prediction_days: int = PREDICTION_DAYS,
@@ -430,7 +548,10 @@ def train_models(
     Validation data is used for XGBoost eval_set and threshold research; test data
     is reserved for final diagnostics.
     """
-    logging.info("Training models with explicitly defined feature arrays.")
+    logging.info(
+        "Training models with explicitly defined feature arrays "
+        f"for prediction_days={prediction_days}."
+    )
 
     # DataPreparator owns target creation, chronological splits, and shared scaling.
     data = validate_input_data(data)
@@ -613,7 +734,7 @@ def train_models(
     )
     evaluate_model(regressor, x_test_regressor, y_test, model_type="regression")
     # Validation probabilities choose the beat-benchmark threshold; test evaluates it once.
-    log_xgboost_test_report(
+    xgboost_test_reports = log_xgboost_test_report(
         y_train,
         y_val,
         y_test,
@@ -638,25 +759,90 @@ def train_models(
         regressor_features,
         prediction_days,
     )
-    joblib.dump(linear_model, MODEL_PATHS["linear"])
-    joblib.dump(scaler_lr, MODEL_PATHS["linear_scaler"])
-    joblib.dump(data_preparator, MODEL_PATHS["preparator"])
-    joblib.dump(all_features, MODEL_PATHS["features"])
-    joblib.dump(model_metadata, MODEL_PATHS["model_metadata"])
-    classifier.save_model(MODEL_PATHS["classifier"])
-    regressor.save_model(MODEL_PATHS["regressor"])
-    logging.info("Training completed. Models saved successfully.")
+    saved_paths = save_horizon_model_artifacts(
+        prediction_days,
+        linear_model,
+        scaler_lr,
+        data_preparator,
+        all_features,
+        model_metadata,
+        classifier,
+        regressor,
+    )
+    logging.info(
+        f"Training completed for prediction_days={prediction_days}. "
+        f"Models saved to {Path(saved_paths['model_metadata']).parent}."
+    )
+    return {
+        "prediction_days": prediction_days,
+        "model_metadata": model_metadata,
+        "artifact_paths": saved_paths,
+        "basket_backtest": xgboost_test_reports["basket_backtest"],
+    }
 
 
-def main():
+def _positive_int(value):
+    try:
+        parsed = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("prediction_days must be a positive integer") from exc
+
+    if parsed <= 0:
+        raise argparse.ArgumentTypeError("prediction_days must be a positive integer")
+    return parsed
+
+
+def parse_args(argv=None):
+    parser = argparse.ArgumentParser(
+        description="Train SPY-relative stock prediction models."
+    )
+    horizon_group = parser.add_mutually_exclusive_group()
+    horizon_group.add_argument(
+        "-d",
+        "--prediction-days",
+        type=_positive_int,
+        default=None,
+        help=f"Prediction horizon in trading days. Defaults to {PREDICTION_DAYS}.",
+    )
+    horizon_group.add_argument(
+        "--all-horizons",
+        action="store_true",
+        help=f"Train research horizons {ALL_HORIZONS}.",
+    )
+
+    args = parser.parse_args(argv)
+    if args.all_horizons:
+        args.horizons = list(ALL_HORIZONS)
+    else:
+        args.prediction_days = args.prediction_days or PREDICTION_DAYS
+        args.horizons = [args.prediction_days]
+
+    return args
+
+
+def main(argv=None):
+    args = parse_args(argv)
     data = prepare_data_parallel(TRAINING_TICKERS, period="5y")
     if data.empty:
         logging.error("No data fetched for training. Exiting...")
         return
 
-    logging.info("Starting model training...")
-    train_models(data)
-    logging.info("Model training completed.")
+    horizon_reports = {}
+    for prediction_days in args.horizons:
+        logging.info(
+            f"Starting model training for prediction_days={prediction_days}."
+        )
+        horizon_reports[prediction_days] = train_models(
+            data.copy(),
+            prediction_days=prediction_days,
+        )
+        logging.info(
+            f"Model training completed for prediction_days={prediction_days}."
+        )
+
+    if args.all_horizons:
+        logging.info(format_horizon_comparison_summary(horizon_reports))
+
     print("Model training completed. Check training.log for details.")
 
 

@@ -2,7 +2,7 @@ import pandas as pd
 import numpy as np
 from typing import Dict, List
 from sklearn.preprocessing import StandardScaler
-from src.config import REQUIRED_COLUMNS
+from src.config import PREDICTION_DAYS, REQUIRED_COLUMNS
 
 
 class DataPreparator:
@@ -27,7 +27,11 @@ class DataPreparator:
             errors="ignore",
         )
 
-    def create_target(self, df: pd.DataFrame, prediction_days: int = 5) -> pd.DataFrame:
+    def create_target(
+        self,
+        df: pd.DataFrame,
+        prediction_days: int = PREDICTION_DAYS,
+    ) -> pd.DataFrame:
         """Create ticker-aware raw forward returns without benchmark alignment."""
         df = self._normalize_prediction_date(df)
         df = self._create_raw_forward_returns(df, prediction_days)
@@ -161,7 +165,7 @@ class DataPreparator:
     def prepare_for_train(
         self,
         df: pd.DataFrame,
-        prediction_days: int = 5,
+        prediction_days: int = PREDICTION_DAYS,
         val_size: float = 0.15,
         test_size: float = 0.15,
         dropna: bool = True,

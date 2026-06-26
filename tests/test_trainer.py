@@ -1,6 +1,7 @@
 import logging
 import pandas as pd
 import numpy as np
+import pytest
 
 import src.train.trainer as trainer
 
@@ -260,6 +261,51 @@ def test_format_top_n_basket_backtest_summary_handles_unavailable_momentum():
     assert "benchmark raw=0.30%" in summary
 
 
+def test_format_horizon_comparison_summary_formats_basket_metrics():
+    horizon_reports = {
+        5: {
+            "basket_backtest": {
+                "top_5": {
+                    "model": {"average_basket_excess_return": 0.01},
+                    "random_baseline": {"average_basket_excess_return": 0.002},
+                    "momentum_baseline": {
+                        "available": True,
+                        "average_basket_excess_return": 0.003,
+                    },
+                    "universe": {"average_basket_excess_return": 0.001},
+                    "benchmark": {"average_basket_raw_return": 0.004},
+                }
+            }
+        },
+        10: {
+            "basket_backtest": {
+                "top_5": {
+                    "model": {"average_basket_excess_return": -0.01},
+                    "random_baseline": {"average_basket_excess_return": 0.001},
+                    "momentum_baseline": {
+                        "available": False,
+                        "average_basket_excess_return": np.nan,
+                    },
+                    "universe": {"average_basket_excess_return": -0.002},
+                    "benchmark": {"average_basket_raw_return": 0.003},
+                }
+            }
+        },
+    }
+
+    summary = trainer.format_horizon_comparison_summary(horizon_reports)
+
+    assert summary == (
+        "Horizon Comparison Summary:\n"
+        "5d:\n"
+        "  top_5 model excess=1.00%, random=0.20%, momentum=0.30%, "
+        "universe=0.10%, benchmark raw=0.40%\n"
+        "10d:\n"
+        "  top_5 model excess=-1.00%, random=0.10%, momentum=unavailable, "
+        "universe=-0.20%, benchmark raw=0.30%"
+    )
+
+
 def test_model_metadata_does_not_include_linear_regression_prediction():
     metadata = trainer.build_model_metadata(
         linear_features=["Close"],
@@ -272,6 +318,143 @@ def test_model_metadata_does_not_include_linear_regression_prediction():
     assert "LinearRegression_Prediction" not in metadata["regressor_features"]
     assert "LinearRegression_Prediction" not in metadata["classifier_feature_names"]
     assert "LinearRegression_Prediction" not in metadata["regressor_feature_names"]
+    assert metadata["prediction_days"] == 5
+
+
+def test_parse_args_defaults_to_ten_prediction_days():
+    args = trainer.parse_args([])
+
+    assert args.prediction_days == 10
+    assert args.horizons == [10]
+    assert args.all_horizons is False
+
+
+def test_parse_args_accepts_prediction_days_long_and_short_flags():
+    long_args = trainer.parse_args(["--prediction-days", "5"])
+    short_args = trainer.parse_args(["-d", "5"])
+
+    assert long_args.prediction_days == 5
+    assert long_args.horizons == [5]
+    assert short_args.prediction_days == 5
+    assert short_args.horizons == [5]
+
+
+def test_parse_args_rejects_invalid_prediction_days_values():
+    for argv in [
+        ["--prediction-days", "0"],
+        ["--prediction-days", "-1"],
+        ["--prediction-days", "abc"],
+    ]:
+        with pytest.raises(SystemExit):
+            trainer.parse_args(argv)
+
+
+def test_parse_args_all_horizons_resolves_research_horizons():
+    args = trainer.parse_args(["--all-horizons"])
+
+    assert args.all_horizons is True
+    assert args.horizons == [5, 10, 20, 50]
+
+
+def test_parse_args_rejects_all_horizons_with_prediction_days():
+    with pytest.raises(SystemExit):
+        trainer.parse_args(["--all-horizons", "--prediction-days", "5"])
+
+
+def test_build_horizon_model_paths_uses_horizon_specific_directory():
+    paths = trainer.build_horizon_model_paths(20)
+
+    assert paths["model_metadata"] == "models/horizon_20/model_metadata.pkl"
+    assert paths["classifier"] == "models/horizon_20/xgboost_classifier.json"
+    assert paths["regressor"] == "models/horizon_20/xgboost_regressor.json"
+
+
+def test_save_horizon_model_artifacts_writes_horizon_specific_paths(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+
+    class FakeXgbModel:
+        def save_model(self, path):
+            with open(path, "w", encoding="utf-8") as model_file:
+                model_file.write("model")
+
+    saved_paths = trainer.save_horizon_model_artifacts(
+        5,
+        linear_model={"linear": True},
+        scaler_lr={"scaler": True},
+        data_preparator={"preparator": True},
+        all_features=["Close"],
+        model_metadata={"prediction_days": 5},
+        classifier=FakeXgbModel(),
+        regressor=FakeXgbModel(),
+    )
+
+    assert saved_paths["model_metadata"] == "models/horizon_5/model_metadata.pkl"
+    assert (tmp_path / "models/horizon_5/model_metadata.pkl").exists()
+    assert (tmp_path / "models/horizon_5/xgboost_classifier.json").exists()
+    assert not (tmp_path / "models/model_metadata.pkl").exists()
+
+
+def test_save_horizon_model_artifacts_preserves_legacy_paths_for_default_horizon(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.chdir(tmp_path)
+
+    class FakeXgbModel:
+        def save_model(self, path):
+            with open(path, "w", encoding="utf-8") as model_file:
+                model_file.write("model")
+
+    trainer.save_horizon_model_artifacts(
+        10,
+        linear_model={"linear": True},
+        scaler_lr={"scaler": True},
+        data_preparator={"preparator": True},
+        all_features=["Close"],
+        model_metadata={"prediction_days": 10},
+        classifier=FakeXgbModel(),
+        regressor=FakeXgbModel(),
+    )
+
+    assert (tmp_path / "models/horizon_10/model_metadata.pkl").exists()
+    assert (tmp_path / "models/model_metadata.pkl").exists()
+
+
+def test_main_trains_all_horizons_and_logs_comparison(monkeypatch, caplog):
+    trained_horizons = []
+
+    monkeypatch.setattr(
+        trainer,
+        "prepare_data_parallel",
+        lambda tickers, period="5y": pd.DataFrame({"Close": [1.0]}),
+    )
+
+    def fake_train_models(data, prediction_days):
+        trained_horizons.append(prediction_days)
+        return {
+            "prediction_days": prediction_days,
+            "basket_backtest": {
+                "top_5": {
+                    "model": {"average_basket_excess_return": prediction_days / 1000},
+                    "random_baseline": {"average_basket_excess_return": 0.001},
+                    "momentum_baseline": {
+                        "available": True,
+                        "average_basket_excess_return": 0.002,
+                    },
+                    "universe": {"average_basket_excess_return": 0.0},
+                    "benchmark": {"average_basket_raw_return": 0.003},
+                }
+            },
+        }
+
+    monkeypatch.setattr(trainer, "train_models", fake_train_models)
+
+    with caplog.at_level(logging.INFO):
+        trainer.main(["--all-horizons"])
+
+    assert trained_horizons == [5, 10, 20, 50]
+    assert "Horizon Comparison Summary:" in caplog.text
+    assert "50d:" in caplog.text
 
 
 def test_log_xgboost_test_report_uses_explicit_direction_labels(monkeypatch):
