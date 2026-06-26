@@ -257,6 +257,23 @@ def test_prepare_for_train_returns_validation_split_and_benchmark_labels():
         np.testing.assert_array_equal(prepared[direction_key], expected_direction)
 
 
+def test_prepare_for_train_preserves_available_momentum_columns_in_split_metadata():
+    df = make_panel_feature_frame(num_dates=50)
+    for window in [5, 10, 20, 50]:
+        df[f"momentum_{window}d"] = 0.01 * window
+
+    prepared = DataPreparator().prepare_for_train(
+        df,
+        prediction_days=1,
+        val_size=0.2,
+        test_size=0.2,
+    )
+
+    for split_metadata in prepared["split_metadata"].values():
+        for column in ["momentum_5d", "momentum_10d", "momentum_20d", "momentum_50d"]:
+            assert column in split_metadata.columns
+
+
 def test_prepare_for_train_rejects_invalid_split_sizes():
     df = make_panel_feature_frame(num_dates=30)
     preparator = DataPreparator()

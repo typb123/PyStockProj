@@ -103,6 +103,7 @@ def format_top_n_ranked_selection_summary(top_n_report):
         random_baseline = bucket_report.get("random_baseline", {})
         momentum_baseline = bucket_report.get("momentum_baseline", {})
         universe = bucket_report.get("universe", {})
+        momentum_label = momentum_baseline.get("momentum_score_column", "momentum")
 
         model_excess = model.get("average_selected_excess_return_vs_benchmark")
         random_excess = random_baseline.get(
@@ -129,7 +130,7 @@ def format_top_n_ranked_selection_summary(top_n_report):
             "  "
             f"model excess={_format_percent(model_excess)}, "
             f"random excess={_format_percent(random_excess)}, "
-            f"momentum excess={momentum_text}, "
+            f"{momentum_label} excess={momentum_text}, "
             f"universe excess={_format_percent(universe_excess)}"
         )
         lines.append(
@@ -152,6 +153,7 @@ def format_top_n_basket_backtest_summary(top_n_report):
         momentum_baseline = bucket_report.get("momentum_baseline", {})
         universe = bucket_report.get("universe", {})
         benchmark = bucket_report.get("benchmark", {})
+        momentum_label = momentum_baseline.get("momentum_score_column", "momentum")
 
         model_raw = model.get("average_basket_raw_return")
         model_excess = model.get("average_basket_excess_return")
@@ -177,7 +179,7 @@ def format_top_n_basket_backtest_summary(top_n_report):
             f"model raw={_format_percent(model_raw)}, "
             f"model excess={_format_percent(model_excess)}, "
             f"random excess={_format_percent(random_excess)}, "
-            f"momentum excess={momentum_text}, "
+            f"{momentum_label} excess={momentum_text}, "
             f"universe excess={_format_percent(universe_excess)}, "
             f"benchmark raw={_format_percent(benchmark_raw)}"
         )
@@ -205,6 +207,7 @@ def format_horizon_comparison_summary(horizon_reports):
             momentum_baseline = bucket_report.get("momentum_baseline", {})
             universe = bucket_report.get("universe", {})
             benchmark = bucket_report.get("benchmark", {})
+            momentum_label = momentum_baseline.get("momentum_score_column", "momentum")
 
             if momentum_baseline.get("available", True):
                 momentum_text = _format_percent(
@@ -218,7 +221,7 @@ def format_horizon_comparison_summary(horizon_reports):
                 f"{bucket_name} "
                 f"model excess={_format_percent(model.get('average_basket_excess_return'))}, "
                 f"random={_format_percent(random_baseline.get('average_basket_excess_return'))}, "
-                f"momentum={momentum_text}, "
+                f"{momentum_label}={momentum_text}, "
                 f"universe={_format_percent(universe.get('average_basket_excess_return'))}, "
                 f"benchmark raw={_format_percent(benchmark.get('average_basket_raw_return'))}"
             )
@@ -352,6 +355,7 @@ def log_xgboost_test_report(
     classifier_validation_probability_up,
     classifier_probability_up,
     regressor_predictions,
+    prediction_days=PREDICTION_DAYS,
 ):
     """
     Log final SPY-relative XGBoost diagnostics without tuning on test data.
@@ -397,10 +401,12 @@ def log_xgboost_test_report(
     top_n_ranked_selection_report = build_top_n_ranked_selection_report(
         test_split_metadata,
         regressor_predictions,
+        prediction_days=prediction_days,
     )
     top_n_basket_backtest_report = build_top_n_basket_backtest_report(
         test_split_metadata,
         regressor_predictions,
+        prediction_days=prediction_days,
     )
 
     logging.info(
@@ -744,6 +750,7 @@ def train_models(
         classifier.predict_proba(x_val_classifier)[:, 1],
         classifier.predict_proba(x_test_classifier)[:, 1],
         regressor.predict(x_test_regressor),
+        prediction_days=prediction_days,
     )
 
     importances_reg = regressor.feature_importances_

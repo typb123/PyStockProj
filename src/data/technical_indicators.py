@@ -21,6 +21,7 @@ def calculate_data(data: pd.DataFrame) -> pd.DataFrame:
     Indicators:
         - Moving Averages (5, 10, 20 day SMA)
         - Daily Return
+        - Trailing Momentum Returns
         - Rolling Volatility
         - Relative Strength Index (RSI)
         - Moving Average Convergence Divergence (MACD)
@@ -59,6 +60,15 @@ def calculate_data(data: pd.DataFrame) -> pd.DataFrame:
         # pct_change creates an expected first-row NaN for the missing prior close.
         df['dailyReturn'] = df['Close'].pct_change()
         df['volatility'] = df['dailyReturn'].rolling(window=vol_window, min_periods=1).std()
+        return df
+
+    def calculate_trailing_momentum(
+        df: pd.DataFrame,
+        windows: List[int] = [5, 10, 20, 50],
+    ) -> pd.DataFrame:
+        """Calculate past-looking trailing returns for momentum baselines."""
+        for window in windows:
+            df[f'momentum_{window}d'] = df['Close'] / df['Close'].shift(window) - 1
         return df
 
     def calculate_rsi(df: pd.DataFrame, period: int = 14) -> pd.DataFrame:
@@ -148,6 +158,7 @@ def calculate_data(data: pd.DataFrame) -> pd.DataFrame:
     # --- Compute All Indicators ---
     df = calculate_moving_averages(df)
     df = calculate_returns_and_volatility(df)
+    df = calculate_trailing_momentum(df)
     df = calculate_rsi(df)
     df = calculate_macd(df)
     df = calculate_vma(df)

@@ -553,6 +553,51 @@ def test_top_n_momentum_baseline_ranks_within_date():
     )
 
 
+def test_top_n_ranked_selection_uses_horizon_matched_momentum_column_when_available():
+    metadata = make_ranked_selection_metadata()
+    metadata["momentum_10d"] = [0.99, 0.01, 0.02, 0.01, 0.02, 0.99]
+    predicted_excess_returns = np.array([0.90, 0.80, 0.70, 0.10, 0.20, 0.30])
+
+    report = build_top_n_ranked_selection_report(
+        metadata,
+        predicted_excess_returns,
+        top_n_values=(1,),
+        prediction_days=10,
+    )
+
+    momentum_baseline = report["top_1"]["momentum_baseline"]
+    assert momentum_baseline["available"] is True
+    assert momentum_baseline["momentum_score_column"] == "momentum_10d"
+    assert np.isclose(
+        momentum_baseline["average_selected_raw_forward_return"],
+        (0.10 + -0.04) / 2,
+    )
+    assert np.isclose(
+        momentum_baseline["average_momentum_10d"],
+        (0.99 + 0.99) / 2,
+    )
+
+
+def test_top_n_ranked_selection_falls_back_to_daily_return_when_horizon_momentum_missing():
+    metadata = make_ranked_selection_metadata()
+    predicted_excess_returns = np.array([0.90, 0.80, 0.70, 0.10, 0.20, 0.30])
+
+    report = build_top_n_ranked_selection_report(
+        metadata,
+        predicted_excess_returns,
+        top_n_values=(1,),
+        prediction_days=10,
+    )
+
+    momentum_baseline = report["top_1"]["momentum_baseline"]
+    assert momentum_baseline["available"] is True
+    assert momentum_baseline["momentum_score_column"] == "dailyReturn"
+    assert np.isclose(
+        momentum_baseline["average_selected_raw_forward_return"],
+        (0.02 + -0.04) / 2,
+    )
+
+
 def test_top_n_momentum_baseline_reports_missing_score_column_explicitly():
     metadata = make_ranked_selection_metadata().drop(columns=["dailyReturn"])
     predicted_excess_returns = np.array([0.90, 0.80, 0.70, 0.10, 0.20, 0.30])
@@ -678,6 +723,41 @@ def test_top_n_basket_backtest_momentum_baseline_ranks_by_daily_return():
     assert momentum["evaluated_dates"] == 2
     assert np.isclose(momentum["average_basket_raw_return"], (0.02 + -0.04) / 2)
     assert np.isclose(momentum["average_basket_excess_return"], (0.01 + -0.06) / 2)
+
+
+def test_top_n_basket_backtest_uses_horizon_matched_momentum_column_when_available():
+    metadata = make_ranked_selection_metadata()
+    metadata["momentum_20d"] = [0.99, 0.01, 0.02, 0.01, 0.02, 0.99]
+    ranked_predictions = np.array([0.90, 0.80, 0.70, 0.10, 0.20, 0.30])
+
+    report = build_top_n_basket_backtest_report(
+        metadata,
+        ranked_predictions,
+        top_ns=(1,),
+        prediction_days=20,
+    )
+
+    momentum = report["top_1"]["momentum_baseline"]
+    assert momentum["available"] is True
+    assert momentum["momentum_score_column"] == "momentum_20d"
+    assert np.isclose(momentum["average_basket_raw_return"], (0.10 + -0.04) / 2)
+
+
+def test_top_n_basket_backtest_falls_back_to_daily_return_when_horizon_momentum_missing():
+    metadata = make_ranked_selection_metadata()
+    ranked_predictions = np.array([0.90, 0.80, 0.70, 0.10, 0.20, 0.30])
+
+    report = build_top_n_basket_backtest_report(
+        metadata,
+        ranked_predictions,
+        top_ns=(1,),
+        prediction_days=20,
+    )
+
+    momentum = report["top_1"]["momentum_baseline"]
+    assert momentum["available"] is True
+    assert momentum["momentum_score_column"] == "dailyReturn"
+    assert np.isclose(momentum["average_basket_raw_return"], (0.02 + -0.04) / 2)
 
 
 def test_top_n_basket_backtest_momentum_baseline_reports_missing_score_column():

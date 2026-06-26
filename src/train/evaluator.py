@@ -348,7 +348,8 @@ def build_top_n_ranked_selection_report(
     top_n_values=(5, 10, 20),
     random_seed=42,
     random_trials=100,
-    momentum_score_column="dailyReturn",
+    momentum_score_column=None,
+    prediction_days=None,
 ):
     """Evaluate ranked stock selection within each prediction date.
 
@@ -365,6 +366,11 @@ def build_top_n_ranked_selection_report(
 
     metadata["predicted_excess_return"] = predicted_excess_returns
     metadata = metadata[metadata["Ticker"] != "SPY"].copy()
+    momentum_score_column = _resolve_momentum_score_column(
+        metadata,
+        momentum_score_column,
+        prediction_days,
+    )
     grouped_metadata = list(metadata.groupby("prediction_date", sort=True))
     report = {}
 
@@ -409,7 +415,8 @@ def build_top_n_basket_backtest_report(
     top_ns=(5, 10, 20),
     random_seed=42,
     random_trials=100,
-    momentum_score_column="dailyReturn",
+    momentum_score_column=None,
+    prediction_days=None,
 ):
     """Summarize equal-weight top-N baskets selected within each prediction date.
 
@@ -426,6 +433,11 @@ def build_top_n_basket_backtest_report(
 
     metadata["ranked_prediction"] = ranked_predictions
     metadata = metadata[metadata["Ticker"] != "SPY"].copy()
+    momentum_score_column = _resolve_momentum_score_column(
+        metadata,
+        momentum_score_column,
+        prediction_days,
+    )
     grouped_metadata = list(metadata.groupby("prediction_date", sort=True))
     report = {}
 
@@ -473,6 +485,18 @@ def _select_top_n_by_score(grouped_metadata, selected_count_by_date, score_colum
         selected_groups.append(date_group.nlargest(selected_count, score_column))
 
     return selected_groups
+
+
+def _resolve_momentum_score_column(metadata, momentum_score_column, prediction_days):
+    if momentum_score_column is not None:
+        return momentum_score_column
+
+    if prediction_days is not None:
+        horizon_column = f"momentum_{int(prediction_days)}d"
+        if horizon_column in metadata.columns:
+            return horizon_column
+
+    return "dailyReturn"
 
 
 def _basket_backtest_stats(selected_groups):

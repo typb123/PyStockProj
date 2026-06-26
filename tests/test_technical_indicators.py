@@ -29,3 +29,43 @@ def test_chikou_features_use_lagged_close_only():
     assert "chikou_lag_close_26" in REQUIRED_COLUMNS
     assert "chikou_return_26" in REQUIRED_COLUMNS
     assert "chikou_above_lag_26" in REQUIRED_COLUMNS
+
+
+def test_calculate_data_creates_trailing_momentum_columns():
+    close = np.arange(100.0, 160.0)
+    df = pd.DataFrame(
+        {
+            "Open": close - 0.5,
+            "High": close + 1.0,
+            "Low": close - 1.0,
+            "Close": close,
+            "Volume": np.arange(1000.0, 1060.0),
+        }
+    )
+
+    result = calculate_data(df)
+
+    for column in ["momentum_5d", "momentum_10d", "momentum_20d", "momentum_50d"]:
+        assert column in result.columns
+        assert column not in REQUIRED_COLUMNS
+
+
+def test_trailing_momentum_columns_are_past_looking():
+    close = np.array([100.0 * (1.1 ** index) for index in range(60)])
+    df = pd.DataFrame(
+        {
+            "Open": close - 0.5,
+            "High": close + 1.0,
+            "Low": close - 1.0,
+            "Close": close,
+            "Volume": np.arange(1000.0, 1060.0),
+        }
+    )
+
+    result = calculate_data(df)
+
+    assert np.isnan(result.loc[4, "momentum_5d"])
+    expected_5d = close[5] / close[0] - 1
+    expected_50d = close[50] / close[0] - 1
+    assert np.isclose(result.loc[5, "momentum_5d"], expected_5d)
+    assert np.isclose(result.loc[50, "momentum_50d"], expected_50d)

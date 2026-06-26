@@ -146,6 +146,7 @@ def test_format_top_n_ranked_selection_summary_formats_percentages():
             },
             "momentum_baseline": {
                 "available": True,
+                "momentum_score_column": "momentum_10d",
                 "average_selected_excess_return_vs_benchmark": 0.008,
             },
             "universe": {
@@ -160,7 +161,7 @@ def test_format_top_n_ranked_selection_summary_formats_percentages():
         "XGBoost Top-N Ranked Selection Summary:\n"
         "top_5:\n"
         "  model excess=1.23%, random excess=0.40%, "
-        "momentum excess=0.80%, universe excess=0.15%\n"
+        "momentum_10d excess=0.80%, universe excess=0.15%\n"
         "  model minus random=0.83%, model minus momentum=0.43%, "
         "model beat rate=52.88%"
     )
@@ -206,6 +207,7 @@ def test_format_top_n_basket_backtest_summary_formats_normal_report():
             },
             "momentum_baseline": {
                 "available": True,
+                "momentum_score_column": "momentum_10d",
                 "average_basket_excess_return": 0.008,
             },
             "universe": {
@@ -223,7 +225,7 @@ def test_format_top_n_basket_backtest_summary_formats_normal_report():
         "XGBoost Top-N Basket Backtest Summary:\n"
         "top_5:\n"
         "  model raw=1.23%, model excess=1.00%, random excess=0.40%, "
-        "momentum excess=0.80%, universe excess=0.15%, benchmark raw=0.23%\n"
+        "momentum_10d excess=0.80%, universe excess=0.15%, benchmark raw=0.23%\n"
         "  model minus random=0.60%, model minus momentum=0.20%, "
         "beat benchmark rate=52.88%"
     )
@@ -465,14 +467,24 @@ def test_log_xgboost_test_report_uses_explicit_direction_labels(monkeypatch):
         captured["y_pred"] = np.asarray(y_pred)
         return {"accuracy": 1.0}
 
-    def fake_build_top_n_ranked_selection_report(split_metadata, predicted_returns):
+    def fake_build_top_n_ranked_selection_report(
+        split_metadata,
+        predicted_returns,
+        prediction_days=None,
+    ):
         captured["split_metadata"] = split_metadata
         captured["ranked_predictions"] = np.asarray(predicted_returns)
+        captured["prediction_days"] = prediction_days
         return {"top_5": {"selected_row_count": 1}}
 
-    def fake_build_top_n_basket_backtest_report(split_metadata, predicted_returns):
+    def fake_build_top_n_basket_backtest_report(
+        split_metadata,
+        predicted_returns,
+        prediction_days=None,
+    ):
         captured["basket_split_metadata"] = split_metadata
         captured["basket_ranked_predictions"] = np.asarray(predicted_returns)
+        captured["basket_prediction_days"] = prediction_days
         return {"top_5": {"model": {}}}
 
     monkeypatch.setattr(
@@ -524,6 +536,7 @@ def test_log_xgboost_test_report_uses_explicit_direction_labels(monkeypatch):
     np.testing.assert_array_equal(captured["y_pred"], classifier_predictions)
     pd.testing.assert_frame_equal(captured["split_metadata"], test_split_metadata)
     np.testing.assert_array_equal(captured["ranked_predictions"], regressor_predictions)
+    assert captured["prediction_days"] == 10
     pd.testing.assert_frame_equal(
         captured["basket_split_metadata"],
         test_split_metadata,
@@ -532,6 +545,7 @@ def test_log_xgboost_test_report_uses_explicit_direction_labels(monkeypatch):
         captured["basket_ranked_predictions"],
         regressor_predictions,
     )
+    assert captured["basket_prediction_days"] == 10
     assert not np.array_equal(captured["y_true"], (y_test > 0).astype(int))
 
 
@@ -788,9 +802,14 @@ def test_log_xgboost_test_report_logs_basket_summary_at_info_and_full_report_at_
         lambda *args, **kwargs: {"top_5": {"model": {}}},
     )
 
-    def fake_build_top_n_basket_backtest_report(split_metadata, ranked_predictions):
+    def fake_build_top_n_basket_backtest_report(
+        split_metadata,
+        ranked_predictions,
+        prediction_days=None,
+    ):
         captured["split_metadata"] = split_metadata
         captured["ranked_predictions"] = np.asarray(ranked_predictions)
+        captured["prediction_days"] = prediction_days
         return basket_report
 
     monkeypatch.setattr(
@@ -817,6 +836,7 @@ def test_log_xgboost_test_report_logs_basket_summary_at_info_and_full_report_at_
 
     pd.testing.assert_frame_equal(captured["split_metadata"], test_split_metadata)
     np.testing.assert_array_equal(captured["ranked_predictions"], regressor_predictions)
+    assert captured["prediction_days"] == 10
     info_messages = [
         record.getMessage()
         for record in caplog.records

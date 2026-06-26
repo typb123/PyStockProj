@@ -160,7 +160,18 @@ class DataPreparator:
             "excess_forward_return",
             "beat_benchmark_target",
         ]
-        return split_df[metadata_columns].copy()
+        optional_momentum_columns = [
+            "momentum_5d",
+            "momentum_10d",
+            "momentum_20d",
+            "momentum_50d",
+        ]
+        available_columns = metadata_columns + [
+            column
+            for column in optional_momentum_columns
+            if column in split_df.columns
+        ]
+        return split_df[available_columns].copy()
 
     def prepare_for_train(
         self,
