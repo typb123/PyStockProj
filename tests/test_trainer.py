@@ -11,8 +11,8 @@ def test_prepare_data_parallel_passes_period_to_fetch_stock_data(monkeypatch):
         return pd.DataFrame(
             {
                 "Close": [100.0],
-                "Ticker": [ticker],
-            }
+            },
+            index=pd.to_datetime(["2024-01-02"]),
         )
 
     def fake_calculate_data(df):
@@ -26,6 +26,8 @@ def test_prepare_data_parallel_passes_period_to_fetch_stock_data(monkeypatch):
     assert calls == [("AAPL", "1y"), ("MSFT", "1y")]
     assert result.shape[0] == 2
     assert set(result["Ticker"]) == {"AAPL", "MSFT"}
+    assert "prediction_date" in result.columns
+    assert set(result["prediction_date"]) == {pd.Timestamp("2024-01-02")}
 
 
 def test_validate_input_data_does_not_fill_missing_values():

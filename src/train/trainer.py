@@ -89,6 +89,7 @@ def fetch_tickers_data(ticker, period="5y"):
         logging.info(f"Data size before processing for {ticker}: {stock_data.shape}")
 
         stock_data = calculate_data(stock_data)
+        stock_data["prediction_date"] = stock_data.index
         stock_data["Ticker"] = ticker
 
         # Log data size after processing
@@ -417,9 +418,9 @@ def train_models(
     x_test_regressor = x_test_full[regressor_features]
 
     # The classifier predicts direction only; the regressor predicts return magnitude.
-    direction_y_train = (y_train > 0).astype(int)
-    direction_y_val = (y_val > 0).astype(int)
-    direction_y_test = (y_test > 0).astype(int)
+    direction_y_train = prepared_data["direction_y_train"]
+    direction_y_val = prepared_data["direction_y_val"]
+    direction_y_test = prepared_data["direction_y_test"]
 
     logging.info("Training XGBoost Classifier...")
     classifier = XGBClassifier(**(classifier_params or XG_PARAMS_CLASSIFIER))
