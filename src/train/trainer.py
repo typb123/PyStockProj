@@ -26,6 +26,7 @@ from src.train.evaluator import (
     build_predicted_return_quantile_report,
     build_regression_report,
     build_return_correlation_report,
+    build_top_n_ranked_selection_report,
     build_trading_relevance_report,
     build_validation_selected_threshold_report,
 )
@@ -170,6 +171,7 @@ def log_xgboost_test_report(
     y_val,
     y_test,
     direction_y_test,
+    test_split_metadata,
     classifier_predictions,
     classifier_validation_probability_up,
     classifier_probability_up,
@@ -216,6 +218,10 @@ def log_xgboost_test_report(
         y_test,
         regressor_predictions,
     )
+    top_n_ranked_selection_report = build_top_n_ranked_selection_report(
+        test_split_metadata,
+        regressor_predictions,
+    )
 
     logging.info(
         f"XGBoost Beat-Benchmark Classification Report: {classification_report_data}"
@@ -244,6 +250,9 @@ def log_xgboost_test_report(
         f"XGBoost Regressor Excess Return Correlation Report: {return_correlation_report}"
     )
     logging.info(f"XGBoost Combined Signal Report: {combined_signal_report}")
+    logging.info(
+        f"XGBoost Top-N Ranked Selection Report: {top_n_ranked_selection_report}"
+    )
 
 
 def build_model_metadata(
@@ -462,6 +471,7 @@ def train_models(
         y_val,
         y_test,
         direction_y_test,
+        prepared_data["split_metadata"]["test"],
         classifier.predict(x_test_classifier),
         classifier.predict_proba(x_val_classifier)[:, 1],
         classifier.predict_proba(x_test_classifier)[:, 1],

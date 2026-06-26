@@ -70,27 +70,53 @@ def test_log_xgboost_test_report_uses_explicit_direction_labels(monkeypatch):
         captured["y_pred"] = np.asarray(y_pred)
         return {"accuracy": 1.0}
 
+    def fake_build_top_n_ranked_selection_report(split_metadata, predicted_returns):
+        captured["split_metadata"] = split_metadata
+        captured["ranked_predictions"] = np.asarray(predicted_returns)
+        return {"top_5": {"selected_row_count": 1}}
+
     monkeypatch.setattr(
         trainer,
         "build_classification_report",
         fake_build_classification_report,
     )
+    monkeypatch.setattr(
+        trainer,
+        "build_top_n_ranked_selection_report",
+        fake_build_top_n_ranked_selection_report,
+    )
 
     y_test = np.array([0.10, -0.20, 0.30])
     direction_y_test = np.array([0, 1, 0])
     classifier_predictions = np.array([0, 1, 1])
+    test_split_metadata = pd.DataFrame(
+        {
+            "Ticker": ["AAA", "BBB", "CCC"],
+            "prediction_date": pd.to_datetime(
+                ["2024-01-02", "2024-01-02", "2024-01-02"]
+            ),
+            "raw_forward_return": [0.11, -0.18, 0.28],
+            "benchmark_forward_return": [0.01, 0.02, -0.02],
+            "excess_forward_return": y_test,
+            "beat_benchmark_target": direction_y_test,
+        }
+    )
+    regressor_predictions = np.array([0.08, -0.15, 0.20])
 
     trainer.log_xgboost_test_report(
         y_train=np.array([0.01, -0.02, 0.03]),
         y_val=np.array([0.02, -0.01, 0.04]),
         y_test=y_test,
         direction_y_test=direction_y_test,
+        test_split_metadata=test_split_metadata,
         classifier_predictions=classifier_predictions,
         classifier_validation_probability_up=np.array([0.55, 0.45, 0.65]),
         classifier_probability_up=np.array([0.60, 0.40, 0.70]),
-        regressor_predictions=np.array([0.08, -0.15, 0.20]),
+        regressor_predictions=regressor_predictions,
     )
 
     np.testing.assert_array_equal(captured["y_true"], direction_y_test)
     np.testing.assert_array_equal(captured["y_pred"], classifier_predictions)
+    pd.testing.assert_frame_equal(captured["split_metadata"], test_split_metadata)
+    np.testing.assert_array_equal(captured["ranked_predictions"], regressor_predictions)
     assert not np.array_equal(captured["y_true"], (y_test > 0).astype(int))

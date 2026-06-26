@@ -1,4 +1,5 @@
 import numpy as np
+import pandas as pd
 import pytest
 
 from src.train.evaluator import (
@@ -12,6 +13,7 @@ from src.train.evaluator import (
     build_predicted_return_quantile_report,
     build_regression_report,
     build_return_correlation_report,
+    build_top_n_ranked_selection_report,
     build_trading_relevance_report,
 )
 
@@ -329,6 +331,150 @@ def test_build_combined_signal_report_rejects_mismatched_inputs():
             np.array([0.60, 0.70]),
             np.array([0.01, -0.02]),
             np.array([0.03]),
+        )
+
+
+def make_ranked_selection_metadata():
+    return pd.DataFrame(
+        {
+            "Ticker": ["AAA", "BBB", "CCC", "AAA", "BBB", "CCC"],
+            "prediction_date": pd.to_datetime(
+                [
+                    "2024-01-01",
+                    "2024-01-01",
+                    "2024-01-01",
+                    "2024-01-02",
+                    "2024-01-02",
+                    "2024-01-02",
+                ]
+            ),
+            "raw_forward_return": [0.10, 0.02, -0.01, 0.03, 0.20, -0.04],
+            "benchmark_forward_return": [0.01, 0.01, 0.01, 0.02, 0.02, 0.02],
+            "excess_forward_return": [0.09, 0.01, -0.02, 0.01, 0.18, -0.06],
+            "beat_benchmark_target": [1, 1, 0, 1, 1, 0],
+        }
+    )
+
+
+def test_top_n_ranked_selection_is_per_date_not_global():
+    metadata = make_ranked_selection_metadata()
+    predicted_excess_returns = np.array([0.90, 0.80, 0.70, 0.10, 0.20, 0.30])
+
+    report = build_top_n_ranked_selection_report(
+        metadata,
+        predicted_excess_returns,
+        top_n_values=(1,),
+    )
+
+    top_1 = report["top_1"]
+    assert top_1["date_count"] == 2
+    assert top_1["selected_row_count"] == 2
+    assert np.isclose(top_1["average_selected_raw_forward_return"], 0.03)
+    assert np.isclose(top_1["average_selected_benchmark_forward_return"], 0.015)
+    assert np.isclose(top_1["average_selected_excess_return_vs_benchmark"], 0.015)
+    assert np.isclose(top_1["beat_benchmark_rate"], 0.5)
+    assert np.isclose(top_1["average_predicted_excess_return"], 0.60)
+
+
+def test_top_n_ranked_selection_uses_min_available_candidates_per_date():
+    metadata = make_ranked_selection_metadata()
+    predicted_excess_returns = np.array([0.90, 0.80, 0.70, 0.10, 0.20, 0.30])
+
+    report = build_top_n_ranked_selection_report(
+        metadata,
+        predicted_excess_returns,
+        top_n_values=(5,),
+    )
+
+    assert report["top_5"]["date_count"] == 2
+    assert report["top_5"]["selected_row_count"] == 6
+    assert report["top_5"]["average_number_of_candidates_per_date"] == 3.0
+
+
+def test_top_n_ranked_selection_computes_universe_relative_return():
+    metadata = make_ranked_selection_metadata()
+    predicted_excess_returns = np.array([0.90, 0.80, 0.70, 0.10, 0.20, 0.30])
+
+    report = build_top_n_ranked_selection_report(
+        metadata,
+        predicted_excess_returns,
+        top_n_values=(1,),
+    )
+
+    selected_raw_mean = (0.10 + -0.04) / 2
+    universe_date_1 = (0.10 + 0.02 + -0.01) / 3
+    universe_date_2 = (0.03 + 0.20 + -0.04) / 3
+    expected_universe_mean = (universe_date_1 + universe_date_2) / 2
+    assert np.isclose(
+        report["top_1"]["average_equal_weight_universe_forward_return"],
+        expected_universe_mean,
+    )
+    assert np.isclose(
+        report["top_1"]["average_selected_return_minus_universe_return"],
+        selected_raw_mean - expected_universe_mean,
+    )
+
+
+def test_top_n_ranked_selection_reports_multiple_buckets():
+    metadata = make_ranked_selection_metadata()
+    predicted_excess_returns = np.array([0.90, 0.80, 0.70, 0.10, 0.20, 0.30])
+
+    report = build_top_n_ranked_selection_report(
+        metadata,
+        predicted_excess_returns,
+        top_n_values=(1, 2),
+    )
+
+    assert set(report) == {"top_1", "top_2"}
+    assert report["top_1"]["selected_row_count"] == 2
+    assert report["top_2"]["selected_row_count"] == 4
+    assert np.isclose(
+        report["top_2"]["median_selected_excess_return_vs_benchmark"],
+        0.05,
+    )
+    assert report["top_2"]["positive_raw_return_rate"] == 0.75
+
+
+def test_top_n_ranked_selection_ignores_benchmark_rows_if_present():
+    metadata = make_ranked_selection_metadata()
+    spy_row = pd.DataFrame(
+        {
+            "Ticker": ["SPY"],
+            "prediction_date": [pd.Timestamp("2024-01-01")],
+            "raw_forward_return": [0.50],
+            "benchmark_forward_return": [0.50],
+            "excess_forward_return": [0.00],
+            "beat_benchmark_target": [0],
+        }
+    )
+    metadata = pd.concat([metadata, spy_row], ignore_index=True)
+    predicted_excess_returns = np.array([0.90, 0.80, 0.70, 0.10, 0.20, 0.30, 9.99])
+
+    report = build_top_n_ranked_selection_report(
+        metadata,
+        predicted_excess_returns,
+        top_n_values=(1,),
+    )
+
+    assert report["top_1"]["selected_row_count"] == 2
+    assert np.isclose(report["top_1"]["average_selected_raw_forward_return"], 0.03)
+
+
+def test_top_n_ranked_selection_rejects_mismatched_lengths():
+    with pytest.raises(ValueError, match="same length"):
+        build_top_n_ranked_selection_report(
+            make_ranked_selection_metadata(),
+            np.array([0.10, 0.20]),
+        )
+
+
+def test_top_n_ranked_selection_rejects_missing_metadata_columns():
+    metadata = make_ranked_selection_metadata().drop(columns=["raw_forward_return"])
+
+    with pytest.raises(ValueError, match="required columns"):
+        build_top_n_ranked_selection_report(
+            metadata,
+            np.arange(len(metadata), dtype=float),
         )
 
 

@@ -1,4 +1,5 @@
 import numpy as np
+import pandas as pd
 from sklearn.metrics import (
     accuracy_score,
     confusion_matrix,
@@ -341,6 +342,106 @@ def build_combined_signal_report(
     }
 
 
+def build_top_n_ranked_selection_report(
+    split_metadata,
+    predicted_excess_returns,
+    top_n_values=(5, 10, 20),
+):
+    """Evaluate ranked stock selection within each prediction date.
+
+    Rows are ranked by predicted SPY-relative excess return separately for each
+    date, then the top min(N, available candidates) are aggregated across dates.
+    """
+    metadata = split_metadata.copy()
+    predicted_excess_returns = np.asarray(predicted_excess_returns, dtype=float)
+    _validate_ranked_selection_inputs(metadata, predicted_excess_returns)
+
+    metadata["predicted_excess_return"] = predicted_excess_returns
+    metadata = metadata[metadata["Ticker"] != "SPY"].copy()
+    report = {}
+
+    for top_n in top_n_values:
+        selected_groups = []
+        date_stats = []
+        candidate_counts = []
+
+        for _, date_group in metadata.groupby("prediction_date", sort=True):
+            candidate_count = len(date_group)
+            if candidate_count == 0:
+                continue
+
+            candidate_counts.append(candidate_count)
+            universe_return = float(date_group["raw_forward_return"].mean())
+            selected_count = min(int(top_n), candidate_count)
+            selected_group = date_group.nlargest(
+                selected_count, "predicted_excess_return"
+            )
+            selected_groups.append(selected_group)
+            selected_raw_return = float(selected_group["raw_forward_return"].mean())
+            date_stats.append(
+                {
+                    "selected_raw_forward_return": selected_raw_return,
+                    "selected_benchmark_forward_return": float(
+                        selected_group["benchmark_forward_return"].mean()
+                    ),
+                    "selected_excess_return_vs_benchmark": float(
+                        selected_group["excess_forward_return"].mean()
+                    ),
+                    "equal_weight_universe_forward_return": universe_return,
+                    "selected_return_minus_universe_return": (
+                        selected_raw_return - universe_return
+                    ),
+                    "predicted_excess_return": float(
+                        selected_group["predicted_excess_return"].mean()
+                    ),
+                }
+            )
+
+        key = f"top_{top_n}"
+        if not selected_groups:
+            report[key] = _empty_ranked_selection_stats()
+            continue
+
+        selected = pd.concat(selected_groups, ignore_index=True)
+        date_stats = pd.DataFrame(date_stats)
+        report[key] = {
+            "date_count": int(len(selected_groups)),
+            "selected_row_count": int(len(selected)),
+            "average_selected_raw_forward_return": _mean_or_nan(
+                date_stats["selected_raw_forward_return"].to_numpy()
+            ),
+            "average_selected_benchmark_forward_return": _mean_or_nan(
+                date_stats["selected_benchmark_forward_return"].to_numpy()
+            ),
+            "average_selected_excess_return_vs_benchmark": _mean_or_nan(
+                date_stats["selected_excess_return_vs_benchmark"].to_numpy()
+            ),
+            "beat_benchmark_rate": _mean_or_nan(
+                selected["beat_benchmark_target"].to_numpy()
+            ),
+            "average_equal_weight_universe_forward_return": _mean_or_nan(
+                date_stats["equal_weight_universe_forward_return"].to_numpy()
+            ),
+            "average_selected_return_minus_universe_return": _mean_or_nan(
+                date_stats["selected_return_minus_universe_return"].to_numpy()
+            ),
+            "average_predicted_excess_return": _mean_or_nan(
+                date_stats["predicted_excess_return"].to_numpy()
+            ),
+            "median_selected_excess_return_vs_benchmark": float(
+                np.median(selected["excess_forward_return"].to_numpy())
+            ),
+            "positive_raw_return_rate": _up_rate_or_nan(
+                selected["raw_forward_return"].to_numpy()
+            ),
+            "average_number_of_candidates_per_date": _mean_or_nan(
+                np.asarray(candidate_counts, dtype=float)
+            ),
+        }
+
+    return report
+
+
 def _mean_or_nan(values):
     if len(values) == 0:
         return np.nan
@@ -412,3 +513,38 @@ def _rank_values(values):
         start = end
 
     return ranks
+
+
+def _validate_ranked_selection_inputs(metadata, predicted_excess_returns):
+    required_columns = {
+        "Ticker",
+        "prediction_date",
+        "raw_forward_return",
+        "benchmark_forward_return",
+        "excess_forward_return",
+        "beat_benchmark_target",
+    }
+    missing_columns = sorted(required_columns - set(metadata.columns))
+    if missing_columns:
+        raise ValueError(f"split_metadata is missing required columns: {missing_columns}")
+    if len(metadata) != len(predicted_excess_returns):
+        raise ValueError(
+            "split_metadata and predicted_excess_returns must have the same length."
+        )
+
+
+def _empty_ranked_selection_stats():
+    return {
+        "date_count": 0,
+        "selected_row_count": 0,
+        "average_selected_raw_forward_return": np.nan,
+        "average_selected_benchmark_forward_return": np.nan,
+        "average_selected_excess_return_vs_benchmark": np.nan,
+        "beat_benchmark_rate": np.nan,
+        "average_equal_weight_universe_forward_return": np.nan,
+        "average_selected_return_minus_universe_return": np.nan,
+        "average_predicted_excess_return": np.nan,
+        "median_selected_excess_return_vs_benchmark": np.nan,
+        "positive_raw_return_rate": np.nan,
+        "average_number_of_candidates_per_date": np.nan,
+    }
