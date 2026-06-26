@@ -169,6 +169,7 @@ def log_xgboost_test_report(
     y_train,
     y_val,
     y_test,
+    direction_y_test,
     classifier_predictions,
     classifier_validation_probability_up,
     classifier_probability_up,
@@ -182,7 +183,7 @@ def log_xgboost_test_report(
     returns relative to SPY.
     """
     classification_report_data = build_classification_report(
-        (y_test > 0).astype(int), classifier_predictions
+        direction_y_test, classifier_predictions
     )
     regression_report_data = build_regression_report(
         y_test, regressor_predictions, y_train=y_train
@@ -460,6 +461,7 @@ def train_models(
         y_train,
         y_val,
         y_test,
+        direction_y_test,
         classifier.predict(x_test_classifier),
         classifier.predict_proba(x_val_classifier)[:, 1],
         classifier.predict_proba(x_test_classifier)[:, 1],

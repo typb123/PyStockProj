@@ -1,4 +1,5 @@
 import pandas as pd
+import numpy as np
 
 import src.train.trainer as trainer
 
@@ -59,3 +60,37 @@ def test_model_metadata_does_not_include_linear_regression_prediction():
     assert "LinearRegression_Prediction" not in metadata["regressor_features"]
     assert "LinearRegression_Prediction" not in metadata["classifier_feature_names"]
     assert "LinearRegression_Prediction" not in metadata["regressor_feature_names"]
+
+
+def test_log_xgboost_test_report_uses_explicit_direction_labels(monkeypatch):
+    captured = {}
+
+    def fake_build_classification_report(y_true, y_pred):
+        captured["y_true"] = np.asarray(y_true)
+        captured["y_pred"] = np.asarray(y_pred)
+        return {"accuracy": 1.0}
+
+    monkeypatch.setattr(
+        trainer,
+        "build_classification_report",
+        fake_build_classification_report,
+    )
+
+    y_test = np.array([0.10, -0.20, 0.30])
+    direction_y_test = np.array([0, 1, 0])
+    classifier_predictions = np.array([0, 1, 1])
+
+    trainer.log_xgboost_test_report(
+        y_train=np.array([0.01, -0.02, 0.03]),
+        y_val=np.array([0.02, -0.01, 0.04]),
+        y_test=y_test,
+        direction_y_test=direction_y_test,
+        classifier_predictions=classifier_predictions,
+        classifier_validation_probability_up=np.array([0.55, 0.45, 0.65]),
+        classifier_probability_up=np.array([0.60, 0.40, 0.70]),
+        regressor_predictions=np.array([0.08, -0.15, 0.20]),
+    )
+
+    np.testing.assert_array_equal(captured["y_true"], direction_y_test)
+    np.testing.assert_array_equal(captured["y_pred"], classifier_predictions)
+    assert not np.array_equal(captured["y_true"], (y_test > 0).astype(int))
