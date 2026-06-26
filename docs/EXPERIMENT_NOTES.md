@@ -66,3 +66,11 @@
 - Added SPY-relative momentum baselines.
 - SPY-relative momentum ranks the same as raw momentum within each prediction date because the same SPY momentum value is subtracted from every stock on that date.
 - Current read: stronger momentum baselines usually beat the model, so the next experiment should add momentum / relative-strength signals as model features.
+
+### Momentum feature experiment
+
+- Added raw momentum and SPY-relative momentum features to XGBoost.
+- Feature count increased from 31 to 39.
+- Clean all-horizons run did not improve model performance against momentum baselines.
+- Current read: the issue is probably not just missing momentum inputs; the regression objective may be poorly aligned with per-date ranking.
+
