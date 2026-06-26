@@ -59,9 +59,11 @@ def get_stock_info(ticker):
                 f"\nPrediction for {ticker} on {prediction_date} "
                 f"({PREDICTION_DAYS} trading days ahead):"
             )
-            print(f"  Direction: {prediction['direction']}")
-            print(f"  Predicted Return: {prediction['predicted_return']:.4%}")
-            print(f"  Expected Price: ${prediction['expected_price']:.2f}")
+            print(
+                "  Predicted Excess Return vs SPY: "
+                f"{prediction['predicted_excess_return']:.4%}"
+            )
+            print(f"  Signal: {prediction['signal']}")
             print("\n")
         else:
             print(f"Prediction Error: {prediction.get('error', 'Unavailable')}")

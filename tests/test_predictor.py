@@ -2,6 +2,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+import src.app as app
 import src.inference.predictor as predictor
 from src.config import MODEL_PATHS
 
@@ -33,6 +34,8 @@ class FakeClassifier:
 
 
 class FakeRegressor:
+    prediction = 0.05
+
     def __init__(self, **kwargs):
         pass
 
@@ -40,10 +43,10 @@ class FakeRegressor:
         pass
 
     def predict(self, values):
-        return np.array([0.05], dtype=np.float32)
+        return np.array([self.prediction], dtype=np.float32)
 
 
-def install_predictor_fakes(monkeypatch, latest_row):
+def install_predictor_fakes(monkeypatch, latest_row, regressor_prediction=0.05):
     metadata = {
         "linear_features": ["Close"],
         "classifier_features": ["Close", "Volume"],
@@ -63,6 +66,7 @@ def install_predictor_fakes(monkeypatch, latest_row):
 
     monkeypatch.setattr(predictor.joblib, "load", fake_load)
     monkeypatch.setattr(predictor, "XGBClassifier", FakeClassifier)
+    FakeRegressor.prediction = regressor_prediction
     monkeypatch.setattr(predictor, "XGBRegressor", FakeRegressor)
     monkeypatch.setattr(
         predictor,
@@ -80,14 +84,29 @@ def test_predict_price_returns_plain_python_output_types(monkeypatch):
 
     result = predictor.predict_price("AAPL")
 
-    assert isinstance(result["direction"], str)
     assert isinstance(result["linear_predicted_return"], float)
-    assert isinstance(result["predicted_return"], float)
-    assert isinstance(result["expected_price"], float)
-    assert result["direction"] == "Up"
+    assert isinstance(result["predicted_excess_return"], float)
+    assert isinstance(result["signal"], str)
     assert result["linear_predicted_return"] == 0.03
-    assert result["predicted_return"] == float(np.float32(0.05))
-    assert np.isclose(result["expected_price"], 105.0)
+    assert result["predicted_excess_return"] == float(np.float32(0.05))
+    assert result["signal"] == "Expected to outperform SPY"
+    assert "expected_price" not in result
+    assert "direction" not in result
+
+
+def test_predict_price_returns_underperform_signal_for_non_positive_excess_return(
+    monkeypatch,
+):
+    install_predictor_fakes(
+        monkeypatch,
+        latest_row={"Close": np.float64(100.0), "Volume": np.float64(1000.0)},
+        regressor_prediction=-0.01,
+    )
+
+    result = predictor.predict_price("AAPL")
+
+    assert result["predicted_excess_return"] == float(np.float32(-0.01))
+    assert result["signal"] == "Expected to underperform SPY"
 
 
 def test_predict_price_rejects_invalid_latest_features(monkeypatch):
@@ -102,3 +121,58 @@ def test_predict_price_rejects_invalid_latest_features(monkeypatch):
     message = str(exc_info.value)
     assert "Close" in message
     assert "Volume" in message
+
+
+def test_get_stock_info_prints_spy_relative_prediction_without_expected_price(
+    monkeypatch,
+    capsys,
+):
+    one_month_data = pd.DataFrame(
+        {
+            "High": [110.0, 120.0],
+            "Low": [90.0, 95.0],
+        },
+        index=pd.to_datetime(["2026-06-01", "2026-06-02"]),
+    )
+    one_year_data = pd.DataFrame(
+        {
+            "High": [130.0, 140.0],
+            "Low": [80.0, 85.0],
+        },
+        index=pd.to_datetime(["2026-06-01", "2026-06-02"]),
+    )
+
+    def fake_fetch_stock_data(ticker, period="5y"):
+        return one_month_data if period == "1mo" else one_year_data
+
+    class FakeTicker:
+        def __init__(self, ticker):
+            self.info = {"currentPrice": 100.0}
+
+    monkeypatch.setattr(app, "fetch_stock_data", fake_fetch_stock_data)
+    monkeypatch.setattr(app.yf, "Ticker", FakeTicker)
+    monkeypatch.setattr(
+        app, "get_prediction_date", lambda *args, **kwargs: "07/10/2026"
+    )
+    monkeypatch.setattr(
+        app,
+        "predict_price",
+        lambda ticker: {
+            "predicted_excess_return": -0.001864,
+            "signal": "Expected to underperform SPY",
+            "linear_predicted_return": 0.01,
+        },
+    )
+
+    app.get_stock_info("AAPL")
+
+    output = capsys.readouterr().out
+    assert "Current Price: $100.00" in output
+    assert "1-Month High: $120.00" in output
+    assert "52-Week Low: $80.00" in output
+    assert "Prediction for AAPL on 07/10/2026 (10 trading days ahead):" in output
+    assert "Predicted Excess Return vs SPY: -0.1864%" in output
+    assert "Signal: Expected to underperform SPY" in output
+    assert "Expected Price" not in output
+    assert "Predicted Return" not in output
+    assert "Direction:" not in output

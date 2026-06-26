@@ -29,16 +29,17 @@ logging.basicConfig(
 
 def predict_price(ticker: str) -> dict:
     """
-    Predict direction and future return for one ticker using saved artifacts.
+    Predict SPY-relative excess return for one ticker using saved artifacts.
 
     Linear Regression is reported separately as linear_predicted_return. XGBoost
-    classifier predicts direction, while XGBoost regressor predicts return magnitude.
+    classifier is still loaded for artifact compatibility, while XGBoost
+    regressor predicts excess return versus SPY.
 
     Parameters:
         ticker (str)
 
     Returns:
-        dict: Contains the predicted direction, return, and expected price
+        dict: Contains the predicted SPY-relative excess return and signal
     """
     try:
         logging.info(f"Loading model for {ticker}...")
@@ -97,19 +98,19 @@ def predict_price(ticker: str) -> dict:
         classifier_input = latest_features_df[classifier_features]
         regressor_input = latest_features_df[regressor_features]
 
-        predicted_direction = xgb_classifier.predict(classifier_input)[0]
-        predicted_return = xgb_regressor.predict(regressor_input)[0]
+        xgb_classifier.predict(classifier_input)[0]
+        predicted_excess_return = xgb_regressor.predict(regressor_input)[0]
 
-        direction = "Up" if predicted_direction == 1 else "Down"
-        last_close_price = processed_data['Close'].iloc[-1]
-        expected_price = last_close_price * (1 + predicted_return)
+        if predicted_excess_return > 0:
+            signal = "Expected to outperform SPY"
+        else:
+            signal = "Expected to underperform SPY"
 
-        # Return separate model outputs plus the price implied by the XGBoost return.
+        # Return model outputs without converting SPY-relative return into a price.
         result = {
-            'direction': direction,
             'linear_predicted_return': float(lr_prediction),
-            'predicted_return': float(predicted_return),
-            'expected_price': float(expected_price)
+            'predicted_excess_return': float(predicted_excess_return),
+            'signal': signal,
         }
 
         logging.info(f"Prediction for {ticker}: {result}")
