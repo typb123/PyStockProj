@@ -102,14 +102,24 @@ def format_top_n_ranked_selection_summary(top_n_report):
         model = bucket_report.get("model", {})
         random_baseline = bucket_report.get("random_baseline", {})
         momentum_baseline = bucket_report.get("momentum_baseline", {})
+        relative_momentum_baseline = bucket_report.get(
+            "relative_momentum_baseline", {}
+        )
         universe = bucket_report.get("universe", {})
         momentum_label = momentum_baseline.get("momentum_score_column", "momentum")
+        relative_momentum_label = relative_momentum_baseline.get(
+            "relative_momentum_score_column",
+            "relative_momentum",
+        )
 
         model_excess = model.get("average_selected_excess_return_vs_benchmark")
         random_excess = random_baseline.get(
             "average_selected_excess_return_vs_benchmark"
         )
         momentum_excess = momentum_baseline.get(
+            "average_selected_excess_return_vs_benchmark"
+        )
+        relative_momentum_excess = relative_momentum_baseline.get(
             "average_selected_excess_return_vs_benchmark"
         )
         universe_excess = universe.get("average_excess_return_vs_benchmark")
@@ -125,18 +135,29 @@ def format_top_n_ranked_selection_summary(top_n_report):
         else:
             momentum_text = "unavailable"
             minus_momentum_text = "unavailable"
+        if relative_momentum_baseline.get("available", True):
+            relative_momentum_text = _format_percent(relative_momentum_excess)
+            minus_relative_momentum_text = _format_percent_delta(
+                model_excess,
+                relative_momentum_excess,
+            )
+        else:
+            relative_momentum_text = "unavailable"
+            minus_relative_momentum_text = "unavailable"
 
         lines.append(
             "  "
             f"model excess={_format_percent(model_excess)}, "
             f"random excess={_format_percent(random_excess)}, "
             f"{momentum_label} excess={momentum_text}, "
+            f"{relative_momentum_label} excess={relative_momentum_text}, "
             f"universe excess={_format_percent(universe_excess)}"
         )
         lines.append(
             "  "
             f"model minus random={_format_percent_delta(model_excess, random_excess)}, "
             f"model minus momentum={minus_momentum_text}, "
+            f"model minus relative momentum={minus_relative_momentum_text}, "
             f"model beat rate={_format_percent(beat_rate)}"
         )
 
@@ -151,14 +172,24 @@ def format_top_n_basket_backtest_summary(top_n_report):
         model = bucket_report.get("model", {})
         random_baseline = bucket_report.get("random_baseline", {})
         momentum_baseline = bucket_report.get("momentum_baseline", {})
+        relative_momentum_baseline = bucket_report.get(
+            "relative_momentum_baseline", {}
+        )
         universe = bucket_report.get("universe", {})
         benchmark = bucket_report.get("benchmark", {})
         momentum_label = momentum_baseline.get("momentum_score_column", "momentum")
+        relative_momentum_label = relative_momentum_baseline.get(
+            "relative_momentum_score_column",
+            "relative_momentum",
+        )
 
         model_raw = model.get("average_basket_raw_return")
         model_excess = model.get("average_basket_excess_return")
         random_excess = random_baseline.get("average_basket_excess_return")
         momentum_excess = momentum_baseline.get("average_basket_excess_return")
+        relative_momentum_excess = relative_momentum_baseline.get(
+            "average_basket_excess_return"
+        )
         universe_excess = universe.get("average_basket_excess_return")
         benchmark_raw = benchmark.get("average_basket_raw_return")
         beat_rate = model.get("beat_benchmark_rate")
@@ -173,6 +204,15 @@ def format_top_n_basket_backtest_summary(top_n_report):
         else:
             momentum_text = "unavailable"
             minus_momentum_text = "unavailable"
+        if relative_momentum_baseline.get("available", True):
+            relative_momentum_text = _format_percent(relative_momentum_excess)
+            minus_relative_momentum_text = _format_percent_delta(
+                model_excess,
+                relative_momentum_excess,
+            )
+        else:
+            relative_momentum_text = "unavailable"
+            minus_relative_momentum_text = "unavailable"
 
         lines.append(
             "  "
@@ -180,6 +220,7 @@ def format_top_n_basket_backtest_summary(top_n_report):
             f"model excess={_format_percent(model_excess)}, "
             f"random excess={_format_percent(random_excess)}, "
             f"{momentum_label} excess={momentum_text}, "
+            f"{relative_momentum_label} excess={relative_momentum_text}, "
             f"universe excess={_format_percent(universe_excess)}, "
             f"benchmark raw={_format_percent(benchmark_raw)}"
         )
@@ -187,6 +228,7 @@ def format_top_n_basket_backtest_summary(top_n_report):
             "  "
             f"model minus random={_format_percent_delta(model_excess, random_excess)}, "
             f"model minus momentum={minus_momentum_text}, "
+            f"model minus relative momentum={minus_relative_momentum_text}, "
             f"beat benchmark rate={_format_percent(beat_rate)}"
         )
 
@@ -205,9 +247,16 @@ def format_horizon_comparison_summary(horizon_reports):
             model = bucket_report.get("model", {})
             random_baseline = bucket_report.get("random_baseline", {})
             momentum_baseline = bucket_report.get("momentum_baseline", {})
+            relative_momentum_baseline = bucket_report.get(
+                "relative_momentum_baseline", {}
+            )
             universe = bucket_report.get("universe", {})
             benchmark = bucket_report.get("benchmark", {})
             momentum_label = momentum_baseline.get("momentum_score_column", "momentum")
+            relative_momentum_label = relative_momentum_baseline.get(
+                "relative_momentum_score_column",
+                "relative_momentum",
+            )
 
             if momentum_baseline.get("available", True):
                 momentum_text = _format_percent(
@@ -215,6 +264,12 @@ def format_horizon_comparison_summary(horizon_reports):
                 )
             else:
                 momentum_text = "unavailable"
+            if relative_momentum_baseline.get("available", True):
+                relative_momentum_text = _format_percent(
+                    relative_momentum_baseline.get("average_basket_excess_return")
+                )
+            else:
+                relative_momentum_text = "unavailable"
 
             lines.append(
                 "  "
@@ -222,6 +277,7 @@ def format_horizon_comparison_summary(horizon_reports):
                 f"model excess={_format_percent(model.get('average_basket_excess_return'))}, "
                 f"random={_format_percent(random_baseline.get('average_basket_excess_return'))}, "
                 f"{momentum_label}={momentum_text}, "
+                f"{relative_momentum_label}={relative_momentum_text}, "
                 f"universe={_format_percent(universe.get('average_basket_excess_return'))}, "
                 f"benchmark raw={_format_percent(benchmark.get('average_basket_raw_return'))}"
             )

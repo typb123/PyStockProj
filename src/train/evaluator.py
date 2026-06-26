@@ -371,6 +371,10 @@ def build_top_n_ranked_selection_report(
         momentum_score_column,
         prediction_days,
     )
+    relative_momentum_score_column = _resolve_relative_momentum_score_column(
+        metadata,
+        prediction_days,
+    )
     grouped_metadata = list(metadata.groupby("prediction_date", sort=True))
     report = {}
 
@@ -402,6 +406,11 @@ def build_top_n_ranked_selection_report(
                 grouped_metadata,
                 selected_count_by_date,
                 momentum_score_column,
+            ),
+            "relative_momentum_baseline": _relative_momentum_ranked_selection_stats(
+                grouped_metadata,
+                selected_count_by_date,
+                relative_momentum_score_column,
             ),
             "universe": _universe_ranked_selection_stats(grouped_metadata),
         }
@@ -438,6 +447,10 @@ def build_top_n_basket_backtest_report(
         momentum_score_column,
         prediction_days,
     )
+    relative_momentum_score_column = _resolve_relative_momentum_score_column(
+        metadata,
+        prediction_days,
+    )
     grouped_metadata = list(metadata.groupby("prediction_date", sort=True))
     report = {}
 
@@ -465,6 +478,11 @@ def build_top_n_basket_backtest_report(
                 grouped_metadata,
                 selected_count_by_date,
                 momentum_score_column,
+            ),
+            "relative_momentum_baseline": _relative_momentum_basket_backtest_stats(
+                grouped_metadata,
+                selected_count_by_date,
+                relative_momentum_score_column,
             ),
             "universe": _basket_backtest_stats(
                 [date_group for _, date_group in grouped_metadata]
@@ -497,6 +515,13 @@ def _resolve_momentum_score_column(metadata, momentum_score_column, prediction_d
             return horizon_column
 
     return "dailyReturn"
+
+
+def _resolve_relative_momentum_score_column(metadata, prediction_days):
+    if prediction_days is None:
+        return "relative_momentum"
+
+    return f"relative_momentum_{int(prediction_days)}d"
 
 
 def _basket_backtest_stats(selected_groups):
@@ -592,6 +617,36 @@ def _momentum_basket_backtest_stats(
     stats = _basket_backtest_stats(selected_groups)
     stats["available"] = True
     stats["momentum_score_column"] = momentum_score_column
+    return stats
+
+
+def _relative_momentum_basket_backtest_stats(
+    grouped_metadata,
+    selected_count_by_date,
+    relative_momentum_score_column,
+):
+    metadata_columns = set()
+    for _, date_group in grouped_metadata:
+        metadata_columns.update(date_group.columns)
+
+    if relative_momentum_score_column not in metadata_columns:
+        stats = _empty_basket_backtest_stats()
+        stats["available"] = False
+        stats["relative_momentum_score_column"] = relative_momentum_score_column
+        stats["reason"] = (
+            f"Relative momentum score column '{relative_momentum_score_column}' "
+            "is not present in split_metadata."
+        )
+        return stats
+
+    selected_groups = _select_top_n_by_score(
+        grouped_metadata,
+        selected_count_by_date,
+        relative_momentum_score_column,
+    )
+    stats = _basket_backtest_stats(selected_groups)
+    stats["available"] = True
+    stats["relative_momentum_score_column"] = relative_momentum_score_column
     return stats
 
 
@@ -804,6 +859,42 @@ def _momentum_ranked_selection_stats(
     )
     stats["available"] = True
     stats["momentum_score_column"] = momentum_score_column
+    return stats
+
+
+def _relative_momentum_ranked_selection_stats(
+    grouped_metadata,
+    selected_count_by_date,
+    relative_momentum_score_column,
+):
+    metadata_columns = set()
+    for _, date_group in grouped_metadata:
+        metadata_columns.update(date_group.columns)
+
+    if relative_momentum_score_column not in metadata_columns:
+        stats = _empty_ranked_selection_stats(
+            score_column=relative_momentum_score_column
+        )
+        stats["available"] = False
+        stats["relative_momentum_score_column"] = relative_momentum_score_column
+        stats["reason"] = (
+            f"Relative momentum score column '{relative_momentum_score_column}' "
+            "is not present in split_metadata."
+        )
+        return stats
+
+    selected_groups = _select_top_n_by_score(
+        grouped_metadata,
+        selected_count_by_date,
+        relative_momentum_score_column,
+    )
+    stats = _ranked_selection_stats(
+        selected_groups,
+        grouped_metadata,
+        score_column=relative_momentum_score_column,
+    )
+    stats["available"] = True
+    stats["relative_momentum_score_column"] = relative_momentum_score_column
     return stats
 
 

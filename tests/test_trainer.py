@@ -149,6 +149,11 @@ def test_format_top_n_ranked_selection_summary_formats_percentages():
                 "momentum_score_column": "momentum_10d",
                 "average_selected_excess_return_vs_benchmark": 0.008,
             },
+            "relative_momentum_baseline": {
+                "available": True,
+                "relative_momentum_score_column": "relative_momentum_10d",
+                "average_selected_excess_return_vs_benchmark": 0.009,
+            },
             "universe": {
                 "average_excess_return_vs_benchmark": 0.0015,
             },
@@ -161,9 +166,10 @@ def test_format_top_n_ranked_selection_summary_formats_percentages():
         "XGBoost Top-N Ranked Selection Summary:\n"
         "top_5:\n"
         "  model excess=1.23%, random excess=0.40%, "
-        "momentum_10d excess=0.80%, universe excess=0.15%\n"
+        "momentum_10d excess=0.80%, relative_momentum_10d excess=0.90%, "
+        "universe excess=0.15%\n"
         "  model minus random=0.83%, model minus momentum=0.43%, "
-        "model beat rate=52.88%"
+        "model minus relative momentum=0.33%, model beat rate=52.88%"
     )
 
 
@@ -191,6 +197,8 @@ def test_format_top_n_ranked_selection_summary_handles_unavailable_momentum():
 
     assert "momentum excess=unavailable" in summary
     assert "model minus momentum=unavailable" in summary
+    assert "relative_momentum excess=n/a" in summary
+    assert "model minus relative momentum=n/a" in summary
     assert "universe excess=-0.10%" in summary
 
 
@@ -210,6 +218,11 @@ def test_format_top_n_basket_backtest_summary_formats_normal_report():
                 "momentum_score_column": "momentum_10d",
                 "average_basket_excess_return": 0.008,
             },
+            "relative_momentum_baseline": {
+                "available": True,
+                "relative_momentum_score_column": "relative_momentum_10d",
+                "average_basket_excess_return": 0.009,
+            },
             "universe": {
                 "average_basket_excess_return": 0.0015,
             },
@@ -225,9 +238,10 @@ def test_format_top_n_basket_backtest_summary_formats_normal_report():
         "XGBoost Top-N Basket Backtest Summary:\n"
         "top_5:\n"
         "  model raw=1.23%, model excess=1.00%, random excess=0.40%, "
-        "momentum_10d excess=0.80%, universe excess=0.15%, benchmark raw=0.23%\n"
+        "momentum_10d excess=0.80%, relative_momentum_10d excess=0.90%, "
+        "universe excess=0.15%, benchmark raw=0.23%\n"
         "  model minus random=0.60%, model minus momentum=0.20%, "
-        "beat benchmark rate=52.88%"
+        "model minus relative momentum=0.10%, beat benchmark rate=52.88%"
     )
 
 
@@ -259,6 +273,8 @@ def test_format_top_n_basket_backtest_summary_handles_unavailable_momentum():
 
     assert "momentum excess=unavailable" in summary
     assert "model minus momentum=unavailable" in summary
+    assert "relative_momentum excess=n/a" in summary
+    assert "model minus relative momentum=n/a" in summary
     assert "universe excess=-0.10%" in summary
     assert "benchmark raw=0.30%" in summary
 
@@ -272,7 +288,13 @@ def test_format_horizon_comparison_summary_formats_basket_metrics():
                     "random_baseline": {"average_basket_excess_return": 0.002},
                     "momentum_baseline": {
                         "available": True,
+                        "momentum_score_column": "momentum_5d",
                         "average_basket_excess_return": 0.003,
+                    },
+                    "relative_momentum_baseline": {
+                        "available": True,
+                        "relative_momentum_score_column": "relative_momentum_5d",
+                        "average_basket_excess_return": 0.004,
                     },
                     "universe": {"average_basket_excess_return": 0.001},
                     "benchmark": {"average_basket_raw_return": 0.004},
@@ -286,6 +308,12 @@ def test_format_horizon_comparison_summary_formats_basket_metrics():
                     "random_baseline": {"average_basket_excess_return": 0.001},
                     "momentum_baseline": {
                         "available": False,
+                        "momentum_score_column": "momentum_10d",
+                        "average_basket_excess_return": np.nan,
+                    },
+                    "relative_momentum_baseline": {
+                        "available": False,
+                        "relative_momentum_score_column": "relative_momentum_10d",
                         "average_basket_excess_return": np.nan,
                     },
                     "universe": {"average_basket_excess_return": -0.002},
@@ -300,10 +328,12 @@ def test_format_horizon_comparison_summary_formats_basket_metrics():
     assert summary == (
         "Horizon Comparison Summary:\n"
         "5d:\n"
-        "  top_5 model excess=1.00%, random=0.20%, momentum=0.30%, "
+        "  top_5 model excess=1.00%, random=0.20%, momentum_5d=0.30%, "
+        "relative_momentum_5d=0.40%, "
         "universe=0.10%, benchmark raw=0.40%\n"
         "10d:\n"
-        "  top_5 model excess=-1.00%, random=0.10%, momentum=unavailable, "
+        "  top_5 model excess=-1.00%, random=0.10%, momentum_10d=unavailable, "
+        "relative_momentum_10d=unavailable, "
         "universe=-0.20%, benchmark raw=0.30%"
     )
 

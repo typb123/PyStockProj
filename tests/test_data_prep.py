@@ -274,6 +274,86 @@ def test_prepare_for_train_preserves_available_momentum_columns_in_split_metadat
             assert column in split_metadata.columns
 
 
+def test_relative_momentum_is_date_aligned_to_spy():
+    df = make_panel_feature_frame(tickers=("AAA", "SPY"), num_dates=40)
+    df["momentum_10d"] = np.nan
+    date = pd.Timestamp("2024-01-15")
+    df.loc[
+        (df["Ticker"] == "AAA") & (df["prediction_date"] == date),
+        "momentum_10d",
+    ] = 0.25
+    df.loc[
+        (df["Ticker"] == "SPY") & (df["prediction_date"] == date),
+        "momentum_10d",
+    ] = 0.10
+
+    result = DataPreparator()._add_benchmark_relative_momentum(df)
+    aaa_row = result[
+        (result["Ticker"] == "AAA") & (result["prediction_date"] == date)
+    ].iloc[0]
+
+    assert np.isclose(aaa_row["relative_momentum_10d"], 0.15)
+
+
+def test_relative_momentum_is_not_row_position_aligned():
+    dates = pd.to_datetime(["2024-01-01", "2024-01-02"])
+    df = pd.DataFrame(
+        {
+            "Ticker": ["AAA", "SPY", "AAA", "SPY"],
+            "prediction_date": [dates[0], dates[1], dates[1], dates[0]],
+            "momentum_5d": [0.40, 0.20, 0.50, 0.10],
+        }
+    )
+
+    result = DataPreparator()._add_benchmark_relative_momentum(df)
+    aaa_second_date = result[
+        (result["Ticker"] == "AAA") & (result["prediction_date"] == dates[1])
+    ].iloc[0]
+
+    assert np.isclose(aaa_second_date["relative_momentum_5d"], 0.30)
+
+
+def test_relative_momentum_uses_only_existing_past_momentum_columns():
+    df = pd.DataFrame(
+        {
+            "Ticker": ["AAA", "SPY"],
+            "prediction_date": pd.to_datetime(["2024-01-01", "2024-01-01"]),
+            "momentum_20d": [0.30, 0.05],
+            "raw_forward_return": [9.0, -9.0],
+            "benchmark_forward_return": [-8.0, 8.0],
+            "excess_forward_return": [7.0, -7.0],
+        }
+    )
+
+    result = DataPreparator()._add_benchmark_relative_momentum(df)
+
+    assert np.isclose(result.loc[0, "relative_momentum_20d"], 0.25)
+    assert "relative_momentum_5d" not in result.columns
+
+
+def test_prepare_for_train_preserves_available_relative_momentum_columns_in_split_metadata():
+    df = make_panel_feature_frame(num_dates=50)
+    for window in [5, 10, 20, 50]:
+        df[f"momentum_{window}d"] = 0.01 * window
+        df[f"relative_momentum_{window}d"] = 0.001 * window
+
+    prepared = DataPreparator().prepare_for_train(
+        df,
+        prediction_days=1,
+        val_size=0.2,
+        test_size=0.2,
+    )
+
+    for split_metadata in prepared["split_metadata"].values():
+        for column in [
+            "relative_momentum_5d",
+            "relative_momentum_10d",
+            "relative_momentum_20d",
+            "relative_momentum_50d",
+        ]:
+            assert column in split_metadata.columns
+
+
 def test_prepare_for_train_rejects_invalid_split_sizes():
     df = make_panel_feature_frame(num_dates=30)
     preparator = DataPreparator()

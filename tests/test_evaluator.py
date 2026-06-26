@@ -437,6 +437,7 @@ def test_top_n_ranked_selection_reports_multiple_buckets():
         "model",
         "random_baseline",
         "momentum_baseline",
+        "relative_momentum_baseline",
         "universe",
     }
     assert report["top_1"]["model"]["selected_row_count"] == 2
@@ -578,6 +579,31 @@ def test_top_n_ranked_selection_uses_horizon_matched_momentum_column_when_availa
     )
 
 
+def test_top_n_ranked_selection_includes_relative_momentum_baseline_when_available():
+    metadata = make_ranked_selection_metadata()
+    metadata["relative_momentum_10d"] = [0.99, 0.01, 0.02, 0.01, 0.02, 0.99]
+    predicted_excess_returns = np.array([0.90, 0.80, 0.70, 0.10, 0.20, 0.30])
+
+    report = build_top_n_ranked_selection_report(
+        metadata,
+        predicted_excess_returns,
+        top_n_values=(1,),
+        prediction_days=10,
+    )
+
+    relative_momentum = report["top_1"]["relative_momentum_baseline"]
+    assert relative_momentum["available"] is True
+    assert relative_momentum["relative_momentum_score_column"] == "relative_momentum_10d"
+    assert np.isclose(
+        relative_momentum["average_selected_raw_forward_return"],
+        (0.10 + -0.04) / 2,
+    )
+    assert np.isclose(
+        relative_momentum["average_relative_momentum_10d"],
+        (0.99 + 0.99) / 2,
+    )
+
+
 def test_top_n_ranked_selection_falls_back_to_daily_return_when_horizon_momentum_missing():
     metadata = make_ranked_selection_metadata()
     predicted_excess_returns = np.array([0.90, 0.80, 0.70, 0.10, 0.20, 0.30])
@@ -596,6 +622,24 @@ def test_top_n_ranked_selection_falls_back_to_daily_return_when_horizon_momentum
         momentum_baseline["average_selected_raw_forward_return"],
         (0.02 + -0.04) / 2,
     )
+
+
+def test_top_n_ranked_selection_relative_momentum_unavailable_when_horizon_column_missing():
+    metadata = make_ranked_selection_metadata()
+    predicted_excess_returns = np.array([0.90, 0.80, 0.70, 0.10, 0.20, 0.30])
+
+    report = build_top_n_ranked_selection_report(
+        metadata,
+        predicted_excess_returns,
+        top_n_values=(1,),
+        prediction_days=10,
+    )
+
+    relative_momentum = report["top_1"]["relative_momentum_baseline"]
+    assert relative_momentum["available"] is False
+    assert relative_momentum["relative_momentum_score_column"] == "relative_momentum_10d"
+    assert "not present" in relative_momentum["reason"]
+    assert np.isnan(relative_momentum["average_selected_raw_forward_return"])
 
 
 def test_top_n_momentum_baseline_reports_missing_score_column_explicitly():
@@ -743,6 +787,27 @@ def test_top_n_basket_backtest_uses_horizon_matched_momentum_column_when_availab
     assert np.isclose(momentum["average_basket_raw_return"], (0.10 + -0.04) / 2)
 
 
+def test_top_n_basket_backtest_includes_relative_momentum_baseline_when_available():
+    metadata = make_ranked_selection_metadata()
+    metadata["relative_momentum_20d"] = [0.99, 0.01, 0.02, 0.01, 0.02, 0.99]
+    ranked_predictions = np.array([0.90, 0.80, 0.70, 0.10, 0.20, 0.30])
+
+    report = build_top_n_basket_backtest_report(
+        metadata,
+        ranked_predictions,
+        top_ns=(1,),
+        prediction_days=20,
+    )
+
+    relative_momentum = report["top_1"]["relative_momentum_baseline"]
+    assert relative_momentum["available"] is True
+    assert relative_momentum["relative_momentum_score_column"] == "relative_momentum_20d"
+    assert np.isclose(
+        relative_momentum["average_basket_raw_return"],
+        (0.10 + -0.04) / 2,
+    )
+
+
 def test_top_n_basket_backtest_falls_back_to_daily_return_when_horizon_momentum_missing():
     metadata = make_ranked_selection_metadata()
     ranked_predictions = np.array([0.90, 0.80, 0.70, 0.10, 0.20, 0.30])
@@ -758,6 +823,24 @@ def test_top_n_basket_backtest_falls_back_to_daily_return_when_horizon_momentum_
     assert momentum["available"] is True
     assert momentum["momentum_score_column"] == "dailyReturn"
     assert np.isclose(momentum["average_basket_raw_return"], (0.02 + -0.04) / 2)
+
+
+def test_top_n_basket_backtest_relative_momentum_unavailable_when_horizon_column_missing():
+    metadata = make_ranked_selection_metadata()
+    ranked_predictions = np.array([0.90, 0.80, 0.70, 0.10, 0.20, 0.30])
+
+    report = build_top_n_basket_backtest_report(
+        metadata,
+        ranked_predictions,
+        top_ns=(1,),
+        prediction_days=20,
+    )
+
+    relative_momentum = report["top_1"]["relative_momentum_baseline"]
+    assert relative_momentum["available"] is False
+    assert relative_momentum["relative_momentum_score_column"] == "relative_momentum_20d"
+    assert "not present" in relative_momentum["reason"]
+    assert np.isnan(relative_momentum["average_basket_raw_return"])
 
 
 def test_top_n_basket_backtest_momentum_baseline_reports_missing_score_column():
@@ -838,6 +921,7 @@ def test_top_n_basket_backtest_includes_universe_and_benchmark_summaries():
         "model",
         "random_baseline",
         "momentum_baseline",
+        "relative_momentum_baseline",
         "universe",
         "benchmark",
     }

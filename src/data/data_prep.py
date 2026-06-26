@@ -85,6 +85,46 @@ class DataPreparator:
             columns={"raw_forward_return": "benchmark_forward_return"}
         )
 
+    def _add_benchmark_relative_momentum(self, df: pd.DataFrame) -> pd.DataFrame:
+        momentum_columns = [
+            "momentum_5d",
+            "momentum_10d",
+            "momentum_20d",
+            "momentum_50d",
+        ]
+        available_momentum_columns = [
+            column for column in momentum_columns if column in df.columns
+        ]
+        if not available_momentum_columns:
+            return df
+
+        benchmark_rows = df[df["Ticker"] == self.benchmark_ticker]
+        if benchmark_rows.empty:
+            raise ValueError(f"Benchmark ticker {self.benchmark_ticker} is missing.")
+
+        benchmark_momentum = benchmark_rows[
+            ["prediction_date"] + available_momentum_columns
+        ].drop_duplicates(
+            subset=["prediction_date"],
+            keep="first",
+        )
+        benchmark_momentum = benchmark_momentum.rename(
+            columns={
+                column: f"benchmark_{column}"
+                for column in available_momentum_columns
+            }
+        )
+
+        df = df.merge(benchmark_momentum, on="prediction_date", how="left")
+        for column in available_momentum_columns:
+            window = column.removeprefix("momentum_")
+            df[f"relative_momentum_{window}"] = (
+                df[column] - df[f"benchmark_{column}"]
+            )
+            df = df.drop(columns=[f"benchmark_{column}"])
+
+        return df
+
     def _create_benchmark_relative_targets(
         self,
         df: pd.DataFrame,
@@ -165,6 +205,10 @@ class DataPreparator:
             "momentum_10d",
             "momentum_20d",
             "momentum_50d",
+            "relative_momentum_5d",
+            "relative_momentum_10d",
+            "relative_momentum_20d",
+            "relative_momentum_50d",
         ]
         available_columns = metadata_columns + [
             column
@@ -202,6 +246,7 @@ class DataPreparator:
         self.feature_columns = list(REQUIRED_COLUMNS)
 
         df = self._create_raw_forward_returns(df, prediction_days)
+        df = self._add_benchmark_relative_momentum(df)
         benchmark_returns = self._build_benchmark_forward_returns(df)
         df = self._create_benchmark_relative_targets(df, benchmark_returns)
         df = self._drop_unusable_rows(df)
