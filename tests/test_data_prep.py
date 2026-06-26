@@ -2,7 +2,12 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.config import REQUIRED_COLUMNS
+from src.config import (
+    MODEL_FEATURE_COLUMNS,
+    MOMENTUM_FEATURE_COLUMNS,
+    RELATIVE_MOMENTUM_FEATURE_COLUMNS,
+    REQUIRED_COLUMNS,
+)
 from src.data.data_prep import DataPreparator
 
 
@@ -21,6 +26,10 @@ def make_panel_feature_frame(tickers=("AAA", "BBB", "SPY"), num_dates=50):
             100.0 + ticker_index * 1000.0 + num_dates - 1,
             num_dates,
         )
+        for column in MOMENTUM_FEATURE_COLUMNS:
+            data[column] = 0.01 * (ticker_index + 1)
+        for column in RELATIVE_MOMENTUM_FEATURE_COLUMNS:
+            data[column] = 0.001 * (ticker_index + 1)
         frame = pd.DataFrame(data)
         frame["Ticker"] = ticker
         frame["prediction_date"] = dates
@@ -245,6 +254,7 @@ def test_prepare_for_train_returns_validation_split_and_benchmark_labels():
         prepared
     )
     assert set(["target_y_train", "target_y_val", "target_y_test"]).issubset(prepared)
+    assert prepared["feature_names"] == MODEL_FEATURE_COLUMNS
 
     for split_name, direction_key in [
         ("train", "direction_y_train"),

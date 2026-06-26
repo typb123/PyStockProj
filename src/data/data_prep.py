@@ -2,7 +2,7 @@ import pandas as pd
 import numpy as np
 from typing import Dict, List
 from sklearn.preprocessing import StandardScaler
-from src.config import PREDICTION_DAYS, REQUIRED_COLUMNS
+from src.config import MODEL_FEATURE_COLUMNS, PREDICTION_DAYS, REQUIRED_COLUMNS
 
 
 class DataPreparator:
@@ -243,12 +243,12 @@ class DataPreparator:
         df = self.prepare_features(df)
         df = self._normalize_prediction_date(df)
         self._validate_required_columns(df)
-        self.feature_columns = list(REQUIRED_COLUMNS)
 
         df = self._create_raw_forward_returns(df, prediction_days)
         df = self._add_benchmark_relative_momentum(df)
         benchmark_returns = self._build_benchmark_forward_returns(df)
         df = self._create_benchmark_relative_targets(df, benchmark_returns)
+        self.feature_columns = list(MODEL_FEATURE_COLUMNS)
         df = self._drop_unusable_rows(df)
 
         train_df, val_df, test_df = self._split_by_prediction_date(

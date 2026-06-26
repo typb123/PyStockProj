@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 
-from src.config import REQUIRED_COLUMNS
+from src.config import MODEL_FEATURE_COLUMNS, REQUIRED_COLUMNS
 from src.data.technical_indicators import calculate_data
 
 
@@ -48,6 +48,7 @@ def test_calculate_data_creates_trailing_momentum_columns():
     for column in ["momentum_5d", "momentum_10d", "momentum_20d", "momentum_50d"]:
         assert column in result.columns
         assert column not in REQUIRED_COLUMNS
+        assert column in MODEL_FEATURE_COLUMNS
 
 
 def test_trailing_momentum_columns_are_past_looking():

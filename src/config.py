@@ -241,3 +241,21 @@ REQUIRED_COLUMNS = [
     "stoch_k",
     "stoch_d",  # Stochastic Oscillator
 ]
+
+MOMENTUM_FEATURE_COLUMNS = [
+    "momentum_5d",
+    "momentum_10d",
+    "momentum_20d",
+    "momentum_50d",
+]
+
+RELATIVE_MOMENTUM_FEATURE_COLUMNS = [
+    "relative_momentum_5d",
+    "relative_momentum_10d",
+    "relative_momentum_20d",
+    "relative_momentum_50d",
+]
+
+MODEL_FEATURE_COLUMNS = (
+    REQUIRED_COLUMNS + MOMENTUM_FEATURE_COLUMNS + RELATIVE_MOMENTUM_FEATURE_COLUMNS
+)

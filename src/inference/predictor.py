@@ -13,6 +13,8 @@ from xgboost import XGBRegressor, XGBClassifier
 from src.config import (
     MODEL_PATHS,
     LOG_FILE,
+    MOMENTUM_FEATURE_COLUMNS,
+    RELATIVE_MOMENTUM_FEATURE_COLUMNS,
     XG_PARAMS_CLASSIFIER,
     XG_PARAMS_REGRESSOR,
 )
@@ -25,6 +27,59 @@ logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s: - %(levelname)s -%(message)s'
 )
+
+
+def _add_prediction_relative_momentum(
+    processed_data: pd.DataFrame,
+    benchmark_processed_data: pd.DataFrame,
+) -> pd.DataFrame:
+    """Add same-date SPY-relative trailing momentum for prediction features."""
+    df = processed_data.copy()
+    benchmark_df = benchmark_processed_data.copy()
+
+    if "prediction_date" not in df.columns:
+        df["prediction_date"] = pd.to_datetime(df.index).normalize()
+    else:
+        df["prediction_date"] = pd.to_datetime(df["prediction_date"]).dt.normalize()
+
+    if "prediction_date" not in benchmark_df.columns:
+        benchmark_df["prediction_date"] = pd.to_datetime(benchmark_df.index).normalize()
+    else:
+        benchmark_df["prediction_date"] = pd.to_datetime(
+            benchmark_df["prediction_date"]
+        ).dt.normalize()
+
+    available_momentum_columns = [
+        column for column in MOMENTUM_FEATURE_COLUMNS if column in df.columns
+    ]
+    benchmark_momentum_columns = [
+        column
+        for column in available_momentum_columns
+        if column in benchmark_df.columns
+    ]
+    if not benchmark_momentum_columns:
+        return df
+
+    benchmark_momentum = benchmark_df[
+        ["prediction_date"] + benchmark_momentum_columns
+    ].drop_duplicates(
+        subset=["prediction_date"],
+        keep="first",
+    )
+    benchmark_momentum = benchmark_momentum.rename(
+        columns={
+            column: f"benchmark_{column}"
+            for column in benchmark_momentum_columns
+        }
+    )
+
+    df = df.merge(benchmark_momentum, on="prediction_date", how="left")
+    for column in benchmark_momentum_columns:
+        relative_column = f"relative_{column}"
+        df[relative_column] = df[column] - df[f"benchmark_{column}"]
+        df = df.drop(columns=[f"benchmark_{column}"])
+
+    return df
 
 
 def predict_price(ticker: str) -> dict:
@@ -65,6 +120,17 @@ def predict_price(ticker: str) -> dict:
         # calculate_data is called on one ticker's history, matching its assumptions.
         data = fetch_stock_data(ticker, period="5y")
         processed_data = calculate_data(data)
+        if any(
+            column in feature_columns or column in model_metadata["classifier_features"]
+            or column in model_metadata["regressor_features"]
+            for column in RELATIVE_MOMENTUM_FEATURE_COLUMNS
+        ):
+            benchmark_data = data if ticker == "SPY" else fetch_stock_data("SPY", period="5y")
+            benchmark_processed_data = calculate_data(benchmark_data)
+            processed_data = _add_prediction_relative_momentum(
+                processed_data,
+                benchmark_processed_data,
+            )
 
         missing_cols = set(feature_columns) - set(processed_data.columns)
         if missing_cols:

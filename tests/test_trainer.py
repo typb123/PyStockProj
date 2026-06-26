@@ -3,6 +3,11 @@ import pandas as pd
 import numpy as np
 import pytest
 
+from src.config import (
+    MODEL_FEATURE_COLUMNS,
+    MOMENTUM_FEATURE_COLUMNS,
+    RELATIVE_MOMENTUM_FEATURE_COLUMNS,
+)
 import src.train.trainer as trainer
 
 
@@ -351,6 +356,122 @@ def test_model_metadata_does_not_include_linear_regression_prediction():
     assert "LinearRegression_Prediction" not in metadata["classifier_feature_names"]
     assert "LinearRegression_Prediction" not in metadata["regressor_feature_names"]
     assert metadata["prediction_days"] == 5
+
+
+def test_train_models_metadata_includes_momentum_features_and_excludes_targets(
+    monkeypatch,
+):
+    captured = {}
+    target_columns = {
+        "raw_forward_return",
+        "benchmark_forward_return",
+        "excess_forward_return",
+        "targetReturns",
+        "beat_benchmark_target",
+    }
+
+    class FakePreparator:
+        def __init__(self):
+            self.feature_columns = list(MODEL_FEATURE_COLUMNS)
+            self.scalar = None
+
+        def prepare_for_train(self, data, prediction_days, test_size):
+            rows = 4
+            feature_count = len(MODEL_FEATURE_COLUMNS)
+            split_metadata = pd.DataFrame(
+                {
+                    "Ticker": ["AAA"] * rows,
+                    "prediction_date": pd.date_range("2024-01-01", periods=rows),
+                    "dailyReturn": [0.01] * rows,
+                    "raw_forward_return": [0.02] * rows,
+                    "benchmark_forward_return": [0.01] * rows,
+                    "excess_forward_return": [0.01] * rows,
+                    "beat_benchmark_target": [1] * rows,
+                }
+            )
+            return {
+                "x_train": np.ones((rows, feature_count)),
+                "x_val": np.ones((rows, feature_count)),
+                "x_test": np.ones((rows, feature_count)),
+                "y_train": np.array([0.01, 0.02, -0.01, 0.03]),
+                "y_val": np.array([0.01, -0.02, 0.02, 0.03]),
+                "y_test": np.array([0.02, -0.01, 0.01, 0.03]),
+                "direction_y_train": np.array([1, 1, 0, 1]),
+                "direction_y_val": np.array([1, 0, 1, 1]),
+                "direction_y_test": np.array([1, 0, 1, 1]),
+                "feature_names": list(MODEL_FEATURE_COLUMNS),
+                "split_metadata": {"test": split_metadata},
+            }
+
+    class FakeLinearRegression:
+        def fit(self, x, y):
+            self.coef_ = np.ones(x.shape[1])
+            return self
+
+        def predict(self, x):
+            return np.zeros(len(x))
+
+    class FakeXgbModel:
+        def __init__(self, **kwargs):
+            self.feature_importances_ = np.array([])
+
+        def fit(self, x, y, eval_set=None, verbose=False):
+            self.feature_importances_ = np.ones(x.shape[1])
+            return self
+
+        def predict(self, x):
+            return np.ones(len(x), dtype=int)
+
+        def predict_proba(self, x):
+            return np.column_stack([np.zeros(len(x)), np.ones(len(x))])
+
+        def save_model(self, path):
+            pass
+
+    def fake_save_horizon_model_artifacts(
+        prediction_days,
+        linear_model,
+        scaler_lr,
+        data_preparator,
+        all_features,
+        model_metadata,
+        classifier,
+        regressor,
+    ):
+        captured["all_features"] = all_features
+        captured["model_metadata"] = model_metadata
+        return {"model_metadata": "models/horizon_10/model_metadata.pkl"}
+
+    monkeypatch.setattr(trainer, "DataPreparator", FakePreparator)
+    monkeypatch.setattr(trainer, "LinearRegression", FakeLinearRegression)
+    monkeypatch.setattr(trainer, "XGBClassifier", FakeXgbModel)
+    monkeypatch.setattr(trainer, "XGBRegressor", FakeXgbModel)
+    monkeypatch.setattr(trainer, "evaluate_model", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        trainer,
+        "log_xgboost_test_report",
+        lambda *args, **kwargs: {"basket_backtest": {}},
+    )
+    monkeypatch.setattr(trainer, "log_feature_importances", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        trainer,
+        "save_horizon_model_artifacts",
+        fake_save_horizon_model_artifacts,
+    )
+
+    trainer.train_models(pd.DataFrame({"Close": [1.0]}), prediction_days=10)
+
+    metadata = captured["model_metadata"]
+    for column in MOMENTUM_FEATURE_COLUMNS + RELATIVE_MOMENTUM_FEATURE_COLUMNS:
+        assert column in captured["all_features"]
+        assert column in metadata["classifier_features"]
+        assert column in metadata["regressor_features"]
+
+    assert metadata["classifier_features"] == MODEL_FEATURE_COLUMNS
+    assert metadata["regressor_features"] == MODEL_FEATURE_COLUMNS
+    assert target_columns.isdisjoint(captured["all_features"])
+    assert target_columns.isdisjoint(metadata["classifier_features"])
+    assert target_columns.isdisjoint(metadata["regressor_features"])
 
 
 def test_parse_args_defaults_to_ten_prediction_days():
