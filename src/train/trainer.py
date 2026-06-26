@@ -60,18 +60,33 @@ def validate_input_data(data):
         raise ValueError("Input data is empty.")
 
     nan_count = data.isnull().sum().sum()
-    logging.info(f"NaN values before preparation: {nan_count}")
+    logging.debug(f"NaN values before preparation: {nan_count}")
 
     if nan_count > 0:
         nan_by_column = data.isnull().sum()
         nan_columns = [col for col in data.columns if nan_by_column[col] > 0]
         for col in nan_columns:
-            logging.info(
+            logging.debug(
                 f"Column {col}: {nan_by_column[col]} NaN values ({nan_by_column[col] / len(data) * 100:.2f}%)"
             )
 
     logging.info("Data validation complete.")
     return data
+
+
+def log_feature_importances(model_name, feature_importances, top_n=5):
+    """Log a compact INFO summary and full DEBUG feature-importance details."""
+    top_importances = feature_importances.head(top_n)
+    top_importance_summary = {
+        row["feature"]: round(float(row["importance"]), 4)
+        for _, row in top_importances.iterrows()
+    }
+    logging.info(
+        f"Top {top_n} Feature Importances for {model_name}: {top_importance_summary}"
+    )
+    logging.debug(f"Feature Importances for {model_name}:")
+    for _, row in feature_importances.iterrows():
+        logging.debug(f"{row['feature']}: {row['importance']:.4f}")
 
 
 def fetch_tickers_data(ticker, period="5y"):
@@ -313,6 +328,11 @@ def train_models(
     y_train = prepared_data["y_train"]
     y_val = prepared_data["y_val"]
     y_test = prepared_data["y_test"]
+    logging.info(
+        "Prepared data summary: "
+        f"x_train={len(x_train_full)}, x_val={len(x_val_full)}, "
+        f"x_test={len(x_test_full)}, features={len(all_features)}"
+    )
 
     # Feature lists are intentionally inline for now; prediction metadata mirrors them.
     linear_features = [
@@ -425,14 +445,11 @@ def train_models(
     linear_model.fit(x_train_lr_scaled, y_train)
     evaluate_model(linear_model, x_test_lr_scaled, y_test, model_type="regression")
 
-    # Log feature importances for Linear Regression
     importances_lr = np.abs(linear_model.coef_)
     feature_importance_lr = pd.DataFrame(
         {"feature": linear_features, "importance": importances_lr}
     ).sort_values(by="importance", ascending=False)
-    logging.info("Feature Importances for Linear Regression:")
-    for _, row in feature_importance_lr.iterrows():
-        logging.info(f"{row['feature']}: {row['importance']:.4f}")
+    log_feature_importances("Linear Regression", feature_importance_lr)
 
     classifier_feature_names = classifier_features
     regressor_feature_names = regressor_features
@@ -455,19 +472,17 @@ def train_models(
         x_train_classifier,
         direction_y_train,
         eval_set=[(x_val_classifier, direction_y_val)],
+        verbose=False,
     )
     evaluate_model(
         classifier, x_test_classifier, direction_y_test, model_type="classification"
     )
 
-    # Log feature importances for XGBoost Classifier
     importances_clf = classifier.feature_importances_
     feature_importance_clf = pd.DataFrame(
         {"feature": classifier_feature_names, "importance": importances_clf}
     ).sort_values(by="importance", ascending=False)
-    logging.info("Feature Importances for XGBoost Classifier:")
-    for _, row in feature_importance_clf.iterrows():
-        logging.info(f"{row['feature']}: {row['importance']:.4f}")
+    log_feature_importances("XGBoost Classifier", feature_importance_clf)
 
     logging.info("Training XGBoost Regressor...")
     regressor = XGBRegressor(**(regressor_params or XG_PARAMS_REGRESSOR))
@@ -475,6 +490,7 @@ def train_models(
         x_train_regressor,
         y_train,
         eval_set=[(x_val_regressor, y_val)],
+        verbose=False,
     )
     evaluate_model(regressor, x_test_regressor, y_test, model_type="regression")
     # Validation probabilities choose the beat-benchmark threshold; test evaluates it once.
@@ -490,14 +506,11 @@ def train_models(
         regressor.predict(x_test_regressor),
     )
 
-    # Log feature importances for XGBoost Regressor
     importances_reg = regressor.feature_importances_
     feature_importance_reg = pd.DataFrame(
         {"feature": regressor_feature_names, "importance": importances_reg}
     ).sort_values(by="importance", ascending=False)
-    logging.info("Feature Importances for XGBoost Regressor:")
-    for _, row in feature_importance_reg.iterrows():
-        logging.info(f"{row['feature']}: {row['importance']:.4f}")
+    log_feature_importances("XGBoost Regressor", feature_importance_reg)
 
     # Save all preprocessing and feature metadata needed to reproduce training inputs.
     model_metadata = build_model_metadata(

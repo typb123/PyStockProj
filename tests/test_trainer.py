@@ -79,6 +79,60 @@ def test_validate_input_data_does_not_fill_missing_values():
     assert result.loc[1, "Volume"] == 1100.0
 
 
+def test_validate_input_data_logs_nan_details_at_debug(caplog):
+    data = pd.DataFrame(
+        {
+            "Ticker": ["AAA", "AAA"],
+            "Close": [100.0, None],
+        }
+    )
+
+    with caplog.at_level(logging.INFO):
+        trainer.validate_input_data(data)
+
+    assert "Data validation complete." in caplog.text
+    assert "NaN values before preparation" not in caplog.text
+    assert "Column Close:" not in caplog.text
+
+    caplog.clear()
+    with caplog.at_level(logging.DEBUG):
+        trainer.validate_input_data(data)
+
+    assert "NaN values before preparation: 1" in caplog.text
+    assert "Column Close: 1 NaN values" in caplog.text
+
+
+def test_log_feature_importances_summarizes_info_and_keeps_full_debug(caplog):
+    feature_importances = pd.DataFrame(
+        {
+            "feature": ["f1", "f2", "f3"],
+            "importance": [0.33333, 0.22222, 0.11111],
+        }
+    )
+
+    with caplog.at_level(logging.INFO):
+        trainer.log_feature_importances("Test Model", feature_importances, top_n=2)
+
+    info_messages = [
+        record.getMessage()
+        for record in caplog.records
+        if record.levelno == logging.INFO
+    ]
+    assert info_messages == [
+        "Top 2 Feature Importances for Test Model: {'f1': 0.3333, 'f2': 0.2222}"
+    ]
+    assert all(record.levelno != logging.DEBUG for record in caplog.records)
+
+    caplog.clear()
+    with caplog.at_level(logging.DEBUG):
+        trainer.log_feature_importances("Test Model", feature_importances, top_n=2)
+
+    assert "Feature Importances for Test Model:" in caplog.text
+    assert "f1: 0.3333" in caplog.text
+    assert "f2: 0.2222" in caplog.text
+    assert "f3: 0.1111" in caplog.text
+
+
 def test_model_metadata_does_not_include_linear_regression_prediction():
     metadata = trainer.build_model_metadata(
         linear_features=["Close"],
