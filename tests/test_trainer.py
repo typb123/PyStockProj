@@ -573,7 +573,7 @@ def test_save_horizon_model_artifacts_preserves_legacy_paths_for_default_horizon
     assert (tmp_path / "models/model_metadata.pkl").exists()
 
 
-def test_main_trains_all_horizons_and_logs_comparison(monkeypatch, caplog):
+def test_main_trains_all_horizons_and_logs_comparison(monkeypatch, caplog, capsys):
     trained_horizons = []
 
     monkeypatch.setattr(
@@ -592,7 +592,15 @@ def test_main_trains_all_horizons_and_logs_comparison(monkeypatch, caplog):
                     "random_baseline": {"average_basket_excess_return": 0.001},
                     "momentum_baseline": {
                         "available": True,
+                        "momentum_score_column": f"momentum_{prediction_days}d",
                         "average_basket_excess_return": 0.002,
+                    },
+                    "relative_momentum_baseline": {
+                        "available": True,
+                        "relative_momentum_score_column": (
+                            f"relative_momentum_{prediction_days}d"
+                        ),
+                        "average_basket_excess_return": 0.003,
                     },
                     "universe": {"average_basket_excess_return": 0.0},
                     "benchmark": {"average_basket_raw_return": 0.003},
@@ -608,6 +616,59 @@ def test_main_trains_all_horizons_and_logs_comparison(monkeypatch, caplog):
     assert trained_horizons == [5, 10, 20, 50]
     assert "Horizon Comparison Summary:" in caplog.text
     assert "50d:" in caplog.text
+    output = capsys.readouterr().out
+    assert "Horizon Comparison Summary:" in output
+    assert "50d:" in output
+    assert "XGBoost Beat-Benchmark Classification Report" not in output
+
+
+def test_main_single_horizon_prints_top_n_basket_summary(monkeypatch, capsys):
+    trained_horizons = []
+
+    monkeypatch.setattr(
+        trainer,
+        "prepare_data_parallel",
+        lambda tickers, period="5y": pd.DataFrame({"Close": [1.0]}),
+    )
+
+    def fake_train_models(data, prediction_days):
+        trained_horizons.append(prediction_days)
+        return {
+            "prediction_days": prediction_days,
+            "basket_backtest": {
+                "top_5": {
+                    "model": {
+                        "average_basket_raw_return": 0.02,
+                        "average_basket_excess_return": 0.01,
+                        "beat_benchmark_rate": 0.55,
+                    },
+                    "random_baseline": {"average_basket_excess_return": 0.002},
+                    "momentum_baseline": {
+                        "available": True,
+                        "momentum_score_column": "momentum_10d",
+                        "average_basket_excess_return": 0.004,
+                    },
+                    "relative_momentum_baseline": {
+                        "available": True,
+                        "relative_momentum_score_column": "relative_momentum_10d",
+                        "average_basket_excess_return": 0.005,
+                    },
+                    "universe": {"average_basket_excess_return": 0.001},
+                    "benchmark": {"average_basket_raw_return": 0.003},
+                }
+            },
+        }
+
+    monkeypatch.setattr(trainer, "train_models", fake_train_models)
+
+    trainer.main(["--prediction-days", "10"])
+
+    assert trained_horizons == [10]
+    output = capsys.readouterr().out
+    assert "XGBoost Top-N Basket Backtest Summary:" in output
+    assert "top_5:" in output
+    assert "Horizon Comparison Summary:" not in output
+    assert "XGBoost Beat-Benchmark Classification Report" not in output
 
 
 def test_log_xgboost_test_report_uses_explicit_direction_labels(monkeypatch):

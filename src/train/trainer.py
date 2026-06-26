@@ -841,7 +841,15 @@ def main(argv=None):
         )
 
     if args.all_horizons:
-        logging.info(format_horizon_comparison_summary(horizon_reports))
+        summary = format_horizon_comparison_summary(horizon_reports)
+        logging.info(summary)
+        print(summary)
+    else:
+        prediction_days = args.horizons[0]
+        summary = format_top_n_basket_backtest_summary(
+            horizon_reports[prediction_days]["basket_backtest"]
+        )
+        print(summary)
 
     print("Model training completed. Check training.log for details.")
 
