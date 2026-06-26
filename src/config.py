@@ -122,7 +122,7 @@ TRAINING_TICKERS = [
     "QCOM",
     "UBER",
     "MRNA",
-    "SQ",
+    "XYZ",
     "NFLX",
     "CMG",
     "GM",

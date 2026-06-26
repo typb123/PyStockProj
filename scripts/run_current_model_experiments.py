@@ -144,7 +144,7 @@ TICKER_UNIVERSES = {
         "SHOP",
         "UBER",
         "PYPL",
-        "SQ",
+        "XYZ",
         "NFLX",
         "ROKU",
         "SPY",
