@@ -192,6 +192,74 @@ def test_format_top_n_ranked_selection_summary_handles_unavailable_momentum():
     assert "universe excess=-0.10%" in summary
 
 
+def test_format_top_n_basket_backtest_summary_formats_normal_report():
+    report = {
+        "top_5": {
+            "model": {
+                "average_basket_raw_return": 0.0123,
+                "average_basket_excess_return": 0.01,
+                "beat_benchmark_rate": 0.5288,
+            },
+            "random_baseline": {
+                "average_basket_excess_return": 0.004,
+            },
+            "momentum_baseline": {
+                "available": True,
+                "average_basket_excess_return": 0.008,
+            },
+            "universe": {
+                "average_basket_excess_return": 0.0015,
+            },
+            "benchmark": {
+                "average_basket_raw_return": 0.0023,
+            },
+        }
+    }
+
+    summary = trainer.format_top_n_basket_backtest_summary(report)
+
+    assert summary == (
+        "XGBoost Top-N Basket Backtest Summary:\n"
+        "top_5:\n"
+        "  model raw=1.23%, model excess=1.00%, random excess=0.40%, "
+        "momentum excess=0.80%, universe excess=0.15%, benchmark raw=0.23%\n"
+        "  model minus random=0.60%, model minus momentum=0.20%, "
+        "beat benchmark rate=52.88%"
+    )
+
+
+def test_format_top_n_basket_backtest_summary_handles_unavailable_momentum():
+    report = {
+        "top_10": {
+            "model": {
+                "average_basket_raw_return": 0.012,
+                "average_basket_excess_return": 0.01,
+                "beat_benchmark_rate": 0.5,
+            },
+            "random_baseline": {
+                "average_basket_excess_return": 0.002,
+            },
+            "momentum_baseline": {
+                "available": False,
+                "average_basket_excess_return": np.nan,
+            },
+            "universe": {
+                "average_basket_excess_return": -0.001,
+            },
+            "benchmark": {
+                "average_basket_raw_return": 0.003,
+            },
+        }
+    }
+
+    summary = trainer.format_top_n_basket_backtest_summary(report)
+
+    assert "momentum excess=unavailable" in summary
+    assert "model minus momentum=unavailable" in summary
+    assert "universe excess=-0.10%" in summary
+    assert "benchmark raw=0.30%" in summary
+
+
 def test_model_metadata_does_not_include_linear_regression_prediction():
     metadata = trainer.build_model_metadata(
         linear_features=["Close"],
@@ -219,6 +287,11 @@ def test_log_xgboost_test_report_uses_explicit_direction_labels(monkeypatch):
         captured["ranked_predictions"] = np.asarray(predicted_returns)
         return {"top_5": {"selected_row_count": 1}}
 
+    def fake_build_top_n_basket_backtest_report(split_metadata, predicted_returns):
+        captured["basket_split_metadata"] = split_metadata
+        captured["basket_ranked_predictions"] = np.asarray(predicted_returns)
+        return {"top_5": {"model": {}}}
+
     monkeypatch.setattr(
         trainer,
         "build_classification_report",
@@ -228,6 +301,11 @@ def test_log_xgboost_test_report_uses_explicit_direction_labels(monkeypatch):
         trainer,
         "build_top_n_ranked_selection_report",
         fake_build_top_n_ranked_selection_report,
+    )
+    monkeypatch.setattr(
+        trainer,
+        "build_top_n_basket_backtest_report",
+        fake_build_top_n_basket_backtest_report,
     )
 
     y_test = np.array([0.10, -0.20, 0.30])
@@ -263,6 +341,14 @@ def test_log_xgboost_test_report_uses_explicit_direction_labels(monkeypatch):
     np.testing.assert_array_equal(captured["y_pred"], classifier_predictions)
     pd.testing.assert_frame_equal(captured["split_metadata"], test_split_metadata)
     np.testing.assert_array_equal(captured["ranked_predictions"], regressor_predictions)
+    pd.testing.assert_frame_equal(
+        captured["basket_split_metadata"],
+        test_split_metadata,
+    )
+    np.testing.assert_array_equal(
+        captured["basket_ranked_predictions"],
+        regressor_predictions,
+    )
     assert not np.array_equal(captured["y_true"], (y_test > 0).astype(int))
 
 
@@ -285,6 +371,28 @@ def test_log_xgboost_test_report_logs_top_n_summary_at_info_and_full_report_at_d
             },
             "universe": {
                 "average_excess_return_vs_benchmark": 0.0015,
+            },
+        }
+    }
+    basket_report = {
+        "top_5": {
+            "model": {
+                "average_basket_raw_return": 0.0123,
+                "average_basket_excess_return": 0.01,
+                "beat_benchmark_rate": 0.5288,
+            },
+            "random_baseline": {
+                "average_basket_excess_return": 0.004,
+            },
+            "momentum_baseline": {
+                "available": True,
+                "average_basket_excess_return": 0.008,
+            },
+            "universe": {
+                "average_basket_excess_return": 0.0015,
+            },
+            "benchmark": {
+                "average_basket_raw_return": 0.0023,
             },
         }
     }
@@ -349,6 +457,11 @@ def test_log_xgboost_test_report_logs_top_n_summary_at_info_and_full_report_at_d
         "build_top_n_ranked_selection_report",
         lambda *args, **kwargs: top_n_report,
     )
+    monkeypatch.setattr(
+        trainer,
+        "build_top_n_basket_backtest_report",
+        lambda *args, **kwargs: basket_report,
+    )
 
     with caplog.at_level(logging.INFO):
         trainer.log_xgboost_test_report(
@@ -372,8 +485,16 @@ def test_log_xgboost_test_report_logs_top_n_summary_at_info_and_full_report_at_d
         message.startswith("XGBoost Top-N Ranked Selection Summary:")
         for message in info_messages
     )
+    assert any(
+        message.startswith("XGBoost Top-N Basket Backtest Summary:")
+        for message in info_messages
+    )
     assert not any(
         message.startswith("XGBoost Top-N Ranked Selection Report:")
+        for message in info_messages
+    )
+    assert not any(
+        message.startswith("XGBoost Top-N Basket Backtest Report:")
         for message in info_messages
     )
 
@@ -392,3 +513,153 @@ def test_log_xgboost_test_report_logs_top_n_summary_at_info_and_full_report_at_d
         )
 
     assert "XGBoost Top-N Ranked Selection Report:" in caplog.text
+    assert "XGBoost Top-N Basket Backtest Report:" in caplog.text
+
+
+def test_log_xgboost_test_report_logs_basket_summary_at_info_and_full_report_at_debug(
+    monkeypatch,
+    caplog,
+):
+    captured = {}
+    basket_report = {
+        "top_5": {
+            "model": {
+                "average_basket_raw_return": 0.0123,
+                "average_basket_excess_return": 0.01,
+                "beat_benchmark_rate": 0.5288,
+            },
+            "random_baseline": {
+                "average_basket_excess_return": 0.004,
+            },
+            "momentum_baseline": {
+                "available": True,
+                "average_basket_excess_return": 0.008,
+            },
+            "universe": {
+                "average_basket_excess_return": 0.0015,
+            },
+            "benchmark": {
+                "average_basket_raw_return": 0.0023,
+            },
+        }
+    }
+
+    monkeypatch.setattr(
+        trainer,
+        "build_classification_report",
+        lambda *args, **kwargs: {"accuracy": 1.0},
+    )
+    monkeypatch.setattr(
+        trainer,
+        "build_regression_report",
+        lambda *args, **kwargs: {"mse": 0.1},
+    )
+    monkeypatch.setattr(
+        trainer,
+        "build_actual_return_baseline_report",
+        lambda *args, **kwargs: {"count": 1},
+    )
+    monkeypatch.setattr(
+        trainer,
+        "build_trading_relevance_report",
+        lambda *args, **kwargs: {"relevance": 1},
+    )
+    monkeypatch.setattr(
+        trainer,
+        "build_probability_summary",
+        lambda *args, **kwargs: {"count": 1},
+    )
+    monkeypatch.setattr(
+        trainer,
+        "build_probability_tail_report",
+        lambda *args, **kwargs: {"top": 1},
+    )
+    monkeypatch.setattr(
+        trainer,
+        "build_probability_threshold_report",
+        lambda *args, **kwargs: {0.5: {"selected_count": 1}},
+    )
+    monkeypatch.setattr(
+        trainer,
+        "build_validation_selected_threshold_report",
+        lambda *args, **kwargs: {"selected_threshold": 0.5},
+    )
+    monkeypatch.setattr(
+        trainer,
+        "build_predicted_return_quantile_report",
+        lambda *args, **kwargs: {"top_10_pct": {}},
+    )
+    monkeypatch.setattr(
+        trainer,
+        "build_return_correlation_report",
+        lambda *args, **kwargs: {"pearson": 0.0},
+    )
+    monkeypatch.setattr(
+        trainer,
+        "build_combined_signal_report",
+        lambda *args, **kwargs: {"selected_count": 0},
+    )
+    monkeypatch.setattr(
+        trainer,
+        "build_top_n_ranked_selection_report",
+        lambda *args, **kwargs: {"top_5": {"model": {}}},
+    )
+
+    def fake_build_top_n_basket_backtest_report(split_metadata, ranked_predictions):
+        captured["split_metadata"] = split_metadata
+        captured["ranked_predictions"] = np.asarray(ranked_predictions)
+        return basket_report
+
+    monkeypatch.setattr(
+        trainer,
+        "build_top_n_basket_backtest_report",
+        fake_build_top_n_basket_backtest_report,
+    )
+
+    test_split_metadata = pd.DataFrame({"Ticker": ["AAA"]})
+    regressor_predictions = np.array([0.03])
+
+    with caplog.at_level(logging.INFO):
+        trainer.log_xgboost_test_report(
+            y_train=np.array([0.01]),
+            y_val=np.array([0.02]),
+            y_test=np.array([0.03]),
+            direction_y_test=np.array([1]),
+            test_split_metadata=test_split_metadata,
+            classifier_predictions=np.array([1]),
+            classifier_validation_probability_up=np.array([0.55]),
+            classifier_probability_up=np.array([0.60]),
+            regressor_predictions=regressor_predictions,
+        )
+
+    pd.testing.assert_frame_equal(captured["split_metadata"], test_split_metadata)
+    np.testing.assert_array_equal(captured["ranked_predictions"], regressor_predictions)
+    info_messages = [
+        record.getMessage()
+        for record in caplog.records
+        if record.levelno == logging.INFO
+    ]
+    assert any(
+        message.startswith("XGBoost Top-N Basket Backtest Summary:")
+        for message in info_messages
+    )
+    assert not any(
+        message.startswith("XGBoost Top-N Basket Backtest Report:")
+        for message in info_messages
+    )
+
+    caplog.clear()
+    with caplog.at_level(logging.DEBUG):
+        trainer.log_xgboost_test_report(
+            y_train=np.array([0.01]),
+            y_val=np.array([0.02]),
+            y_test=np.array([0.03]),
+            direction_y_test=np.array([1]),
+            test_split_metadata=test_split_metadata,
+            classifier_predictions=np.array([1]),
+            classifier_validation_probability_up=np.array([0.55]),
+            classifier_probability_up=np.array([0.60]),
+            regressor_predictions=regressor_predictions,
+        )
+
+    assert "XGBoost Top-N Basket Backtest Report:" in caplog.text

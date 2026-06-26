@@ -13,6 +13,7 @@ from src.train.evaluator import (
     build_predicted_return_quantile_report,
     build_regression_report,
     build_return_correlation_report,
+    build_top_n_basket_backtest_report,
     build_top_n_ranked_selection_report,
     build_trading_relevance_report,
 )
@@ -584,6 +585,207 @@ def test_top_n_ranked_selection_rejects_missing_metadata_columns():
         build_top_n_ranked_selection_report(
             metadata,
             np.arange(len(metadata), dtype=float),
+        )
+
+
+def test_top_n_basket_backtest_selects_model_top_n_within_each_date():
+    metadata = make_ranked_selection_metadata()
+    ranked_predictions = np.array([0.90, 0.80, 0.70, 0.10, 0.20, 0.30])
+
+    report = build_top_n_basket_backtest_report(
+        metadata,
+        ranked_predictions,
+        top_ns=(1,),
+    )
+
+    model = report["top_1"]["model"]
+    assert model["evaluated_dates"] == 2
+    assert model["average_selected_count"] == 1.0
+    assert np.isclose(model["average_basket_raw_return"], (0.10 + -0.04) / 2)
+    assert np.isclose(model["average_basket_benchmark_return"], 0.015)
+    assert np.isclose(model["average_basket_excess_return"], (0.09 + -0.06) / 2)
+    assert model["positive_basket_return_rate"] == 0.5
+    assert model["beat_benchmark_rate"] == 0.5
+
+
+def test_top_n_basket_backtest_averages_equal_weight_baskets_per_date():
+    metadata = make_ranked_selection_metadata()
+    ranked_predictions = np.array([0.90, 0.80, 0.70, 0.10, 0.20, 0.30])
+
+    report = build_top_n_basket_backtest_report(
+        metadata,
+        ranked_predictions,
+        top_ns=(2,),
+    )
+
+    date_1_basket_raw = (0.10 + 0.02) / 2
+    date_2_basket_raw = (0.20 + -0.04) / 2
+    date_1_basket_excess = (0.09 + 0.01) / 2
+    date_2_basket_excess = (0.18 + -0.06) / 2
+    model = report["top_2"]["model"]
+    assert model["evaluated_dates"] == 2
+    assert model["average_selected_count"] == 2.0
+    assert np.isclose(
+        model["average_basket_raw_return"],
+        (date_1_basket_raw + date_2_basket_raw) / 2,
+    )
+    assert np.isclose(
+        model["average_basket_excess_return"],
+        (date_1_basket_excess + date_2_basket_excess) / 2,
+    )
+
+
+def test_top_n_basket_backtest_random_baseline_is_deterministic():
+    metadata = make_ranked_selection_metadata()
+    ranked_predictions = np.array([0.90, 0.80, 0.70, 0.10, 0.20, 0.30])
+
+    first_report = build_top_n_basket_backtest_report(
+        metadata,
+        ranked_predictions,
+        top_ns=(1,),
+        random_seed=7,
+        random_trials=5,
+    )
+    second_report = build_top_n_basket_backtest_report(
+        metadata,
+        ranked_predictions,
+        top_ns=(1,),
+        random_seed=7,
+        random_trials=5,
+    )
+
+    assert (
+        first_report["top_1"]["random_baseline"]
+        == second_report["top_1"]["random_baseline"]
+    )
+    assert first_report["top_1"]["random_baseline"]["random_seed"] == 7
+    assert first_report["top_1"]["random_baseline"]["random_trials"] == 5
+
+
+def test_top_n_basket_backtest_momentum_baseline_ranks_by_daily_return():
+    metadata = make_ranked_selection_metadata()
+    ranked_predictions = np.array([0.90, 0.80, 0.70, 0.10, 0.20, 0.30])
+
+    report = build_top_n_basket_backtest_report(
+        metadata,
+        ranked_predictions,
+        top_ns=(1,),
+    )
+
+    momentum = report["top_1"]["momentum_baseline"]
+    assert momentum["available"] is True
+    assert momentum["momentum_score_column"] == "dailyReturn"
+    assert momentum["evaluated_dates"] == 2
+    assert np.isclose(momentum["average_basket_raw_return"], (0.02 + -0.04) / 2)
+    assert np.isclose(momentum["average_basket_excess_return"], (0.01 + -0.06) / 2)
+
+
+def test_top_n_basket_backtest_momentum_baseline_reports_missing_score_column():
+    metadata = make_ranked_selection_metadata().drop(columns=["dailyReturn"])
+    ranked_predictions = np.array([0.90, 0.80, 0.70, 0.10, 0.20, 0.30])
+
+    report = build_top_n_basket_backtest_report(
+        metadata,
+        ranked_predictions,
+        top_ns=(1,),
+    )
+
+    momentum = report["top_1"]["momentum_baseline"]
+    assert momentum["available"] is False
+    assert momentum["momentum_score_column"] == "dailyReturn"
+    assert "not present" in momentum["reason"]
+    assert np.isnan(momentum["average_basket_raw_return"])
+
+
+def test_top_n_basket_backtest_excludes_spy_from_candidate_selections():
+    metadata = make_ranked_selection_metadata()
+    spy_row = pd.DataFrame(
+        {
+            "Ticker": ["SPY"],
+            "prediction_date": [pd.Timestamp("2024-01-01")],
+            "raw_forward_return": [0.50],
+            "benchmark_forward_return": [0.50],
+            "excess_forward_return": [0.00],
+            "beat_benchmark_target": [0],
+            "dailyReturn": [1.00],
+        }
+    )
+    metadata = pd.concat([metadata, spy_row], ignore_index=True)
+    ranked_predictions = np.array([0.90, 0.80, 0.70, 0.10, 0.20, 0.30, 9.99])
+
+    report = build_top_n_basket_backtest_report(
+        metadata,
+        ranked_predictions,
+        top_ns=(1,),
+    )
+
+    assert np.isclose(
+        report["top_1"]["model"]["average_basket_raw_return"],
+        (0.10 + -0.04) / 2,
+    )
+    assert np.isclose(report["top_1"]["universe"]["average_selected_count"], 3.0)
+    assert np.isclose(report["top_1"]["universe"]["average_basket_raw_return"], 0.05)
+
+
+def test_top_n_basket_backtest_uses_all_candidates_when_fewer_than_n():
+    metadata = make_ranked_selection_metadata()
+    ranked_predictions = np.array([0.90, 0.80, 0.70, 0.10, 0.20, 0.30])
+
+    report = build_top_n_basket_backtest_report(
+        metadata,
+        ranked_predictions,
+        top_ns=(5,),
+    )
+
+    model = report["top_5"]["model"]
+    assert model["evaluated_dates"] == 2
+    assert model["average_selected_count"] == 3.0
+    assert np.isclose(model["average_basket_raw_return"], 0.05)
+    assert np.isclose(model["average_basket_excess_return"], 0.035)
+
+
+def test_top_n_basket_backtest_includes_universe_and_benchmark_summaries():
+    metadata = make_ranked_selection_metadata()
+    ranked_predictions = np.array([0.90, 0.80, 0.70, 0.10, 0.20, 0.30])
+
+    report = build_top_n_basket_backtest_report(
+        metadata,
+        ranked_predictions,
+        top_ns=(1,),
+    )
+
+    assert set(report["top_1"]) == {
+        "model",
+        "random_baseline",
+        "momentum_baseline",
+        "universe",
+        "benchmark",
+    }
+    assert np.isclose(report["top_1"]["universe"]["average_basket_raw_return"], 0.05)
+    assert np.isclose(
+        report["top_1"]["benchmark"]["average_basket_raw_return"],
+        0.015,
+    )
+    assert report["top_1"]["benchmark"]["average_basket_excess_return"] == 0.0
+
+
+def test_top_n_basket_backtest_rejects_invalid_inputs():
+    metadata = make_ranked_selection_metadata()
+
+    with pytest.raises(ValueError, match="same length"):
+        build_top_n_basket_backtest_report(metadata, np.array([0.10, 0.20]))
+
+    with pytest.raises(ValueError, match="required columns"):
+        build_top_n_basket_backtest_report(
+            metadata.drop(columns=["raw_forward_return"]),
+            np.arange(len(metadata), dtype=float),
+        )
+
+    with pytest.raises(ValueError, match="random_trials"):
+        build_top_n_basket_backtest_report(
+            metadata,
+            np.arange(len(metadata), dtype=float),
+            random_trials=0,
         )
 
 

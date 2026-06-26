@@ -403,6 +403,66 @@ def build_top_n_ranked_selection_report(
     return report
 
 
+def build_top_n_basket_backtest_report(
+    split_metadata,
+    ranked_predictions,
+    top_ns=(5, 10, 20),
+    random_seed=42,
+    random_trials=100,
+    momentum_score_column="dailyReturn",
+):
+    """Summarize equal-weight top-N baskets selected within each prediction date.
+
+    This is a simple no-lookahead basket diagnostic: each prediction date
+    contributes one equal-weight basket outcome per bucket. Returns are averaged
+    across dates without compounding or overlapping-position modeling.
+    """
+    if random_trials < 1:
+        raise ValueError("random_trials must be at least 1.")
+
+    metadata = split_metadata.copy()
+    ranked_predictions = np.asarray(ranked_predictions, dtype=float)
+    _validate_ranked_selection_inputs(metadata, ranked_predictions)
+
+    metadata["ranked_prediction"] = ranked_predictions
+    metadata = metadata[metadata["Ticker"] != "SPY"].copy()
+    grouped_metadata = list(metadata.groupby("prediction_date", sort=True))
+    report = {}
+
+    for top_n in top_ns:
+        key = f"top_{top_n}"
+        selected_count_by_date = {
+            prediction_date: min(int(top_n), len(date_group))
+            for prediction_date, date_group in grouped_metadata
+        }
+        model_selected_groups = _select_top_n_by_score(
+            grouped_metadata,
+            selected_count_by_date,
+            "ranked_prediction",
+        )
+
+        report[key] = {
+            "model": _basket_backtest_stats(model_selected_groups),
+            "random_baseline": _random_basket_backtest_stats(
+                grouped_metadata,
+                selected_count_by_date,
+                random_seed=random_seed,
+                random_trials=random_trials,
+            ),
+            "momentum_baseline": _momentum_basket_backtest_stats(
+                grouped_metadata,
+                selected_count_by_date,
+                momentum_score_column,
+            ),
+            "universe": _basket_backtest_stats(
+                [date_group for _, date_group in grouped_metadata]
+            ),
+            "benchmark": _benchmark_basket_backtest_stats(grouped_metadata),
+        }
+
+    return report
+
+
 def _select_top_n_by_score(grouped_metadata, selected_count_by_date, score_column):
     selected_groups = []
 
@@ -413,6 +473,155 @@ def _select_top_n_by_score(grouped_metadata, selected_count_by_date, score_colum
         selected_groups.append(date_group.nlargest(selected_count, score_column))
 
     return selected_groups
+
+
+def _basket_backtest_stats(selected_groups):
+    if not selected_groups:
+        return _empty_basket_backtest_stats()
+
+    date_stats = pd.DataFrame(
+        [
+            {
+                "basket_raw_return": float(selected_group["raw_forward_return"].mean()),
+                "basket_benchmark_return": float(
+                    selected_group["benchmark_forward_return"].mean()
+                ),
+                "basket_excess_return": float(
+                    selected_group["excess_forward_return"].mean()
+                ),
+                "selected_count": len(selected_group),
+            }
+            for selected_group in selected_groups
+        ]
+    )
+
+    return _summarize_basket_date_stats(date_stats)
+
+
+def _random_basket_backtest_stats(
+    grouped_metadata,
+    selected_count_by_date,
+    random_seed,
+    random_trials,
+):
+    rng = np.random.default_rng(random_seed)
+    trial_stats = []
+
+    for _ in range(random_trials):
+        selected_groups = []
+        for prediction_date, date_group in grouped_metadata:
+            selected_count = selected_count_by_date[prediction_date]
+            if selected_count == 0:
+                continue
+
+            selected_positions = rng.choice(
+                len(date_group),
+                size=selected_count,
+                replace=False,
+            )
+            selected_groups.append(date_group.iloc[selected_positions])
+
+        trial_stats.append(_basket_backtest_stats(selected_groups))
+
+    stats = _average_random_basket_trial_stats(trial_stats)
+    stats["random_seed"] = int(random_seed)
+    stats["random_trials"] = int(random_trials)
+    return stats
+
+
+def _average_random_basket_trial_stats(trial_stats):
+    if not trial_stats:
+        return _empty_basket_backtest_stats()
+
+    stats = {}
+    for metric in trial_stats[0]:
+        values = np.asarray([trial[metric] for trial in trial_stats], dtype=float)
+        stats[metric] = _mean_or_nan(values)
+
+    stats["evaluated_dates"] = int(round(stats["evaluated_dates"]))
+    return stats
+
+
+def _momentum_basket_backtest_stats(
+    grouped_metadata,
+    selected_count_by_date,
+    momentum_score_column,
+):
+    metadata_columns = set()
+    for _, date_group in grouped_metadata:
+        metadata_columns.update(date_group.columns)
+
+    if momentum_score_column not in metadata_columns:
+        stats = _empty_basket_backtest_stats()
+        stats["available"] = False
+        stats["momentum_score_column"] = momentum_score_column
+        stats["reason"] = (
+            f"Momentum score column '{momentum_score_column}' is not present in split_metadata."
+        )
+        return stats
+
+    selected_groups = _select_top_n_by_score(
+        grouped_metadata,
+        selected_count_by_date,
+        momentum_score_column,
+    )
+    stats = _basket_backtest_stats(selected_groups)
+    stats["available"] = True
+    stats["momentum_score_column"] = momentum_score_column
+    return stats
+
+
+def _benchmark_basket_backtest_stats(grouped_metadata):
+    if not grouped_metadata:
+        return _empty_basket_backtest_stats()
+
+    date_stats = pd.DataFrame(
+        [
+            {
+                "basket_raw_return": float(
+                    date_group["benchmark_forward_return"].mean()
+                ),
+                "basket_benchmark_return": float(
+                    date_group["benchmark_forward_return"].mean()
+                ),
+                "basket_excess_return": 0.0,
+                "selected_count": 1,
+            }
+            for _, date_group in grouped_metadata
+        ]
+    )
+    return _summarize_basket_date_stats(date_stats)
+
+
+def _summarize_basket_date_stats(date_stats):
+    basket_raw_returns = date_stats["basket_raw_return"].to_numpy()
+    basket_excess_returns = date_stats["basket_excess_return"].to_numpy()
+
+    return {
+        "average_basket_raw_return": _mean_or_nan(basket_raw_returns),
+        "average_basket_benchmark_return": _mean_or_nan(
+            date_stats["basket_benchmark_return"].to_numpy()
+        ),
+        "average_basket_excess_return": _mean_or_nan(basket_excess_returns),
+        "positive_basket_return_rate": _up_rate_or_nan(basket_raw_returns),
+        "beat_benchmark_rate": _up_rate_or_nan(basket_excess_returns),
+        "average_selected_count": _mean_or_nan(
+            date_stats["selected_count"].to_numpy()
+        ),
+        "evaluated_dates": int(len(date_stats)),
+    }
+
+
+def _empty_basket_backtest_stats():
+    return {
+        "average_basket_raw_return": np.nan,
+        "average_basket_benchmark_return": np.nan,
+        "average_basket_excess_return": np.nan,
+        "positive_basket_return_rate": np.nan,
+        "beat_benchmark_rate": np.nan,
+        "average_selected_count": np.nan,
+        "evaluated_dates": 0,
+    }
 
 
 def _ranked_selection_stats(selected_groups, grouped_metadata, score_column=None):

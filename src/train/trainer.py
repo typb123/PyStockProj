@@ -26,6 +26,7 @@ from src.train.evaluator import (
     build_predicted_return_quantile_report,
     build_regression_report,
     build_return_correlation_report,
+    build_top_n_basket_backtest_report,
     build_top_n_ranked_selection_report,
     build_trading_relevance_report,
     build_validation_selected_threshold_report,
@@ -132,6 +133,55 @@ def format_top_n_ranked_selection_summary(top_n_report):
             f"model minus random={_format_percent_delta(model_excess, random_excess)}, "
             f"model minus momentum={minus_momentum_text}, "
             f"model beat rate={_format_percent(beat_rate)}"
+        )
+
+    return "\n".join(lines)
+
+
+def format_top_n_basket_backtest_summary(top_n_report):
+    """Format nested Top-N basket backtest diagnostics for readable INFO logs."""
+    lines = ["XGBoost Top-N Basket Backtest Summary:"]
+
+    for bucket_name, bucket_report in top_n_report.items():
+        model = bucket_report.get("model", {})
+        random_baseline = bucket_report.get("random_baseline", {})
+        momentum_baseline = bucket_report.get("momentum_baseline", {})
+        universe = bucket_report.get("universe", {})
+        benchmark = bucket_report.get("benchmark", {})
+
+        model_raw = model.get("average_basket_raw_return")
+        model_excess = model.get("average_basket_excess_return")
+        random_excess = random_baseline.get("average_basket_excess_return")
+        momentum_excess = momentum_baseline.get("average_basket_excess_return")
+        universe_excess = universe.get("average_basket_excess_return")
+        benchmark_raw = benchmark.get("average_basket_raw_return")
+        beat_rate = model.get("beat_benchmark_rate")
+
+        lines.append(f"{bucket_name}:")
+        if momentum_baseline.get("available", True):
+            momentum_text = _format_percent(momentum_excess)
+            minus_momentum_text = _format_percent_delta(
+                model_excess,
+                momentum_excess,
+            )
+        else:
+            momentum_text = "unavailable"
+            minus_momentum_text = "unavailable"
+
+        lines.append(
+            "  "
+            f"model raw={_format_percent(model_raw)}, "
+            f"model excess={_format_percent(model_excess)}, "
+            f"random excess={_format_percent(random_excess)}, "
+            f"momentum excess={momentum_text}, "
+            f"universe excess={_format_percent(universe_excess)}, "
+            f"benchmark raw={_format_percent(benchmark_raw)}"
+        )
+        lines.append(
+            "  "
+            f"model minus random={_format_percent_delta(model_excess, random_excess)}, "
+            f"model minus momentum={minus_momentum_text}, "
+            f"beat benchmark rate={_format_percent(beat_rate)}"
         )
 
     return "\n".join(lines)
@@ -309,6 +359,10 @@ def log_xgboost_test_report(
         test_split_metadata,
         regressor_predictions,
     )
+    top_n_basket_backtest_report = build_top_n_basket_backtest_report(
+        test_split_metadata,
+        regressor_predictions,
+    )
 
     logging.info(
         f"XGBoost Beat-Benchmark Classification Report: {classification_report_data}"
@@ -338,8 +392,12 @@ def log_xgboost_test_report(
     )
     logging.info(f"XGBoost Combined Signal Report: {combined_signal_report}")
     logging.info(format_top_n_ranked_selection_summary(top_n_ranked_selection_report))
+    logging.info(format_top_n_basket_backtest_summary(top_n_basket_backtest_report))
     logging.debug(
         f"XGBoost Top-N Ranked Selection Report: {top_n_ranked_selection_report}"
+    )
+    logging.debug(
+        f"XGBoost Top-N Basket Backtest Report: {top_n_basket_backtest_report}"
     )
 
 
