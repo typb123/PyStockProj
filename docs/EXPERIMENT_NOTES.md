@@ -113,3 +113,20 @@ python -m src.train.trainer --all-horizons --period max
 * Current read: `period=max` is not clearly better than `period=10y`. More history adds useful signal in some places, especially 20d, but also adds older regimes, uneven ticker histories, survivorship bias, and possible stale market structure effects.
 * Working default for now: use `--period 10y` for main experiments, and treat `--period max` as a secondary robustness check.
 * Performance note: the max-history run suggests the slowest part is not XGBoost fitting. Model fitting completed quickly relative to the full horizon runtime; most runtime appears to be spent in post-fit evaluation/reporting.
+
+## Runtime/workflow note
+
+Added faster experiment controls:
+
+```bash
+# Fast iteration
+python -m src.train.trainer --prediction-days 10 --period 10y --random-trials 20
+
+# Full check
+python -m src.train.trainer --all-horizons --period max --parallel-random-trials --random-trial-workers 4
+```
+
+Notes:
+- `--random-trials` defaults to `100`; use `20` for quick iteration.
+- `--parallel-random-trials` is opt-in and preserves the default sequential RNG behavior when not used.
+- Max all-horizons runtime improved from about `8m42s` to about `3m36s`; post-fit report time dropped from about `122–127s`/horizon to about `45–47s`/horizon.
