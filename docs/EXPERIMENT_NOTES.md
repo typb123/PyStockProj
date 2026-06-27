@@ -74,3 +74,42 @@
 - Clean all-horizons run did not improve model performance against momentum baselines.
 - Current read: the issue is probably not just missing momentum inputs; the regression objective may be poorly aligned with per-date ranking.
 
+### 10-year history experiment
+
+* Added configurable raw yfinance OHLCV caching and a `--period` trainer option.
+* Ran a clean cached all-horizons experiment with:
+
+```bash
+python -m src.train.trainer --all-horizons --period 10y
+```
+
+* Cache behavior looked good: all 150 requested tickers loaded from cache, and 150/150 produced valid prepared data.
+* The data loading phase was fast after cache population; the remaining runtime was mostly model training/evaluation across four horizons.
+* Compared with the prior 5-year run, the 10-year history improved the model’s ranked basket results.
+* Current read:
+
+  * 5d: model beat momentum in top-5, top-10, and top-20.
+  * 10d: model narrowly beat momentum in top-5 and top-10, and roughly tied/slightly trailed in top-20.
+  * 20d: model improved but still trailed momentum.
+  * 50d: model trailed momentum in top-5 but beat momentum in top-10 and top-20.
+* Interpretation: more history appears useful. The model is now more competitive with simple momentum, especially at 5d and 10d horizons. However, longer history should be tested carefully because older data can introduce ticker coverage gaps, market-regime differences, survivorship effects, and corporate-action/data-quality issues.
+
+### Max-history experiment
+
+* Ran:
+
+```bash
+python -m src.train.trainer --all-horizons --period max
+```
+
+* The max-history run completed successfully with 150/150 valid tickers.
+* Prepared data was much larger than the 5-year and 10-year runs; for example, the 5d horizon used roughly 544k train rows, 167k validation rows, and 248k test rows.
+* Results were mixed compared with the 10-year run:
+
+  * 5d: model beat random/universe/momentum, but was slightly weaker than the 10-year run.
+  * 10d: model beat random/universe but trailed momentum; weaker than the 10-year run.
+  * 20d: model beat random/universe/momentum across top-5, top-10, and top-20; this was the strongest max-history result.
+  * 50d: model beat random/universe but trailed momentum; weaker than the 10-year run.
+* Current read: `period=max` is not clearly better than `period=10y`. More history adds useful signal in some places, especially 20d, but also adds older regimes, uneven ticker histories, survivorship bias, and possible stale market structure effects.
+* Working default for now: use `--period 10y` for main experiments, and treat `--period max` as a secondary robustness check.
+* Performance note: the max-history run suggests the slowest part is not XGBoost fitting. Model fitting completed quickly relative to the full horizon runtime; most runtime appears to be spent in post-fit evaluation/reporting.
