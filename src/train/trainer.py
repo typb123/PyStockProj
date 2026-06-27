@@ -5,6 +5,7 @@ XGBoost trains a beat-benchmark classifier and an excess-return regressor.
 """
 
 import argparse
+import re
 import joblib
 import pandas as pd
 import numpy as np
@@ -53,6 +54,9 @@ logging.basicConfig(
 logging.getLogger("yfinance").setLevel(logging.CRITICAL)
 
 ALL_HORIZONS = [5, 10, 20, 50]
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+YFINANCE_CACHE_DIR = PROJECT_ROOT / "data/cache/yfinance"
+YFINANCE_CACHE_FORMAT = "csv"
 
 
 def validate_input_data(data):
@@ -298,7 +302,67 @@ def _format_percent_delta(left, right):
     return f"{float(left) - float(right):.2%}"
 
 
-def fetch_tickers_data(ticker, period="5y"):
+def _sanitize_cache_key(value):
+    return re.sub(r"[^A-Za-z0-9_.-]+", "_", str(value)).strip("_")
+
+
+def get_yfinance_cache_path(ticker, period, cache_dir=None):
+    """Return the raw OHLCV cache path for a ticker/period pair."""
+    cache_dir = YFINANCE_CACHE_DIR if cache_dir is None else cache_dir
+    ticker_key = _sanitize_cache_key(ticker.upper())
+    period_key = _sanitize_cache_key(period)
+    return Path(cache_dir) / f"{ticker_key}__{period_key}.{YFINANCE_CACHE_FORMAT}"
+
+
+def load_cached_yfinance_data(ticker, period, cache_dir=None):
+    """Load raw yfinance OHLCV data from cache, or return None on miss/failure."""
+    cache_path = get_yfinance_cache_path(ticker, period, cache_dir=cache_dir)
+    if not cache_path.exists():
+        logging.info(f"YFinance cache miss for {ticker} period={period}.")
+        return None
+
+    try:
+        data = pd.read_csv(cache_path, index_col=0, parse_dates=[0])
+        if isinstance(data.index.name, str) and data.index.name.startswith("Unnamed:"):
+            data.index.name = None
+        logging.info(f"YFinance cache hit for {ticker} period={period}: {cache_path}")
+        return data
+    except Exception as exc:
+        logging.warning(
+            f"Failed to read YFinance cache for {ticker} period={period} "
+            f"from {cache_path}; refetching. Error: {exc}"
+        )
+        return None
+
+
+def write_yfinance_cache(data, ticker, period, cache_dir=None):
+    """Write raw yfinance OHLCV data to cache; warn but do not fail on errors."""
+    cache_path = get_yfinance_cache_path(ticker, period, cache_dir=cache_dir)
+    try:
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        data.to_csv(cache_path)
+        logging.info(f"Wrote YFinance cache for {ticker} period={period}: {cache_path}")
+    except Exception as exc:
+        logging.warning(
+            f"Failed to write YFinance cache for {ticker} period={period} "
+            f"to {cache_path}. Error: {exc}"
+        )
+
+
+def fetch_raw_ticker_data(ticker, period="5y", use_cache=True):
+    """Fetch raw OHLCV data, optionally using the ticker/period cache."""
+    if use_cache:
+        cached_data = load_cached_yfinance_data(ticker, period)
+        if cached_data is not None:
+            return cached_data
+
+    stock_data = fetch_stock_data(ticker, period=period)
+    if use_cache and not stock_data.empty:
+        write_yfinance_cache(stock_data, ticker, period)
+    return stock_data
+
+
+def fetch_tickers_data(ticker, period="5y", use_cache=True):
     """
     Fetch one ticker and generate indicators before ticker-level concatenation.
 
@@ -306,7 +370,7 @@ def fetch_tickers_data(ticker, period="5y"):
     fetch path calls it while each DataFrame still contains one ticker only.
     """
     try:
-        stock_data = fetch_stock_data(ticker, period=period)
+        stock_data = fetch_raw_ticker_data(ticker, period=period, use_cache=use_cache)
         if stock_data.empty:
             logging.debug(f"No data returned for {ticker}. Skipping...")
             return None
@@ -326,14 +390,22 @@ def fetch_tickers_data(ticker, period="5y"):
         return None
 
 
-def prepare_data_parallel(tickers, period="5y") -> pd.DataFrame:
+def prepare_data_parallel(tickers, period="5y", use_cache=True) -> pd.DataFrame:
     """Fetch and prepare each ticker independently, then concatenate valid results."""
-    logging.info(f"Fetching data for {len(tickers)} tickers...")
+    logging.info(
+        f"Fetching data for {len(tickers)} tickers with period={period}; "
+        f"cache_enabled={use_cache}."
+    )
 
     with ThreadPoolExecutor(max_workers=10) as executor:
         results = list(
             executor.map(
-                lambda ticker: fetch_tickers_data(ticker, period=period), tickers
+                lambda ticker: fetch_tickers_data(
+                    ticker,
+                    period=period,
+                    use_cache=use_cache,
+                ),
+                tickers,
             )
         )
 
@@ -809,6 +881,19 @@ def parse_args(argv=None):
         action="store_true",
         help=f"Train research horizons {ALL_HORIZONS}.",
     )
+    parser.add_argument(
+        "--period",
+        default="5y",
+        help='YFinance history period for raw OHLCV fetches. Defaults to "5y".',
+    )
+    parser.add_argument(
+        "--no-cache",
+        action="store_true",
+        help=(
+            "Bypass the raw YFinance OHLCV cache entirely: always fetch from "
+            "YFinance and do not read or write cache files."
+        ),
+    )
 
     args = parser.parse_args(argv)
     if args.all_horizons:
@@ -822,7 +907,14 @@ def parse_args(argv=None):
 
 def main(argv=None):
     args = parse_args(argv)
-    data = prepare_data_parallel(TRAINING_TICKERS, period="5y")
+    use_cache = not args.no_cache
+    logging.info(f"Selected YFinance period: {args.period}")
+    logging.info(f"Raw YFinance OHLCV cache enabled: {use_cache}")
+    data = prepare_data_parallel(
+        TRAINING_TICKERS,
+        period=args.period,
+        use_cache=use_cache,
+    )
     if data.empty:
         logging.error("No data fetched for training. Exiting...")
         return

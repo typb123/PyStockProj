@@ -29,7 +29,11 @@ def test_prepare_data_parallel_passes_period_to_fetch_stock_data(monkeypatch):
     monkeypatch.setattr(trainer, "fetch_stock_data", fake_fetch_stock_data)
     monkeypatch.setattr(trainer, "calculate_data", fake_calculate_data)
 
-    result = trainer.prepare_data_parallel(["AAPL", "MSFT"], period="1y")
+    result = trainer.prepare_data_parallel(
+        ["AAPL", "MSFT"],
+        period="1y",
+        use_cache=False,
+    )
 
     assert calls == [("AAPL", "1y"), ("MSFT", "1y")]
     assert result.shape[0] == 2
@@ -59,13 +63,118 @@ def test_prepare_data_parallel_summarizes_skipped_tickers(monkeypatch, caplog):
     monkeypatch.setattr(trainer, "calculate_data", fake_calculate_data)
 
     with caplog.at_level(logging.INFO):
-        result = trainer.prepare_data_parallel(["AAPL", "BAD", "MSFT"], period="1y")
+        result = trainer.prepare_data_parallel(
+            ["AAPL", "BAD", "MSFT"],
+            period="1y",
+            use_cache=False,
+        )
 
     assert calls == [("AAPL", "1y"), ("BAD", "1y"), ("MSFT", "1y")]
     assert set(result["Ticker"]) == {"AAPL", "MSFT"}
     assert "Fetched valid data for 2 of 3 requested tickers." in caplog.text
     assert "Skipped 1 tickers with no usable data: ['BAD']" in caplog.text
     assert "No data returned for BAD. Skipping..." not in caplog.text
+
+
+def test_cache_hit_loads_cached_data_without_fetching_yfinance(tmp_path, monkeypatch):
+    monkeypatch.setattr(trainer, "YFINANCE_CACHE_DIR", tmp_path)
+    cache_path = trainer.get_yfinance_cache_path("AAPL", "1y")
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    cached_data = pd.DataFrame(
+        {"Close": [100.0], "Volume": [1000]},
+        index=pd.to_datetime(["2024-01-02"]),
+    )
+    cached_data.index.name = "Date"
+    cached_data.to_csv(cache_path)
+
+    def fake_fetch_stock_data(ticker, period="5y"):
+        raise AssertionError("yfinance fetch should not be called on cache hit")
+
+    monkeypatch.setattr(trainer, "fetch_stock_data", fake_fetch_stock_data)
+
+    result = trainer.fetch_raw_ticker_data("AAPL", period="1y", use_cache=True)
+
+    pd.testing.assert_frame_equal(result, cached_data)
+
+
+def test_cache_miss_fetches_data_and_writes_cache(tmp_path, monkeypatch):
+    monkeypatch.setattr(trainer, "YFINANCE_CACHE_DIR", tmp_path)
+    fetched_data = pd.DataFrame(
+        {"Close": [100.0], "Volume": [1000]},
+        index=pd.to_datetime(["2024-01-02"]),
+    )
+    fetched_data.index.name = "Date"
+    calls = []
+
+    def fake_fetch_stock_data(ticker, period="5y"):
+        calls.append((ticker, period))
+        return fetched_data
+
+    monkeypatch.setattr(trainer, "fetch_stock_data", fake_fetch_stock_data)
+
+    result = trainer.fetch_raw_ticker_data("AAPL", period="1y", use_cache=True)
+
+    assert calls == [("AAPL", "1y")]
+    pd.testing.assert_frame_equal(result, fetched_data)
+    cache_path = trainer.get_yfinance_cache_path("AAPL", "1y")
+    assert cache_path.exists()
+    cached_result = pd.read_csv(cache_path, index_col=0, parse_dates=[0])
+    pd.testing.assert_frame_equal(cached_result, fetched_data)
+
+
+def test_no_cache_bypasses_cache_read_and_write(tmp_path, monkeypatch):
+    monkeypatch.setattr(trainer, "YFINANCE_CACHE_DIR", tmp_path)
+    cache_path = trainer.get_yfinance_cache_path("AAPL", "1y")
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    cached_data = pd.DataFrame(
+        {"Close": [50.0]},
+        index=pd.to_datetime(["2024-01-02"]),
+    )
+    cached_data.index.name = "Date"
+    cached_data.to_csv(cache_path)
+    fetched_data = pd.DataFrame(
+        {"Close": [100.0]},
+        index=pd.to_datetime(["2024-01-03"]),
+    )
+    calls = []
+
+    def fake_fetch_stock_data(ticker, period="5y"):
+        calls.append((ticker, period))
+        return fetched_data
+
+    monkeypatch.setattr(trainer, "fetch_stock_data", fake_fetch_stock_data)
+
+    result = trainer.fetch_raw_ticker_data("AAPL", period="1y", use_cache=False)
+
+    assert calls == [("AAPL", "1y")]
+    pd.testing.assert_frame_equal(result, fetched_data)
+    unchanged_cache = pd.read_csv(cache_path, index_col=0, parse_dates=[0])
+    pd.testing.assert_frame_equal(unchanged_cache, cached_data)
+
+
+def test_cache_read_failure_falls_back_to_fetch(tmp_path, monkeypatch, caplog):
+    monkeypatch.setattr(trainer, "YFINANCE_CACHE_DIR", tmp_path)
+    cache_path = trainer.get_yfinance_cache_path("AAPL", "1y")
+    cache_path.write_text("not,a,valid,ohlcv\n1,2", encoding="utf-8")
+    fetched_data = pd.DataFrame(
+        {"Close": [100.0]},
+        index=pd.to_datetime(["2024-01-03"]),
+    )
+
+    def fake_read_csv(*args, **kwargs):
+        raise ValueError("broken cache")
+
+    def fake_fetch_stock_data(ticker, period="5y"):
+        return fetched_data
+
+    monkeypatch.setattr(pd, "read_csv", fake_read_csv)
+    monkeypatch.setattr(trainer, "fetch_stock_data", fake_fetch_stock_data)
+
+    with caplog.at_level(logging.WARNING):
+        result = trainer.fetch_raw_ticker_data("AAPL", period="1y", use_cache=True)
+
+    pd.testing.assert_frame_equal(result, fetched_data)
+    assert "Failed to read YFinance cache for AAPL period=1y" in caplog.text
 
 
 def test_validate_input_data_does_not_fill_missing_values():
@@ -480,6 +589,14 @@ def test_parse_args_defaults_to_ten_prediction_days():
     assert args.prediction_days == 10
     assert args.horizons == [10]
     assert args.all_horizons is False
+    assert args.period == "5y"
+    assert args.no_cache is False
+
+
+def test_parse_args_accepts_period():
+    args = trainer.parse_args(["--period", "10y"])
+
+    assert args.period == "10y"
 
 
 def test_parse_args_accepts_prediction_days_long_and_short_flags():
@@ -575,12 +692,13 @@ def test_save_horizon_model_artifacts_preserves_legacy_paths_for_default_horizon
 
 def test_main_trains_all_horizons_and_logs_comparison(monkeypatch, caplog, capsys):
     trained_horizons = []
+    prepare_calls = []
 
-    monkeypatch.setattr(
-        trainer,
-        "prepare_data_parallel",
-        lambda tickers, period="5y": pd.DataFrame({"Close": [1.0]}),
-    )
+    def fake_prepare_data_parallel(tickers, period="5y", use_cache=True):
+        prepare_calls.append((list(tickers), period, use_cache))
+        return pd.DataFrame({"Close": [1.0]})
+
+    monkeypatch.setattr(trainer, "prepare_data_parallel", fake_prepare_data_parallel)
 
     def fake_train_models(data, prediction_days):
         trained_horizons.append(prediction_days)
@@ -611,9 +729,12 @@ def test_main_trains_all_horizons_and_logs_comparison(monkeypatch, caplog, capsy
     monkeypatch.setattr(trainer, "train_models", fake_train_models)
 
     with caplog.at_level(logging.INFO):
-        trainer.main(["--all-horizons"])
+        trainer.main(["--all-horizons", "--period", "10y"])
 
+    assert prepare_calls == [(trainer.TRAINING_TICKERS, "10y", True)]
     assert trained_horizons == [5, 10, 20, 50]
+    assert "Selected YFinance period: 10y" in caplog.text
+    assert "Raw YFinance OHLCV cache enabled: True" in caplog.text
     assert "Horizon Comparison Summary:" in caplog.text
     assert "50d:" in caplog.text
     output = capsys.readouterr().out
@@ -624,12 +745,13 @@ def test_main_trains_all_horizons_and_logs_comparison(monkeypatch, caplog, capsy
 
 def test_main_single_horizon_prints_top_n_basket_summary(monkeypatch, capsys):
     trained_horizons = []
+    prepare_calls = []
 
-    monkeypatch.setattr(
-        trainer,
-        "prepare_data_parallel",
-        lambda tickers, period="5y": pd.DataFrame({"Close": [1.0]}),
-    )
+    def fake_prepare_data_parallel(tickers, period="5y", use_cache=True):
+        prepare_calls.append((list(tickers), period, use_cache))
+        return pd.DataFrame({"Close": [1.0]})
+
+    monkeypatch.setattr(trainer, "prepare_data_parallel", fake_prepare_data_parallel)
 
     def fake_train_models(data, prediction_days):
         trained_horizons.append(prediction_days)
@@ -661,8 +783,9 @@ def test_main_single_horizon_prints_top_n_basket_summary(monkeypatch, capsys):
 
     monkeypatch.setattr(trainer, "train_models", fake_train_models)
 
-    trainer.main(["--prediction-days", "10"])
+    trainer.main(["--prediction-days", "10", "--no-cache"])
 
+    assert prepare_calls == [(trainer.TRAINING_TICKERS, "5y", False)]
     assert trained_horizons == [10]
     output = capsys.readouterr().out
     assert "XGBoost Top-N Basket Backtest Summary:" in output
