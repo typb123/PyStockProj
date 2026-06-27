@@ -490,6 +490,7 @@ def log_xgboost_test_report(
     classifier_probability_up,
     regressor_predictions,
     prediction_days=PREDICTION_DAYS,
+    random_trials=100,
 ):
     """
     Log final SPY-relative XGBoost diagnostics without tuning on test data.
@@ -536,6 +537,7 @@ def log_xgboost_test_report(
         test_split_metadata,
         regressor_predictions,
         prediction_days=prediction_days,
+        random_trials=random_trials,
     )
     top_n_ranked_selection_report = top_n_selection_reports["ranked_selection"]
     top_n_basket_backtest_report = top_n_selection_reports["basket_backtest"]
@@ -674,6 +676,7 @@ def save_horizon_model_artifacts(
 def train_models(
     data: pd.DataFrame,
     prediction_days: int = PREDICTION_DAYS,
+    random_trials: int = 100,
     classifier_params: dict | None = None,
     regressor_params: dict | None = None,
 ) -> None:
@@ -816,6 +819,7 @@ def train_models(
         classifier.predict_proba(x_test_classifier)[:, 1],
         regressor.predict(x_test_regressor),
         prediction_days=prediction_days,
+        random_trials=random_trials,
     )
 
     importances_reg = regressor.feature_importances_
@@ -853,17 +857,27 @@ def train_models(
     }
 
 
-def _positive_int(value):
+def _positive_int(value, argument_name="value"):
     try:
         parsed = int(value)
     except ValueError as exc:
         raise argparse.ArgumentTypeError(
-            "prediction_days must be a positive integer"
+            f"{argument_name} must be a positive integer"
         ) from exc
 
     if parsed <= 0:
-        raise argparse.ArgumentTypeError("prediction_days must be a positive integer")
+        raise argparse.ArgumentTypeError(
+            f"{argument_name} must be a positive integer"
+        )
     return parsed
+
+
+def _positive_prediction_days(value):
+    return _positive_int(value, "prediction_days")
+
+
+def _positive_random_trials(value):
+    return _positive_int(value, "random_trials")
 
 
 def parse_args(argv=None):
@@ -874,7 +888,7 @@ def parse_args(argv=None):
     horizon_group.add_argument(
         "-d",
         "--prediction-days",
-        type=_positive_int,
+        type=_positive_prediction_days,
         default=None,
         help=f"Prediction horizon in trading days. Defaults to {PREDICTION_DAYS}.",
     )
@@ -894,6 +908,15 @@ def parse_args(argv=None):
         help=(
             "Bypass the raw YFinance OHLCV cache entirely: always fetch from "
             "YFinance and do not read or write cache files."
+        ),
+    )
+    parser.add_argument(
+        "--random-trials",
+        type=_positive_random_trials,
+        default=100,
+        help=(
+            "Controls random baseline trials for Top-N ranked-selection and "
+            "basket-backtest reports."
         ),
     )
 
@@ -927,6 +950,7 @@ def main(argv=None):
         horizon_reports[prediction_days] = train_models(
             data.copy(),
             prediction_days=prediction_days,
+            random_trials=args.random_trials,
         )
         logging.info(f"Model training completed for prediction_days={prediction_days}.")
 
