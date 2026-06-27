@@ -359,6 +359,18 @@ def make_ranked_selection_metadata():
     )
 
 
+def assert_nested_reports_close(actual, expected):
+    assert actual.keys() == expected.keys()
+    for key, actual_value in actual.items():
+        expected_value = expected[key]
+        if isinstance(actual_value, dict):
+            assert_nested_reports_close(actual_value, expected_value)
+        elif isinstance(actual_value, float):
+            assert np.isclose(actual_value, expected_value, equal_nan=True)
+        else:
+            assert actual_value == expected_value
+
+
 def test_top_n_ranked_selection_is_per_date_not_global():
     metadata = make_ranked_selection_metadata()
     predicted_excess_returns = np.array([0.90, 0.80, 0.70, 0.10, 0.20, 0.30])
@@ -507,6 +519,67 @@ def test_top_n_selection_reports_returns_direct_expected_values():
         ]
         == "relative_momentum"
     )
+
+
+def test_top_n_parallel_random_trials_are_deterministic():
+    metadata = make_ranked_selection_metadata()
+    metadata["relative_momentum"] = [0.01, 0.05, -0.02, 0.04, 0.03, 0.10]
+    predicted_excess_returns = np.array([0.90, 0.80, 0.70, 0.10, 0.20, 0.30])
+
+    first_parallel_report = build_top_n_selection_reports(
+        metadata,
+        predicted_excess_returns,
+        top_n_values=(1, 2),
+        random_seed=7,
+        random_trials=5,
+        parallel_random_trials=True,
+        random_trial_workers=2,
+    )
+    second_parallel_report = build_top_n_selection_reports(
+        metadata,
+        predicted_excess_returns,
+        top_n_values=(1, 2),
+        random_seed=7,
+        random_trials=5,
+        parallel_random_trials=True,
+        random_trial_workers=2,
+    )
+
+    assert_nested_reports_close(second_parallel_report, first_parallel_report)
+    ranked_random = first_parallel_report["ranked_selection"]["top_1"][
+        "random_baseline"
+    ]
+    basket_random = first_parallel_report["basket_backtest"]["top_1"][
+        "random_baseline"
+    ]
+    assert ranked_random["random_seed"] == 7
+    assert ranked_random["random_baseline_trials"] == 5
+    assert basket_random["random_seed"] == 7
+    assert basket_random["random_trials"] == 5
+
+
+def test_top_n_parallel_random_trials_single_trial_works_without_pool():
+    metadata = make_ranked_selection_metadata()
+    predicted_excess_returns = np.array([0.90, 0.80, 0.70, 0.10, 0.20, 0.30])
+
+    report = build_top_n_selection_reports(
+        metadata,
+        predicted_excess_returns,
+        top_n_values=(1,),
+        random_seed=7,
+        random_trials=1,
+        parallel_random_trials=True,
+        random_trial_workers=2,
+    )
+
+    ranked_random = report["ranked_selection"]["top_1"]["random_baseline"]
+    basket_random = report["basket_backtest"]["top_1"]["random_baseline"]
+    assert ranked_random["date_count"] == 2
+    assert ranked_random["selected_row_count"] == 2
+    assert ranked_random["random_seed"] == 7
+    assert ranked_random["random_baseline_trials"] == 1
+    assert basket_random["random_seed"] == 7
+    assert basket_random["random_trials"] == 1
 
 
 def test_top_n_ranked_selection_uses_min_available_candidates_per_date():

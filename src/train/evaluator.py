@@ -1,3 +1,5 @@
+from concurrent.futures import ProcessPoolExecutor
+
 import numpy as np
 import pandas as pd
 from sklearn.metrics import (
@@ -348,6 +350,8 @@ def build_top_n_ranked_selection_report(
     top_n_values=(5, 10, 20),
     random_seed=42,
     random_trials=100,
+    parallel_random_trials=False,
+    random_trial_workers=4,
     momentum_score_column=None,
     prediction_days=None,
 ):
@@ -363,6 +367,8 @@ def build_top_n_ranked_selection_report(
         top_n_values=top_n_values,
         random_seed=random_seed,
         random_trials=random_trials,
+        parallel_random_trials=parallel_random_trials,
+        random_trial_workers=random_trial_workers,
         momentum_score_column=momentum_score_column,
         prediction_days=prediction_days,
     )["ranked_selection"]
@@ -374,6 +380,8 @@ def build_top_n_basket_backtest_report(
     top_ns=(5, 10, 20),
     random_seed=42,
     random_trials=100,
+    parallel_random_trials=False,
+    random_trial_workers=4,
     momentum_score_column=None,
     prediction_days=None,
 ):
@@ -389,6 +397,8 @@ def build_top_n_basket_backtest_report(
         top_n_values=top_ns,
         random_seed=random_seed,
         random_trials=random_trials,
+        parallel_random_trials=parallel_random_trials,
+        random_trial_workers=random_trial_workers,
         momentum_score_column=momentum_score_column,
         prediction_days=prediction_days,
     )["basket_backtest"]
@@ -400,12 +410,16 @@ def build_top_n_selection_reports(
     top_n_values=(5, 10, 20),
     random_seed=42,
     random_trials=100,
+    parallel_random_trials=False,
+    random_trial_workers=4,
     momentum_score_column=None,
     prediction_days=None,
 ):
     """Build ranked-selection and basket-backtest Top-N reports in one pass."""
     if random_trials < 1:
         raise ValueError("random_trials must be at least 1.")
+    if random_trial_workers < 1:
+        raise ValueError("random_trial_workers must be at least 1.")
 
     metadata = split_metadata.copy()
     ranked_predictions = np.asarray(ranked_predictions, dtype=float)
@@ -449,6 +463,8 @@ def build_top_n_selection_reports(
             selected_count_by_date,
             random_seed=random_seed,
             random_trials=random_trials,
+            parallel_random_trials=parallel_random_trials,
+            random_trial_workers=random_trial_workers,
         )
         momentum_selected_groups = _select_available_top_n_groups(
             grouped_metadata,
@@ -538,6 +554,63 @@ def _random_top_n_selection_stats(
     selected_count_by_date,
     random_seed,
     random_trials,
+    parallel_random_trials=False,
+    random_trial_workers=4,
+):
+    if parallel_random_trials and random_trials > 1:
+        trial_seeds = _random_trial_seeds(random_seed, random_trials)
+        worker_count = min(int(random_trial_workers), int(random_trials))
+        seed_chunks = np.array_split(
+            np.asarray(trial_seeds, dtype=np.uint64),
+            worker_count,
+        )
+        tasks = [
+            (
+                grouped_metadata,
+                selected_count_by_date,
+                [int(seed) for seed in seed_chunk],
+            )
+            for seed_chunk in seed_chunks
+            if len(seed_chunk) > 0
+        ]
+        ranked_trial_stats = []
+        basket_trial_stats = []
+        with ProcessPoolExecutor(max_workers=worker_count) as executor:
+            for ranked_chunk, basket_chunk in executor.map(
+                _random_top_n_selection_stats_worker,
+                tasks,
+            ):
+                ranked_trial_stats.extend(ranked_chunk)
+                basket_trial_stats.extend(basket_chunk)
+    else:
+        # Preserve the legacy default path: one RNG seeded once, consumed across
+        # dates and trials. With one trial, explicit parallel mode uses this
+        # no-pool path as well.
+        ranked_trial_stats, basket_trial_stats = (
+            _sequential_random_top_n_selection_trial_stats(
+                grouped_metadata,
+                selected_count_by_date,
+                random_seed,
+                random_trials,
+            )
+        )
+
+    ranked_stats = _average_random_trial_stats(
+        ranked_trial_stats,
+        random_seed,
+        random_trials,
+    )
+    basket_stats = _average_random_basket_trial_stats(basket_trial_stats)
+    basket_stats["random_seed"] = int(random_seed)
+    basket_stats["random_trials"] = int(random_trials)
+    return ranked_stats, basket_stats
+
+
+def _sequential_random_top_n_selection_trial_stats(
+    grouped_metadata,
+    selected_count_by_date,
+    random_seed,
+    random_trials,
 ):
     rng = np.random.default_rng(random_seed)
     ranked_trial_stats = []
@@ -562,15 +635,61 @@ def _random_top_n_selection_stats(
         )
         basket_trial_stats.append(_basket_backtest_stats(selected_groups))
 
-    ranked_stats = _average_random_trial_stats(
-        ranked_trial_stats,
-        random_seed,
-        random_trials,
-    )
-    basket_stats = _average_random_basket_trial_stats(basket_trial_stats)
-    basket_stats["random_seed"] = int(random_seed)
-    basket_stats["random_trials"] = int(random_trials)
-    return ranked_stats, basket_stats
+    return ranked_trial_stats, basket_trial_stats
+
+
+def _random_trial_seeds(random_seed, random_trials):
+    rng = np.random.default_rng(random_seed)
+    return [
+        int(seed)
+        for seed in rng.integers(
+            0,
+            np.iinfo(np.uint32).max,
+            size=int(random_trials),
+            dtype=np.uint32,
+        )
+    ]
+
+
+def _random_top_n_selection_stats_worker(args):
+    grouped_metadata, selected_count_by_date, trial_seeds = args
+    ranked_trial_stats = []
+    basket_trial_stats = []
+
+    for trial_seed in trial_seeds:
+        selected_groups = _select_random_trial_groups(
+            grouped_metadata,
+            selected_count_by_date,
+            trial_seed,
+        )
+        ranked_trial_stats.append(
+            _ranked_selection_stats(selected_groups, grouped_metadata)
+        )
+        basket_trial_stats.append(_basket_backtest_stats(selected_groups))
+
+    return ranked_trial_stats, basket_trial_stats
+
+
+def _select_random_trial_groups(
+    grouped_metadata,
+    selected_count_by_date,
+    trial_seed,
+):
+    rng = np.random.default_rng(trial_seed)
+    selected_groups = []
+    for prediction_date, date_group in grouped_metadata:
+        selected_count = selected_count_by_date[prediction_date]
+        if selected_count == 0:
+            continue
+
+        selected_positions = rng.choice(
+            len(date_group),
+            size=selected_count,
+            replace=False,
+        )
+        selected_groups.append(date_group.iloc[selected_positions])
+
+    return selected_groups
 
 
 def _combined_momentum_ranked_selection_stats(
