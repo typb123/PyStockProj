@@ -9,7 +9,7 @@ TEST_SIZE = 0.2
 XG_PARAMS_CLASSIFIER = {
     "n_estimators": 1000,
     "max_depth": 5,
-    "learning_rate": 0.05,
+    "learning_rate": 0.03,
     "tree_method": "hist",
     "device": "cpu",
     "n_jobs": -1,
@@ -20,14 +20,14 @@ XG_PARAMS_CLASSIFIER = {
     "colsample_bytree": 0.8,
     "min_child_weight": 5,
     "gamma": 0.05,
-    "reg_alpha": 0.5,
+    "reg_alpha": 0.1,
     "reg_lambda": 5.0,
     "random_state": 42,
 }
 XG_PARAMS_REGRESSOR = {
     "n_estimators": 1000,
     "max_depth": 5,
-    "learning_rate": 0.05,
+    "learning_rate": 0.03,
     "tree_method": "hist",
     "device": "cpu",
     "n_jobs": -1,
@@ -37,7 +37,7 @@ XG_PARAMS_REGRESSOR = {
     "colsample_bytree": 0.8,
     "min_child_weight": 5,
     "gamma": 0.05,
-    "reg_alpha": 0.5,
+    "reg_alpha": 0.1,
     "reg_lambda": 5.0,
     "random_state": 42,
 }
