@@ -76,6 +76,37 @@ def test_prepare_data_parallel_summarizes_skipped_tickers(monkeypatch, caplog):
     assert "No data returned for BAD. Skipping..." not in caplog.text
 
 
+def test_empty_fetch_returns_without_normalizing_or_writing_cache(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(trainer, "YFINANCE_CACHE_DIR", tmp_path)
+    empty_data = pd.DataFrame()
+    calls = []
+
+    def fake_fetch_stock_data(ticker, period="5y"):
+        calls.append((ticker, period))
+        return empty_data
+
+    def fake_normalize_raw_ohlcv_index(data):
+        raise AssertionError("empty data should not be normalized")
+
+    def fake_write_yfinance_cache(data, ticker, period, cache_dir=None):
+        raise AssertionError("empty data should not be cached")
+
+    monkeypatch.setattr(trainer, "fetch_stock_data", fake_fetch_stock_data)
+    monkeypatch.setattr(
+        trainer,
+        "normalize_raw_ohlcv_index",
+        fake_normalize_raw_ohlcv_index,
+    )
+    monkeypatch.setattr(trainer, "write_yfinance_cache", fake_write_yfinance_cache)
+
+    result = trainer.fetch_raw_ticker_data("BAD", period="1y", use_cache=True)
+
+    assert calls == [("BAD", "1y")]
+    assert result.empty
+
+
 def test_cache_hit_loads_cached_data_without_fetching_yfinance(tmp_path, monkeypatch):
     monkeypatch.setattr(trainer, "YFINANCE_CACHE_DIR", tmp_path)
     cache_path = trainer.get_yfinance_cache_path("AAPL", "1y")
@@ -95,6 +126,31 @@ def test_cache_hit_loads_cached_data_without_fetching_yfinance(tmp_path, monkeyp
     result = trainer.fetch_raw_ticker_data("AAPL", period="1y", use_cache=True)
 
     pd.testing.assert_frame_equal(result, cached_data)
+
+
+def test_cache_hit_normalizes_timezone_aware_index(tmp_path, monkeypatch):
+    monkeypatch.setattr(trainer, "YFINANCE_CACHE_DIR", tmp_path)
+    cache_path = trainer.get_yfinance_cache_path("AAPL", "1y")
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    cache_path.write_text(
+        "Date,Close\n2024-03-11 00:00:00-04:00,100.0\n2024-03-08 00:00:00-05:00,99.0\n",
+        encoding="utf-8",
+    )
+
+    def fake_fetch_stock_data(ticker, period="5y"):
+        raise AssertionError("yfinance fetch should not be called on cache hit")
+
+    monkeypatch.setattr(trainer, "fetch_stock_data", fake_fetch_stock_data)
+
+    result = trainer.fetch_raw_ticker_data("AAPL", period="1y", use_cache=True)
+
+    expected = pd.DataFrame(
+        {"Close": [99.0, 100.0]},
+        index=pd.to_datetime(["2024-03-08", "2024-03-11"]),
+    )
+    expected.index.name = "Date"
+    pd.testing.assert_frame_equal(result, expected)
+    assert result.index.tz is None
 
 
 def test_cache_miss_fetches_data_and_writes_cache(tmp_path, monkeypatch):
@@ -122,6 +178,63 @@ def test_cache_miss_fetches_data_and_writes_cache(tmp_path, monkeypatch):
     pd.testing.assert_frame_equal(cached_result, fetched_data)
 
 
+def test_cache_miss_normalizes_fetched_timezone_aware_index_before_caching(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setattr(trainer, "YFINANCE_CACHE_DIR", tmp_path)
+    fetched_data = pd.DataFrame(
+        {"Close": [100.0, 99.0]},
+        index=pd.Index(
+            [
+                "2024-03-11 00:00:00-04:00",
+                "2024-03-08 00:00:00-05:00",
+            ],
+            name="Date",
+        ),
+    )
+
+    def fake_fetch_stock_data(ticker, period="5y"):
+        return fetched_data
+
+    monkeypatch.setattr(trainer, "fetch_stock_data", fake_fetch_stock_data)
+
+    result = trainer.fetch_raw_ticker_data("AAPL", period="1y", use_cache=True)
+
+    expected = pd.DataFrame(
+        {"Close": [99.0, 100.0]},
+        index=pd.to_datetime(["2024-03-08", "2024-03-11"]),
+    )
+    expected.index.name = "Date"
+    pd.testing.assert_frame_equal(result, expected)
+    assert result.index.tz is None
+
+    cache_path = trainer.get_yfinance_cache_path("AAPL", "1y")
+    cached_result = pd.read_csv(cache_path, index_col=0)
+    cached_result = trainer.normalize_raw_ohlcv_index(cached_result)
+    pd.testing.assert_frame_equal(cached_result, expected)
+
+
+def test_normalize_raw_ohlcv_index_handles_mixed_dst_offsets():
+    data = pd.DataFrame(
+        {"Close": [100.0, 99.0]},
+        index=[
+            "2024-03-11 00:00:00-04:00",
+            "2024-03-08 00:00:00-05:00",
+        ],
+    )
+
+    result = trainer.normalize_raw_ohlcv_index(data)
+
+    expected = pd.DataFrame(
+        {"Close": [99.0, 100.0]},
+        index=pd.to_datetime(["2024-03-08", "2024-03-11"]),
+    )
+    expected.index.name = "Date"
+    pd.testing.assert_frame_equal(result, expected)
+    assert result.index.tz is None
+
+
 def test_no_cache_bypasses_cache_read_and_write(tmp_path, monkeypatch):
     monkeypatch.setattr(trainer, "YFINANCE_CACHE_DIR", tmp_path)
     cache_path = trainer.get_yfinance_cache_path("AAPL", "1y")
@@ -136,6 +249,7 @@ def test_no_cache_bypasses_cache_read_and_write(tmp_path, monkeypatch):
         {"Close": [100.0]},
         index=pd.to_datetime(["2024-01-03"]),
     )
+    fetched_data.index.name = "Date"
     calls = []
 
     def fake_fetch_stock_data(ticker, period="5y"):
@@ -160,6 +274,7 @@ def test_cache_read_failure_falls_back_to_fetch(tmp_path, monkeypatch, caplog):
         {"Close": [100.0]},
         index=pd.to_datetime(["2024-01-03"]),
     )
+    fetched_data.index.name = "Date"
 
     def fake_read_csv(*args, **kwargs):
         raise ValueError("broken cache")
@@ -561,7 +676,9 @@ def test_train_models_metadata_includes_momentum_features_and_excludes_targets(
         "log_xgboost_test_report",
         lambda *args, **kwargs: {"basket_backtest": {}},
     )
-    monkeypatch.setattr(trainer, "log_feature_importances", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        trainer, "log_feature_importances", lambda *args, **kwargs: None
+    )
     monkeypatch.setattr(
         trainer,
         "save_horizon_model_artifacts",
@@ -639,7 +756,9 @@ def test_build_horizon_model_paths_uses_horizon_specific_directory():
     assert paths["regressor"] == "models/horizon_20/xgboost_regressor.json"
 
 
-def test_save_horizon_model_artifacts_writes_horizon_specific_paths(tmp_path, monkeypatch):
+def test_save_horizon_model_artifacts_writes_horizon_specific_paths(
+    tmp_path, monkeypatch
+):
     monkeypatch.chdir(tmp_path)
 
     class FakeXgbModel:

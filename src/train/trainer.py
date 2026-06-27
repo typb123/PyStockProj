@@ -107,9 +107,7 @@ def format_top_n_ranked_selection_summary(top_n_report):
         model = bucket_report.get("model", {})
         random_baseline = bucket_report.get("random_baseline", {})
         momentum_baseline = bucket_report.get("momentum_baseline", {})
-        relative_momentum_baseline = bucket_report.get(
-            "relative_momentum_baseline", {}
-        )
+        relative_momentum_baseline = bucket_report.get("relative_momentum_baseline", {})
         universe = bucket_report.get("universe", {})
         momentum_label = momentum_baseline.get("momentum_score_column", "momentum")
         relative_momentum_label = relative_momentum_baseline.get(
@@ -177,9 +175,7 @@ def format_top_n_basket_backtest_summary(top_n_report):
         model = bucket_report.get("model", {})
         random_baseline = bucket_report.get("random_baseline", {})
         momentum_baseline = bucket_report.get("momentum_baseline", {})
-        relative_momentum_baseline = bucket_report.get(
-            "relative_momentum_baseline", {}
-        )
+        relative_momentum_baseline = bucket_report.get("relative_momentum_baseline", {})
         universe = bucket_report.get("universe", {})
         benchmark = bucket_report.get("benchmark", {})
         momentum_label = momentum_baseline.get("momentum_score_column", "momentum")
@@ -314,6 +310,15 @@ def get_yfinance_cache_path(ticker, period, cache_dir=None):
     return Path(cache_dir) / f"{ticker_key}__{period_key}.{YFINANCE_CACHE_FORMAT}"
 
 
+def normalize_raw_ohlcv_index(data: pd.DataFrame) -> pd.DataFrame:
+    """Normalize raw OHLCV indexes to sorted, timezone-naive date timestamps."""
+    normalized_data = data.copy()
+    normalized_index = pd.DatetimeIndex(pd.to_datetime(normalized_data.index, utc=True))
+    normalized_data.index = normalized_index.tz_convert(None).normalize()
+    normalized_data.index.name = "Date"
+    return normalized_data.sort_index()
+
+
 def load_cached_yfinance_data(ticker, period, cache_dir=None):
     """Load raw yfinance OHLCV data from cache, or return None on miss/failure."""
     cache_path = get_yfinance_cache_path(ticker, period, cache_dir=cache_dir)
@@ -322,9 +327,8 @@ def load_cached_yfinance_data(ticker, period, cache_dir=None):
         return None
 
     try:
-        data = pd.read_csv(cache_path, index_col=0, parse_dates=[0])
-        if isinstance(data.index.name, str) and data.index.name.startswith("Unnamed:"):
-            data.index.name = None
+        data = pd.read_csv(cache_path, index_col=0)
+        data = normalize_raw_ohlcv_index(data)
         logging.info(f"YFinance cache hit for {ticker} period={period}: {cache_path}")
         return data
     except Exception as exc:
@@ -357,7 +361,11 @@ def fetch_raw_ticker_data(ticker, period="5y", use_cache=True):
             return cached_data
 
     stock_data = fetch_stock_data(ticker, period=period)
-    if use_cache and not stock_data.empty:
+    if stock_data.empty:
+        return stock_data
+
+    stock_data = normalize_raw_ohlcv_index(stock_data)
+    if use_cache:
         write_yfinance_cache(stock_data, ticker, period)
     return stock_data
 
@@ -411,9 +419,7 @@ def prepare_data_parallel(tickers, period="5y", use_cache=True) -> pd.DataFrame:
 
     all_data = [data for data in results if data is not None and not data.empty]
     skipped_tickers = [
-        ticker
-        for ticker, data in zip(tickers, results)
-        if data is None or data.empty
+        ticker for ticker, data in zip(tickers, results) if data is None or data.empty
     ]
 
     logging.info(
@@ -546,9 +552,7 @@ def log_xgboost_test_report(
         f"XGBoost Excess Return Baseline Report: {actual_return_baseline_report}"
     )
     logging.info(f"XGBoost Beat-Benchmark Relevance Report: {trading_report_data}")
-    logging.info(
-        f"XGBoost Beat-Benchmark Probability Summary: {probability_summary}"
-    )
+    logging.info(f"XGBoost Beat-Benchmark Probability Summary: {probability_summary}")
     logging.info(
         f"XGBoost Beat-Benchmark Probability Tail Report: {probability_tail_report}"
     )
@@ -857,7 +861,9 @@ def _positive_int(value):
     try:
         parsed = int(value)
     except ValueError as exc:
-        raise argparse.ArgumentTypeError("prediction_days must be a positive integer") from exc
+        raise argparse.ArgumentTypeError(
+            "prediction_days must be a positive integer"
+        ) from exc
 
     if parsed <= 0:
         raise argparse.ArgumentTypeError("prediction_days must be a positive integer")
@@ -921,16 +927,12 @@ def main(argv=None):
 
     horizon_reports = {}
     for prediction_days in args.horizons:
-        logging.info(
-            f"Starting model training for prediction_days={prediction_days}."
-        )
+        logging.info(f"Starting model training for prediction_days={prediction_days}.")
         horizon_reports[prediction_days] = train_models(
             data.copy(),
             prediction_days=prediction_days,
         )
-        logging.info(
-            f"Model training completed for prediction_days={prediction_days}."
-        )
+        logging.info(f"Model training completed for prediction_days={prediction_days}.")
 
     if args.all_horizons:
         summary = format_horizon_comparison_summary(horizon_reports)
