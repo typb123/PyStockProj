@@ -4,13 +4,38 @@
 
 The current project predicts raw forward returns. That baseline is useful, but it appears to capture broad market drift more than stock-specific edge.
 
-This branch changes the main research target to SPY-relative stock selection. The model should learn which stocks are likely to outperform or underperform SPY over the next 10 trading days.
+This branch changes the main research target to SPY-relative stock selection. The model should learn which stocks are likely to outperform or underperform SPY over the configured forward horizon. The default horizon is 10 trading days.
 
 The app’s eventual trading-facing output should be a ranked watchlist, not automatic trade execution.
 
+## Current Branch Status
+
+This branch now implements SPY-relative target creation using clearer benchmark naming:
+
+```text
+raw_forward_return
+benchmark_forward_return
+excess_forward_return
+beat_benchmark_target
+```
+
+`targetReturns` remains a compatibility alias for `excess_forward_return`.
+
+The default horizon is still 10 trading days, but the trainer now supports configurable horizons and `--all-horizons` for 5d, 10d, 20d, and 50d.
+
+Evaluation now includes per-date top-N ranked basket reports.
+
+Baselines now include random, same-date universe, SPY benchmark raw return, horizon-matched momentum, and SPY-relative momentum.
+
+Momentum and SPY-relative momentum features were added to the XGBoost model feature contract.
+
+Clean all-horizons testing showed the model often beats random/universe baselines but does not beat horizon-matched momentum.
+
+Current conclusion: the branch successfully reframes the project as SPY-relative ranked stock selection, but the current regression/classification setup is not yet a winning stock-selection model.
+
 ## Primary Regression Target
 
-Default horizon: 10 trading days.
+Default horizon: 10 trading days. The trainer supports configurable horizons.
 
 For each ticker row:
 
@@ -30,7 +55,7 @@ predicted_excess_return_vs_spy
 Meaning:
 
 ```text
-expected stock return over next 10 trading days minus expected SPY return over same period
+expected stock return over the configured forward horizon minus expected SPY return over the same period
 ```
 
 A positive value means the model expects the stock to beat SPY.
@@ -38,7 +63,7 @@ A negative value means the model expects the stock to lag SPY.
 
 ## Secondary Classifier Target
 
-The classifier should predict whether a stock beats SPY over the next 10 trading days.
+The classifier should predict whether a stock beats SPY over the configured forward horizon. The default horizon is 10 trading days.
 
 ```text
 beat_spy_target = 1 if stock_forward_return > spy_forward_return else 0
@@ -170,7 +195,7 @@ splitting: global date-based chronological split
 evaluation: per-date ranking
 ```
 
-The embargo should remove approximately `prediction_days` trading dates between adjacent splits. For a 10-trading-day target, this prevents rows near a split boundary from using future target information that overlaps the next evaluation window.
+The embargo should remove approximately `prediction_days` trading dates between adjacent splits. For the default 10-trading-day target, this prevents rows near a split boundary from using future target information that overlaps the next evaluation window; other horizons should use a matching embargo.
 
 Recommended process:
 
@@ -224,6 +249,8 @@ target_type = "spy_relative_forward_return"
 benchmark_ticker = "SPY"
 prediction_days = 10
 ```
+
+`prediction_days = 10` is the default, not the only supported horizon.
 
 ## Primary Evaluation
 
@@ -452,4 +479,4 @@ Do not add:
 
 This branch should answer one question:
 
-Can a simple technical-indicator model rank stocks that outperform SPY over the next 10 trading days better than naive baselines?
+Can a simple technical-indicator model rank stocks that outperform SPY over the configured forward horizon better than naive baselines?
