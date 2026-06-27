@@ -15,6 +15,7 @@ from src.train.evaluator import (
     build_return_correlation_report,
     build_top_n_basket_backtest_report,
     build_top_n_ranked_selection_report,
+    build_top_n_selection_reports,
     build_trading_relevance_report,
 )
 
@@ -376,6 +377,136 @@ def test_top_n_ranked_selection_is_per_date_not_global():
     assert np.isclose(top_1["average_selected_excess_return_vs_benchmark"], 0.015)
     assert np.isclose(top_1["beat_benchmark_rate"], 0.5)
     assert np.isclose(top_1["average_predicted_excess_return"], 0.60)
+
+
+def test_top_n_selection_reports_match_compatibility_wrappers():
+    metadata = make_ranked_selection_metadata()
+    metadata["relative_momentum"] = [0.01, 0.05, -0.02, 0.04, 0.03, 0.10]
+    predicted_excess_returns = np.array([0.90, 0.80, 0.70, 0.10, 0.20, 0.30])
+
+    combined_report = build_top_n_selection_reports(
+        metadata,
+        predicted_excess_returns,
+        top_n_values=(1, 2),
+        random_seed=7,
+        random_trials=5,
+    )
+    ranked_report = build_top_n_ranked_selection_report(
+        metadata,
+        predicted_excess_returns,
+        top_n_values=(1, 2),
+        random_seed=7,
+        random_trials=5,
+    )
+    basket_report = build_top_n_basket_backtest_report(
+        metadata,
+        predicted_excess_returns,
+        top_ns=(1, 2),
+        random_seed=7,
+        random_trials=5,
+    )
+
+    assert combined_report["ranked_selection"] == ranked_report
+    assert combined_report["basket_backtest"] == basket_report
+
+
+def test_top_n_selection_reports_returns_direct_expected_values():
+    metadata = make_ranked_selection_metadata()
+    metadata["relative_momentum"] = [0.01, 0.05, -0.02, 0.04, 0.03, 0.10]
+    predicted_excess_returns = np.array([0.90, 0.80, 0.70, 0.10, 0.20, 0.30])
+
+    report = build_top_n_selection_reports(
+        metadata,
+        predicted_excess_returns,
+        top_n_values=(1, 2),
+        random_seed=7,
+        random_trials=5,
+    )
+
+    ranked_top_1 = report["ranked_selection"]["top_1"]
+    basket_top_1 = report["basket_backtest"]["top_1"]
+    ranked_top_2 = report["ranked_selection"]["top_2"]
+    basket_top_2 = report["basket_backtest"]["top_2"]
+
+    assert np.isclose(
+        ranked_top_1["model"]["average_selected_raw_forward_return"],
+        (0.10 + -0.04) / 2,
+    )
+    assert np.isclose(
+        ranked_top_1["model"]["average_selected_excess_return_vs_benchmark"],
+        (0.09 + -0.06) / 2,
+    )
+    assert np.isclose(
+        ranked_top_1["model"]["average_predicted_excess_return"],
+        (0.90 + 0.30) / 2,
+    )
+    assert np.isclose(
+        basket_top_1["model"]["average_basket_raw_return"],
+        (0.10 + -0.04) / 2,
+    )
+    assert np.isclose(
+        basket_top_1["model"]["average_basket_excess_return"],
+        (0.09 + -0.06) / 2,
+    )
+
+    assert np.isclose(
+        ranked_top_2["model"]["average_selected_raw_forward_return"],
+        ((0.10 + 0.02) / 2 + (-0.04 + 0.20) / 2) / 2,
+    )
+    assert np.isclose(
+        ranked_top_2["model"]["average_selected_excess_return_vs_benchmark"],
+        ((0.09 + 0.01) / 2 + (-0.06 + 0.18) / 2) / 2,
+    )
+    assert np.isclose(
+        basket_top_2["model"]["average_basket_raw_return"],
+        ((0.10 + 0.02) / 2 + (-0.04 + 0.20) / 2) / 2,
+    )
+    assert np.isclose(
+        basket_top_2["model"]["average_basket_excess_return"],
+        ((0.09 + 0.01) / 2 + (-0.06 + 0.18) / 2) / 2,
+    )
+
+    expected_universe_raw = (
+        (0.10 + 0.02 + -0.01) / 3 + (0.03 + 0.20 + -0.04) / 3
+    ) / 2
+    expected_universe_excess = (
+        (0.09 + 0.01 + -0.02) / 3 + (0.01 + 0.18 + -0.06) / 3
+    ) / 2
+    assert np.isclose(
+        ranked_top_1["universe"]["average_equal_weight_universe_forward_return"],
+        expected_universe_raw,
+    )
+    assert np.isclose(
+        ranked_top_1["universe"]["average_excess_return_vs_benchmark"],
+        expected_universe_excess,
+    )
+    assert np.isclose(
+        basket_top_1["universe"]["average_basket_raw_return"],
+        expected_universe_raw,
+    )
+    assert np.isclose(
+        basket_top_1["universe"]["average_basket_excess_return"],
+        expected_universe_excess,
+    )
+    assert np.isclose(
+        basket_top_1["benchmark"]["average_basket_raw_return"],
+        (0.01 + 0.02) / 2,
+    )
+    assert basket_top_1["benchmark"]["average_basket_excess_return"] == 0.0
+
+    assert ranked_top_1["random_baseline"]["random_seed"] == 7
+    assert ranked_top_1["random_baseline"]["random_baseline_trials"] == 5
+    assert basket_top_1["random_baseline"]["random_seed"] == 7
+    assert basket_top_1["random_baseline"]["random_trials"] == 5
+    assert ranked_top_1["momentum_baseline"]["available"] is True
+    assert ranked_top_1["momentum_baseline"]["momentum_score_column"] == "dailyReturn"
+    assert basket_top_1["relative_momentum_baseline"]["available"] is True
+    assert (
+        basket_top_1["relative_momentum_baseline"][
+            "relative_momentum_score_column"
+        ]
+        == "relative_momentum"
+    )
 
 
 def test_top_n_ranked_selection_uses_min_available_candidates_per_date():

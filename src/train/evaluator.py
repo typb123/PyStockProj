@@ -357,65 +357,15 @@ def build_top_n_ranked_selection_report(
     date, then the top min(N, available candidates) are aggregated across dates.
     Random and momentum baselines use the same dates and candidate rows.
     """
-    if random_trials < 1:
-        raise ValueError("random_trials must be at least 1.")
-
-    metadata = split_metadata.copy()
-    predicted_excess_returns = np.asarray(predicted_excess_returns, dtype=float)
-    _validate_ranked_selection_inputs(metadata, predicted_excess_returns)
-
-    metadata["predicted_excess_return"] = predicted_excess_returns
-    metadata = metadata[metadata["Ticker"] != "SPY"].copy()
-    momentum_score_column = _resolve_momentum_score_column(
-        metadata,
-        momentum_score_column,
-        prediction_days,
-    )
-    relative_momentum_score_column = _resolve_relative_momentum_score_column(
-        metadata,
-        prediction_days,
-    )
-    grouped_metadata = list(metadata.groupby("prediction_date", sort=True))
-    report = {}
-
-    for top_n in top_n_values:
-        key = f"top_{top_n}"
-        selected_count_by_date = {
-            prediction_date: min(int(top_n), len(date_group))
-            for prediction_date, date_group in grouped_metadata
-        }
-        model_selected_groups = _select_top_n_by_score(
-            grouped_metadata,
-            selected_count_by_date,
-            "predicted_excess_return",
-        )
-
-        report[key] = {
-            "model": _ranked_selection_stats(
-                model_selected_groups,
-                grouped_metadata,
-                score_column="predicted_excess_return",
-            ),
-            "random_baseline": _random_ranked_selection_stats(
-                grouped_metadata,
-                selected_count_by_date,
-                random_seed=random_seed,
-                random_trials=random_trials,
-            ),
-            "momentum_baseline": _momentum_ranked_selection_stats(
-                grouped_metadata,
-                selected_count_by_date,
-                momentum_score_column,
-            ),
-            "relative_momentum_baseline": _relative_momentum_ranked_selection_stats(
-                grouped_metadata,
-                selected_count_by_date,
-                relative_momentum_score_column,
-            ),
-            "universe": _universe_ranked_selection_stats(grouped_metadata),
-        }
-
-    return report
+    return build_top_n_selection_reports(
+        split_metadata,
+        predicted_excess_returns,
+        top_n_values=top_n_values,
+        random_seed=random_seed,
+        random_trials=random_trials,
+        momentum_score_column=momentum_score_column,
+        prediction_days=prediction_days,
+    )["ranked_selection"]
 
 
 def build_top_n_basket_backtest_report(
@@ -433,6 +383,27 @@ def build_top_n_basket_backtest_report(
     contributes one equal-weight basket outcome per bucket. Returns are averaged
     across dates without compounding or overlapping-position modeling.
     """
+    return build_top_n_selection_reports(
+        split_metadata,
+        ranked_predictions,
+        top_n_values=top_ns,
+        random_seed=random_seed,
+        random_trials=random_trials,
+        momentum_score_column=momentum_score_column,
+        prediction_days=prediction_days,
+    )["basket_backtest"]
+
+
+def build_top_n_selection_reports(
+    split_metadata,
+    ranked_predictions,
+    top_n_values=(5, 10, 20),
+    random_seed=42,
+    random_trials=100,
+    momentum_score_column=None,
+    prediction_days=None,
+):
+    """Build ranked-selection and basket-backtest Top-N reports in one pass."""
     if random_trials < 1:
         raise ValueError("random_trials must be at least 1.")
 
@@ -440,7 +411,8 @@ def build_top_n_basket_backtest_report(
     ranked_predictions = np.asarray(ranked_predictions, dtype=float)
     _validate_ranked_selection_inputs(metadata, ranked_predictions)
 
-    metadata["ranked_prediction"] = ranked_predictions
+    score_column = "predicted_excess_return"
+    metadata[score_column] = ranked_predictions
     metadata = metadata[metadata["Ticker"] != "SPY"].copy()
     momentum_score_column = _resolve_momentum_score_column(
         metadata,
@@ -451,10 +423,17 @@ def build_top_n_basket_backtest_report(
         metadata,
         prediction_days,
     )
+    metadata_columns = set(metadata.columns)
     grouped_metadata = list(metadata.groupby("prediction_date", sort=True))
-    report = {}
+    ranked_selection_report = {}
+    basket_backtest_report = {}
+    universe_ranked_stats = _universe_ranked_selection_stats(grouped_metadata)
+    universe_basket_stats = _basket_backtest_stats(
+        [date_group for _, date_group in grouped_metadata]
+    )
+    benchmark_basket_stats = _benchmark_basket_backtest_stats(grouped_metadata)
 
-    for top_n in top_ns:
+    for top_n in top_n_values:
         key = f"top_{top_n}"
         selected_count_by_date = {
             prediction_date: min(int(top_n), len(date_group))
@@ -463,34 +442,67 @@ def build_top_n_basket_backtest_report(
         model_selected_groups = _select_top_n_by_score(
             grouped_metadata,
             selected_count_by_date,
-            "ranked_prediction",
+            score_column,
+        )
+        random_ranked_stats, random_basket_stats = _random_top_n_selection_stats(
+            grouped_metadata,
+            selected_count_by_date,
+            random_seed=random_seed,
+            random_trials=random_trials,
+        )
+        momentum_selected_groups = _select_available_top_n_groups(
+            grouped_metadata,
+            selected_count_by_date,
+            momentum_score_column,
+            metadata_columns,
+        )
+        relative_momentum_selected_groups = _select_available_top_n_groups(
+            grouped_metadata,
+            selected_count_by_date,
+            relative_momentum_score_column,
+            metadata_columns,
         )
 
-        report[key] = {
-            "model": _basket_backtest_stats(model_selected_groups),
-            "random_baseline": _random_basket_backtest_stats(
+        ranked_selection_report[key] = {
+            "model": _ranked_selection_stats(
+                model_selected_groups,
                 grouped_metadata,
-                selected_count_by_date,
-                random_seed=random_seed,
-                random_trials=random_trials,
+                score_column=score_column,
             ),
-            "momentum_baseline": _momentum_basket_backtest_stats(
+            "random_baseline": random_ranked_stats,
+            "momentum_baseline": _combined_momentum_ranked_selection_stats(
+                momentum_selected_groups,
                 grouped_metadata,
-                selected_count_by_date,
                 momentum_score_column,
             ),
-            "relative_momentum_baseline": _relative_momentum_basket_backtest_stats(
-                grouped_metadata,
-                selected_count_by_date,
+            "relative_momentum_baseline": (
+                _combined_relative_momentum_ranked_selection_stats(
+                    relative_momentum_selected_groups,
+                    grouped_metadata,
+                    relative_momentum_score_column,
+                )
+            ),
+            "universe": universe_ranked_stats,
+        }
+        basket_backtest_report[key] = {
+            "model": _basket_backtest_stats(model_selected_groups),
+            "random_baseline": random_basket_stats,
+            "momentum_baseline": _combined_momentum_basket_backtest_stats(
+                momentum_selected_groups,
+                momentum_score_column,
+            ),
+            "relative_momentum_baseline": _combined_relative_momentum_basket_backtest_stats(
+                relative_momentum_selected_groups,
                 relative_momentum_score_column,
             ),
-            "universe": _basket_backtest_stats(
-                [date_group for _, date_group in grouped_metadata]
-            ),
-            "benchmark": _benchmark_basket_backtest_stats(grouped_metadata),
+            "universe": universe_basket_stats,
+            "benchmark": benchmark_basket_stats,
         }
 
-    return report
+    return {
+        "ranked_selection": ranked_selection_report,
+        "basket_backtest": basket_backtest_report,
+    }
 
 
 def _select_top_n_by_score(grouped_metadata, selected_count_by_date, score_column):
@@ -503,6 +515,152 @@ def _select_top_n_by_score(grouped_metadata, selected_count_by_date, score_colum
         selected_groups.append(date_group.nlargest(selected_count, score_column))
 
     return selected_groups
+
+
+def _select_available_top_n_groups(
+    grouped_metadata,
+    selected_count_by_date,
+    score_column,
+    metadata_columns,
+):
+    if score_column not in metadata_columns:
+        return None
+
+    return _select_top_n_by_score(
+        grouped_metadata,
+        selected_count_by_date,
+        score_column,
+    )
+
+
+def _random_top_n_selection_stats(
+    grouped_metadata,
+    selected_count_by_date,
+    random_seed,
+    random_trials,
+):
+    rng = np.random.default_rng(random_seed)
+    ranked_trial_stats = []
+    basket_trial_stats = []
+
+    for _ in range(random_trials):
+        selected_groups = []
+        for prediction_date, date_group in grouped_metadata:
+            selected_count = selected_count_by_date[prediction_date]
+            if selected_count == 0:
+                continue
+
+            selected_positions = rng.choice(
+                len(date_group),
+                size=selected_count,
+                replace=False,
+            )
+            selected_groups.append(date_group.iloc[selected_positions])
+
+        ranked_trial_stats.append(
+            _ranked_selection_stats(selected_groups, grouped_metadata)
+        )
+        basket_trial_stats.append(_basket_backtest_stats(selected_groups))
+
+    ranked_stats = _average_random_trial_stats(
+        ranked_trial_stats,
+        random_seed,
+        random_trials,
+    )
+    basket_stats = _average_random_basket_trial_stats(basket_trial_stats)
+    basket_stats["random_seed"] = int(random_seed)
+    basket_stats["random_trials"] = int(random_trials)
+    return ranked_stats, basket_stats
+
+
+def _combined_momentum_ranked_selection_stats(
+    selected_groups,
+    grouped_metadata,
+    momentum_score_column,
+):
+    if selected_groups is None:
+        stats = _empty_ranked_selection_stats(score_column=momentum_score_column)
+        stats["available"] = False
+        stats["momentum_score_column"] = momentum_score_column
+        stats["reason"] = (
+            f"Momentum score column '{momentum_score_column}' is not present in split_metadata."
+        )
+        return stats
+
+    stats = _ranked_selection_stats(
+        selected_groups,
+        grouped_metadata,
+        score_column=momentum_score_column,
+    )
+    stats["available"] = True
+    stats["momentum_score_column"] = momentum_score_column
+    return stats
+
+
+def _combined_relative_momentum_ranked_selection_stats(
+    selected_groups,
+    grouped_metadata,
+    relative_momentum_score_column,
+):
+    if selected_groups is None:
+        stats = _empty_ranked_selection_stats(
+            score_column=relative_momentum_score_column
+        )
+        stats["available"] = False
+        stats["relative_momentum_score_column"] = relative_momentum_score_column
+        stats["reason"] = (
+            f"Relative momentum score column '{relative_momentum_score_column}' "
+            "is not present in split_metadata."
+        )
+        return stats
+
+    stats = _ranked_selection_stats(
+        selected_groups,
+        grouped_metadata,
+        score_column=relative_momentum_score_column,
+    )
+    stats["available"] = True
+    stats["relative_momentum_score_column"] = relative_momentum_score_column
+    return stats
+
+
+def _combined_momentum_basket_backtest_stats(
+    selected_groups,
+    momentum_score_column,
+):
+    if selected_groups is None:
+        stats = _empty_basket_backtest_stats()
+        stats["available"] = False
+        stats["momentum_score_column"] = momentum_score_column
+        stats["reason"] = (
+            f"Momentum score column '{momentum_score_column}' is not present in split_metadata."
+        )
+        return stats
+
+    stats = _basket_backtest_stats(selected_groups)
+    stats["available"] = True
+    stats["momentum_score_column"] = momentum_score_column
+    return stats
+
+
+def _combined_relative_momentum_basket_backtest_stats(
+    selected_groups,
+    relative_momentum_score_column,
+):
+    if selected_groups is None:
+        stats = _empty_basket_backtest_stats()
+        stats["available"] = False
+        stats["relative_momentum_score_column"] = relative_momentum_score_column
+        stats["reason"] = (
+            f"Relative momentum score column '{relative_momentum_score_column}' "
+            "is not present in split_metadata."
+        )
+        return stats
+
+    stats = _basket_backtest_stats(selected_groups)
+    stats["available"] = True
+    stats["relative_momentum_score_column"] = relative_momentum_score_column
+    return stats
 
 
 def _resolve_momentum_score_column(metadata, momentum_score_column, prediction_days):

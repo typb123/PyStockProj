@@ -921,7 +921,7 @@ def test_log_xgboost_test_report_uses_explicit_direction_labels(monkeypatch):
         captured["y_pred"] = np.asarray(y_pred)
         return {"accuracy": 1.0}
 
-    def fake_build_top_n_ranked_selection_report(
+    def fake_build_top_n_selection_reports(
         split_metadata,
         predicted_returns,
         prediction_days=None,
@@ -929,17 +929,10 @@ def test_log_xgboost_test_report_uses_explicit_direction_labels(monkeypatch):
         captured["split_metadata"] = split_metadata
         captured["ranked_predictions"] = np.asarray(predicted_returns)
         captured["prediction_days"] = prediction_days
-        return {"top_5": {"selected_row_count": 1}}
-
-    def fake_build_top_n_basket_backtest_report(
-        split_metadata,
-        predicted_returns,
-        prediction_days=None,
-    ):
-        captured["basket_split_metadata"] = split_metadata
-        captured["basket_ranked_predictions"] = np.asarray(predicted_returns)
-        captured["basket_prediction_days"] = prediction_days
-        return {"top_5": {"model": {}}}
+        return {
+            "ranked_selection": {"top_5": {"selected_row_count": 1}},
+            "basket_backtest": {"top_5": {"model": {}}},
+        }
 
     monkeypatch.setattr(
         trainer,
@@ -948,13 +941,8 @@ def test_log_xgboost_test_report_uses_explicit_direction_labels(monkeypatch):
     )
     monkeypatch.setattr(
         trainer,
-        "build_top_n_ranked_selection_report",
-        fake_build_top_n_ranked_selection_report,
-    )
-    monkeypatch.setattr(
-        trainer,
-        "build_top_n_basket_backtest_report",
-        fake_build_top_n_basket_backtest_report,
+        "build_top_n_selection_reports",
+        fake_build_top_n_selection_reports,
     )
 
     y_test = np.array([0.10, -0.20, 0.30])
@@ -991,15 +979,6 @@ def test_log_xgboost_test_report_uses_explicit_direction_labels(monkeypatch):
     pd.testing.assert_frame_equal(captured["split_metadata"], test_split_metadata)
     np.testing.assert_array_equal(captured["ranked_predictions"], regressor_predictions)
     assert captured["prediction_days"] == 10
-    pd.testing.assert_frame_equal(
-        captured["basket_split_metadata"],
-        test_split_metadata,
-    )
-    np.testing.assert_array_equal(
-        captured["basket_ranked_predictions"],
-        regressor_predictions,
-    )
-    assert captured["basket_prediction_days"] == 10
     assert not np.array_equal(captured["y_true"], (y_test > 0).astype(int))
 
 
@@ -1105,13 +1084,11 @@ def test_log_xgboost_test_report_logs_top_n_summary_at_info_and_full_report_at_d
     )
     monkeypatch.setattr(
         trainer,
-        "build_top_n_ranked_selection_report",
-        lambda *args, **kwargs: top_n_report,
-    )
-    monkeypatch.setattr(
-        trainer,
-        "build_top_n_basket_backtest_report",
-        lambda *args, **kwargs: basket_report,
+        "build_top_n_selection_reports",
+        lambda *args, **kwargs: {
+            "ranked_selection": top_n_report,
+            "basket_backtest": basket_report,
+        },
     )
 
     with caplog.at_level(logging.INFO):
@@ -1250,13 +1227,7 @@ def test_log_xgboost_test_report_logs_basket_summary_at_info_and_full_report_at_
         "build_combined_signal_report",
         lambda *args, **kwargs: {"selected_count": 0},
     )
-    monkeypatch.setattr(
-        trainer,
-        "build_top_n_ranked_selection_report",
-        lambda *args, **kwargs: {"top_5": {"model": {}}},
-    )
-
-    def fake_build_top_n_basket_backtest_report(
+    def fake_build_top_n_selection_reports(
         split_metadata,
         ranked_predictions,
         prediction_days=None,
@@ -1264,12 +1235,15 @@ def test_log_xgboost_test_report_logs_basket_summary_at_info_and_full_report_at_
         captured["split_metadata"] = split_metadata
         captured["ranked_predictions"] = np.asarray(ranked_predictions)
         captured["prediction_days"] = prediction_days
-        return basket_report
+        return {
+            "ranked_selection": {"top_5": {"model": {}}},
+            "basket_backtest": basket_report,
+        }
 
     monkeypatch.setattr(
         trainer,
-        "build_top_n_basket_backtest_report",
-        fake_build_top_n_basket_backtest_report,
+        "build_top_n_selection_reports",
+        fake_build_top_n_selection_reports,
     )
 
     test_split_metadata = pd.DataFrame({"Ticker": ["AAA"]})
