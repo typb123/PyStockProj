@@ -1,7 +1,14 @@
-"""Run controlled experiments for the current raw-return training approach.
+"""Deprecated research runner for older raw-return/current-model experiments.
 
-This script is for research only. It intentionally reuses the current training
-pipeline while allowing small parameter and prediction-horizon overrides.
+This script is kept for historical reference only. It is not the authoritative
+runner for the current SPY-relative research workflow.
+
+Use this instead:
+
+    python -m src.train.trainer --all-horizons
+
+The trainer CLI now supports configurable horizons, SPY-relative targets,
+ranked top-N evaluation, momentum baselines, and compact console summaries.
 """
 
 import sys

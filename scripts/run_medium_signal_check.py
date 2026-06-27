@@ -1,7 +1,12 @@
-"""Run a medium-size research smoke check for training and prediction.
+"""Small research smoke check for training and prediction.
 
-This script is a repeatable research helper, not a unit test. It trains on a
-fixed 10-ticker universe, then prints one AAPL prediction using the saved models.
+This script trains on a fixed 10-ticker universe and prints one AAPL prediction
+using the saved models. It is useful for a quick manual sanity check, but it is
+not the main experiment runner.
+
+For the current SPY-relative research workflow, use:
+
+    python -m src.train.trainer --all-horizons
 """
 
 import sys
