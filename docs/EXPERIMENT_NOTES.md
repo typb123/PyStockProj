@@ -130,3 +130,55 @@ Notes:
 - `--random-trials` defaults to `100`; use `20` for quick iteration.
 - `--random-trial-workers` defaults to `4`; use `1` for sequential random-baseline execution.
 - Max all-horizons runtime improved from about `8m42s` to about `3m36s`; post-fit report time dropped from about `122–127s`/horizon to about `45–47s`/horizon.
+
+## 6/28/26 SPY-relative research plan
+
+### Research memo takeaway
+
+* Reviewed the SPY-relative excess-return pipeline research memo.
+* Current conclusion: do not abandon the SPY-relative target yet.
+* The model still needs stronger falsification before changing targets or adding major complexity.
+* The main question is whether the model has real stock-selection edge beyond simple momentum.
+
+### Current interpretation
+
+* The 10-year 10d run is encouraging because the model beats random/universe and narrowly beats momentum in top-5/top-10.
+* The max-history 10d run is more skeptical because the model still beats random/universe but trails momentum.
+* This suggests the current model may be learning a momentum-like signal, or that performance is regime-dependent.
+* The next experiments should compare ranking signals and expose instability across time before changing the target.
+
+### Next experiment
+
+Test classifier-probability-ranked Top-N against the current regressor-ranked Top-N.
+
+Current ranking score:
+
+```text
+predicted_excess_return
+```
+
+Comparison ranking score:
+
+```text
+predicted_beat_benchmark_probability
+```
+
+Questions to answer:
+
+* Does classifier probability rank candidates better than predicted excess return?
+* Does classifier ranking improve top-5 or top-10 selection?
+* Does classifier ranking beat random, universe, and momentum baselines?
+* Is any improvement stable across `--period 10y` and `--period max`?
+* Does classifier ranking work better at the 10d or 20d horizon?
+
+Expected readout:
+
+* If classifier-ranked Top-N beats or complements regressor-ranked Top-N, test a blended ranking score later.
+* If classifier-ranked Top-N does not help, prioritize by-year reports, concentration diagnostics, and significance testing before adding new model complexity.
+
+Implementation note:
+
+* Add classifier-probability-ranked Top-N as a parallel evaluation report.
+* Keep the existing regressor-ranked Top-N report unchanged.
+* Do not change the SPY-relative target, model parameters, feature columns, or existing report keys.
+
