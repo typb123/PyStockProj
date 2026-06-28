@@ -1,4 +1,10 @@
-"""Central project configuration for training, artifacts, and feature contracts."""
+"""Central project configuration for training, artifacts, and research defaults."""
+
+from src.features.feature_contract import (
+    ABSOLUTE_MOMENTUM_FEATURE_COLUMNS,
+    MODEL_FEATURE_COLUMNS,
+    SPY_RELATIVE_MOMENTUM_FEATURE_COLUMNS,
+)
 
 # Training/evaluation defaults shared by trainer.py.
 LOG_FILE = "training.log"
@@ -206,55 +212,7 @@ TRAINING_TICKERS = [
     "EQIX",
 ]
 
-# Shared feature contract after technical indicator generation and before model training/prediction.
-REQUIRED_COLUMNS = [
-    "Open",
-    "High",
-    "Low",
-    "Close",
-    "Volume",
-    "5_day_avg",
-    "10_day_avg",
-    "20_day_avg",
-    "dailyReturn",
-    "volatility",
-    "rsi",
-    "macd",
-    "signalLine",
-    "macdHistogram",
-    "obv",
-    "vma_10",
-    "vma_20",
-    "tenkan_sen",
-    "kijun_sen",
-    "senkou_span_a",
-    "senkou_span_b",
-    "chikou_lag_close_26",
-    "chikou_return_26",
-    "chikou_above_lag_26",
-    "BB_Middle",
-    "BB_Upper",
-    "BB_Lower",
-    "BB_Std",  # Bollinger Bands
-    "ATR",  # Average True Range
-    "stoch_k",
-    "stoch_d",  # Stochastic Oscillator
-]
-
-MOMENTUM_FEATURE_COLUMNS = [
-    "momentum_5d",
-    "momentum_10d",
-    "momentum_20d",
-    "momentum_50d",
-]
-
-RELATIVE_MOMENTUM_FEATURE_COLUMNS = [
-    "relative_momentum_5d",
-    "relative_momentum_10d",
-    "relative_momentum_20d",
-    "relative_momentum_50d",
-]
-
-MODEL_FEATURE_COLUMNS = (
-    REQUIRED_COLUMNS + MOMENTUM_FEATURE_COLUMNS + RELATIVE_MOMENTUM_FEATURE_COLUMNS
-)
+# Compatibility aliases for older imports; new code should import feature columns
+# from src.features.feature_contract.
+MOMENTUM_FEATURE_COLUMNS = ABSOLUTE_MOMENTUM_FEATURE_COLUMNS
+RELATIVE_MOMENTUM_FEATURE_COLUMNS = SPY_RELATIVE_MOMENTUM_FEATURE_COLUMNS

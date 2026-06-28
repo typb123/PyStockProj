@@ -1,7 +1,11 @@
 import numpy as np
 import pandas as pd
 
-from src.config import MODEL_FEATURE_COLUMNS, REQUIRED_COLUMNS
+from src.features.feature_contract import (
+    ABSOLUTE_MOMENTUM_FEATURE_COLUMNS,
+    BASE_MODEL_FEATURE_COLUMNS,
+    MODEL_FEATURE_COLUMNS,
+)
 from src.data.technical_indicators import calculate_data
 
 
@@ -25,10 +29,10 @@ def test_chikou_features_use_lagged_close_only():
     assert result.loc[26, "chikou_return_26"] == expected_return
     assert result.loc[26, "chikou_above_lag_26"] == int(df.loc[26, "Close"] > df.loc[0, "Close"])
     assert "chikou_span" not in result.columns
-    assert "chikou_span" not in REQUIRED_COLUMNS
-    assert "chikou_lag_close_26" in REQUIRED_COLUMNS
-    assert "chikou_return_26" in REQUIRED_COLUMNS
-    assert "chikou_above_lag_26" in REQUIRED_COLUMNS
+    assert "chikou_span" not in BASE_MODEL_FEATURE_COLUMNS
+    assert "chikou_lag_close_26" in BASE_MODEL_FEATURE_COLUMNS
+    assert "chikou_return_26" in BASE_MODEL_FEATURE_COLUMNS
+    assert "chikou_above_lag_26" in BASE_MODEL_FEATURE_COLUMNS
 
 
 def test_calculate_data_creates_trailing_momentum_columns():
@@ -47,7 +51,7 @@ def test_calculate_data_creates_trailing_momentum_columns():
 
     for column in ["momentum_5d", "momentum_10d", "momentum_20d", "momentum_50d"]:
         assert column in result.columns
-        assert column not in REQUIRED_COLUMNS
+        assert column in ABSOLUTE_MOMENTUM_FEATURE_COLUMNS
         assert column in MODEL_FEATURE_COLUMNS
 
 

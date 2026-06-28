@@ -37,12 +37,12 @@ from xgboost import XGBRegressor, XGBClassifier
 from src.config import (
     XG_PARAMS_CLASSIFIER,
     XG_PARAMS_REGRESSOR,
-    MODEL_FEATURE_COLUMNS,
     MODEL_PATHS,
     TRAINING_TICKERS,
     PREDICTION_DAYS,
     TEST_SIZE,
 )
+from src.features.feature_contract import MODEL_FEATURE_COLUMNS
 
 
 logging.basicConfig(

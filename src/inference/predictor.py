@@ -13,10 +13,12 @@ from xgboost import XGBRegressor, XGBClassifier
 from src.config import (
     MODEL_PATHS,
     LOG_FILE,
-    MOMENTUM_FEATURE_COLUMNS,
-    RELATIVE_MOMENTUM_FEATURE_COLUMNS,
     XG_PARAMS_CLASSIFIER,
     XG_PARAMS_REGRESSOR,
+)
+from src.features.feature_contract import (
+    ABSOLUTE_MOMENTUM_FEATURE_COLUMNS,
+    SPY_RELATIVE_MOMENTUM_FEATURE_COLUMNS,
 )
 from src.data.technical_indicators import calculate_data
 from src.data.data_fetch import fetch_stock_data
@@ -50,7 +52,7 @@ def _add_prediction_relative_momentum(
         ).dt.normalize()
 
     available_momentum_columns = [
-        column for column in MOMENTUM_FEATURE_COLUMNS if column in df.columns
+        column for column in ABSOLUTE_MOMENTUM_FEATURE_COLUMNS if column in df.columns
     ]
     benchmark_momentum_columns = [
         column
@@ -80,6 +82,44 @@ def _add_prediction_relative_momentum(
         df = df.drop(columns=[f"benchmark_{column}"])
 
     return df
+
+
+def _select_latest_complete_feature_row(
+    processed_data: pd.DataFrame,
+    feature_columns: list[str],
+    ticker: str,
+) -> pd.Series:
+    if processed_data.empty:
+        raise ValueError(f"No data available for ticker {ticker}")
+
+    missing_cols = [column for column in feature_columns if column not in processed_data]
+    if missing_cols:
+        raise ValueError(f"Missing required columns: {missing_cols}")
+
+    feature_frame = processed_data.loc[:, feature_columns]
+    numeric_feature_frame = feature_frame.apply(pd.to_numeric, errors="coerce")
+    finite_mask = pd.DataFrame(
+        np.isfinite(numeric_feature_frame.to_numpy(dtype=float)),
+        index=numeric_feature_frame.index,
+        columns=numeric_feature_frame.columns,
+    )
+    valid_rows = numeric_feature_frame.notna() & finite_mask
+    complete_row_mask = valid_rows.all(axis=1)
+
+    if complete_row_mask.any():
+        return numeric_feature_frame.loc[complete_row_mask].iloc[-1]
+
+    latest_original_row = feature_frame.iloc[-1]
+    latest_numeric_row = numeric_feature_frame.iloc[-1]
+    invalid_features = latest_numeric_row.index[
+        latest_original_row.isna()
+        | latest_numeric_row.isna()
+        | ~np.isfinite(latest_numeric_row)
+    ].tolist()
+    raise ValueError(
+        f"No complete prediction feature row for {ticker}. "
+        f"Latest row has invalid required features: {invalid_features}"
+    )
 
 
 def predict_price(ticker: str) -> dict:
@@ -123,7 +163,7 @@ def predict_price(ticker: str) -> dict:
         if any(
             column in feature_columns or column in model_metadata["classifier_features"]
             or column in model_metadata["regressor_features"]
-            for column in RELATIVE_MOMENTUM_FEATURE_COLUMNS
+            for column in SPY_RELATIVE_MOMENTUM_FEATURE_COLUMNS
         ):
             benchmark_data = data if ticker == "SPY" else fetch_stock_data("SPY", period="5y")
             benchmark_processed_data = calculate_data(benchmark_data)
@@ -132,23 +172,11 @@ def predict_price(ticker: str) -> dict:
                 benchmark_processed_data,
             )
 
-        missing_cols = set(feature_columns) - set(processed_data.columns)
-        if missing_cols:
-            raise ValueError(f"Missing required columns: {missing_cols}")
-
-        if processed_data.empty:
-            raise ValueError(f"No data available for ticker {ticker}")
-
-        # Reject invalid latest values rather than silently replacing them.
-        latest_feature_row = processed_data.iloc[-1][feature_columns]
-        numeric_latest_feature_row = pd.to_numeric(latest_feature_row, errors="coerce")
-        invalid_features = numeric_latest_feature_row.index[
-            latest_feature_row.isna()
-            | numeric_latest_feature_row.isna()
-            | ~np.isfinite(numeric_latest_feature_row)
-        ].tolist()
-        if invalid_features:
-            raise ValueError(f"Invalid latest feature values for {ticker}: {invalid_features}")
+        numeric_latest_feature_row = _select_latest_complete_feature_row(
+            processed_data,
+            feature_columns,
+            ticker,
+        )
 
         latest_features = numeric_latest_feature_row.to_numpy(dtype=float).reshape(1, -1)
         latest_features = data_preparator.scalar.transform(latest_features)

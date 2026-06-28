@@ -2,11 +2,11 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.config import (
+from src.features.feature_contract import (
+    ABSOLUTE_MOMENTUM_FEATURE_COLUMNS,
+    BASE_MODEL_FEATURE_COLUMNS,
     MODEL_FEATURE_COLUMNS,
-    MOMENTUM_FEATURE_COLUMNS,
-    RELATIVE_MOMENTUM_FEATURE_COLUMNS,
-    REQUIRED_COLUMNS,
+    SPY_RELATIVE_MOMENTUM_FEATURE_COLUMNS,
 )
 from src.data.data_prep import DataPreparator
 
@@ -17,7 +17,7 @@ def make_panel_feature_frame(tickers=("AAA", "BBB", "SPY"), num_dates=50):
 
     for ticker_index, ticker in enumerate(tickers):
         data = {}
-        for feature in REQUIRED_COLUMNS:
+        for feature in BASE_MODEL_FEATURE_COLUMNS:
             data[feature] = np.arange(num_dates, dtype=float) + ticker_index
 
         data["Open"] = np.linspace(1.0 + ticker_index, 100.0 + ticker_index, num_dates)
@@ -26,9 +26,9 @@ def make_panel_feature_frame(tickers=("AAA", "BBB", "SPY"), num_dates=50):
             100.0 + ticker_index * 1000.0 + num_dates - 1,
             num_dates,
         )
-        for column in MOMENTUM_FEATURE_COLUMNS:
+        for column in ABSOLUTE_MOMENTUM_FEATURE_COLUMNS:
             data[column] = 0.01 * (ticker_index + 1)
-        for column in RELATIVE_MOMENTUM_FEATURE_COLUMNS:
+        for column in SPY_RELATIVE_MOMENTUM_FEATURE_COLUMNS:
             data[column] = 0.001 * (ticker_index + 1)
         frame = pd.DataFrame(data)
         frame["Ticker"] = ticker

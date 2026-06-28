@@ -130,6 +130,69 @@ def test_predict_price_rejects_invalid_latest_features(monkeypatch):
     assert "Volume" in message
 
 
+def test_predict_price_uses_latest_complete_feature_row(monkeypatch):
+    metadata = {
+        "linear_features": ["Close"],
+        "classifier_features": ["Close", "Volume"],
+        "regressor_features": ["Close", "Volume"],
+    }
+
+    class TwoFeaturePreparator:
+        feature_columns = ["Close", "Volume"]
+        scalar = IdentityScaler()
+
+    def fake_load(path):
+        if path == MODEL_PATHS["linear"]:
+            return FakeLinearModel()
+        if path == MODEL_PATHS["linear_scaler"]:
+            return IdentityScaler()
+        if path == MODEL_PATHS["model_metadata"]:
+            return metadata
+        if path == MODEL_PATHS["preparator"]:
+            return TwoFeaturePreparator()
+        raise AssertionError(f"Unexpected artifact path: {path}")
+
+    processed_data = pd.DataFrame(
+        {
+            "Close": [100.0, np.nan],
+            "Volume": [1000.0, 1100.0],
+        },
+        index=pd.to_datetime(["2024-01-01", "2024-01-02"]),
+    )
+
+    monkeypatch.setattr(predictor.joblib, "load", fake_load)
+    monkeypatch.setattr(predictor, "XGBClassifier", FakeClassifier)
+    monkeypatch.setattr(predictor, "XGBRegressor", FakeRegressor)
+    monkeypatch.setattr(predictor, "fetch_stock_data", lambda ticker, period="5y": processed_data)
+    monkeypatch.setattr(predictor, "calculate_data", lambda data: data.copy())
+
+    result = predictor.predict_price("AAPL")
+
+    assert "error" not in result
+    assert FakeRegressor.last_values["Close"].iloc[0] == 100.0
+    assert FakeRegressor.last_values["Volume"].iloc[0] == 1000.0
+
+
+def test_latest_complete_feature_row_reports_missing_features_when_none_complete():
+    processed_data = pd.DataFrame(
+        {
+            "Close": [np.nan, 100.0],
+            "Volume": [1000.0, np.inf],
+        }
+    )
+
+    with pytest.raises(ValueError) as exc_info:
+        predictor._select_latest_complete_feature_row(
+            processed_data,
+            ["Close", "Volume"],
+            "AAPL",
+        )
+
+    message = str(exc_info.value)
+    assert "No complete prediction feature row for AAPL" in message
+    assert "Volume" in message
+
+
 def test_predict_price_computes_relative_momentum_for_saved_feature_contract(
     monkeypatch,
 ):
@@ -202,6 +265,80 @@ def test_predict_price_computes_relative_momentum_for_saved_feature_contract(
     assert FakeClassifier.last_columns == metadata["classifier_features"]
     assert FakeRegressor.last_columns == metadata["regressor_features"]
     assert np.isclose(FakeRegressor.last_values["relative_momentum_10d"].iloc[0], 0.15)
+
+
+def test_predict_price_falls_back_to_latest_complete_relative_momentum_row(
+    monkeypatch,
+):
+    class MomentumPreparator:
+        feature_columns = [
+            "Close",
+            "Volume",
+            "momentum_10d",
+            "relative_momentum_10d",
+        ]
+        scalar = IdentityScaler()
+
+    metadata = {
+        "linear_features": ["Close"],
+        "classifier_features": [
+            "Close",
+            "Volume",
+            "momentum_10d",
+            "relative_momentum_10d",
+        ],
+        "regressor_features": [
+            "Close",
+            "Volume",
+            "momentum_10d",
+            "relative_momentum_10d",
+        ],
+    }
+
+    def fake_load(path):
+        if path == MODEL_PATHS["linear"]:
+            return FakeLinearModel()
+        if path == MODEL_PATHS["linear_scaler"]:
+            return IdentityScaler()
+        if path == MODEL_PATHS["model_metadata"]:
+            return metadata
+        if path == MODEL_PATHS["preparator"]:
+            return MomentumPreparator()
+        raise AssertionError(f"Unexpected artifact path: {path}")
+
+    stock_dates = pd.to_datetime(["2024-01-01", "2024-01-02"])
+    spy_dates = pd.to_datetime(["2024-01-01"])
+    stock_data = pd.DataFrame(
+        {
+            "Close": [100.0, 110.0],
+            "Volume": [1000.0, 1100.0],
+            "momentum_10d": [0.10, 0.20],
+        },
+        index=stock_dates,
+    )
+    spy_data = pd.DataFrame(
+        {
+            "Close": [400.0],
+            "Volume": [2000.0],
+            "momentum_10d": [0.02],
+        },
+        index=spy_dates,
+    )
+
+    def fake_fetch_stock_data(ticker, period="5y"):
+        return spy_data if ticker == "SPY" else stock_data
+
+    monkeypatch.setattr(predictor.joblib, "load", fake_load)
+    monkeypatch.setattr(predictor, "XGBClassifier", FakeClassifier)
+    monkeypatch.setattr(predictor, "XGBRegressor", FakeRegressor)
+    monkeypatch.setattr(predictor, "fetch_stock_data", fake_fetch_stock_data)
+    monkeypatch.setattr(predictor, "calculate_data", lambda data: data.copy())
+
+    result = predictor.predict_price("AAPL")
+
+    assert "error" not in result
+    assert FakeRegressor.last_values["Close"].iloc[0] == 100.0
+    assert np.isclose(FakeRegressor.last_values["relative_momentum_10d"].iloc[0], 0.08)
 
 
 def test_get_stock_info_prints_spy_relative_prediction_without_expected_price(

@@ -2,7 +2,15 @@ import pandas as pd
 import numpy as np
 from typing import Dict, List
 from sklearn.preprocessing import StandardScaler
-from src.config import MODEL_FEATURE_COLUMNS, PREDICTION_DAYS, REQUIRED_COLUMNS
+from src.config import PREDICTION_DAYS
+from src.features.feature_contract import (
+    ABSOLUTE_MOMENTUM_FEATURE_COLUMNS,
+    BASE_MODEL_FEATURE_COLUMNS,
+    MODEL_FEATURE_COLUMNS,
+    SPLIT_METADATA_COLUMNS,
+    SPY_RELATIVE_MOMENTUM_FEATURE_COLUMNS,
+    TARGET_COLUMNS,
+)
 
 
 class DataPreparator:
@@ -55,9 +63,11 @@ class DataPreparator:
         return df
 
     def _validate_required_columns(self, df: pd.DataFrame) -> None:
-        missing_columns = [col for col in REQUIRED_COLUMNS if col not in df.columns]
+        missing_columns = [
+            col for col in BASE_MODEL_FEATURE_COLUMNS if col not in df.columns
+        ]
         if missing_columns:
-            raise ValueError(f"Missing required feature columns: {missing_columns}")
+            raise ValueError(f"Missing model input feature columns: {missing_columns}")
 
     def _create_raw_forward_returns(
         self,
@@ -146,15 +156,8 @@ class DataPreparator:
         return candidates
 
     def _drop_unusable_rows(self, df: pd.DataFrame) -> pd.DataFrame:
-        required_target_columns = [
-            "raw_forward_return",
-            "benchmark_forward_return",
-            "excess_forward_return",
-            "targetReturns",
-            "beat_benchmark_target",
-        ]
         return df.dropna(
-            subset=self.feature_columns + required_target_columns
+            subset=self.feature_columns + TARGET_COLUMNS
         ).copy()
 
     def _split_by_prediction_date(
@@ -190,27 +193,11 @@ class DataPreparator:
         return train_df, val_df, test_df
 
     def _build_split_metadata(self, split_df: pd.DataFrame) -> pd.DataFrame:
-        metadata_columns = [
-            "_source_index",
-            "Ticker",
-            "prediction_date",
-            "dailyReturn",
-            "raw_forward_return",
-            "benchmark_forward_return",
-            "excess_forward_return",
-            "beat_benchmark_target",
-        ]
         optional_momentum_columns = [
-            "momentum_5d",
-            "momentum_10d",
-            "momentum_20d",
-            "momentum_50d",
-            "relative_momentum_5d",
-            "relative_momentum_10d",
-            "relative_momentum_20d",
-            "relative_momentum_50d",
+            *ABSOLUTE_MOMENTUM_FEATURE_COLUMNS,
+            *SPY_RELATIVE_MOMENTUM_FEATURE_COLUMNS,
         ]
-        available_columns = metadata_columns + [
+        available_columns = SPLIT_METADATA_COLUMNS + [
             column
             for column in optional_momentum_columns
             if column in split_df.columns

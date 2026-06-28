@@ -4,10 +4,12 @@ import numpy as np
 import pytest
 
 from src.config import (
-    MODEL_FEATURE_COLUMNS,
-    MOMENTUM_FEATURE_COLUMNS,
-    RELATIVE_MOMENTUM_FEATURE_COLUMNS,
     TRAINING_TICKERS,
+)
+from src.features.feature_contract import (
+    ABSOLUTE_MOMENTUM_FEATURE_COLUMNS,
+    MODEL_FEATURE_COLUMNS,
+    SPY_RELATIVE_MOMENTUM_FEATURE_COLUMNS,
 )
 import src.train.trainer as trainer
 
@@ -697,7 +699,7 @@ def test_train_models_metadata_includes_momentum_features_and_excludes_targets(
     trainer.train_models(pd.DataFrame({"Close": [1.0]}), prediction_days=10)
 
     metadata = captured["model_metadata"]
-    for column in MOMENTUM_FEATURE_COLUMNS + RELATIVE_MOMENTUM_FEATURE_COLUMNS:
+    for column in ABSOLUTE_MOMENTUM_FEATURE_COLUMNS + SPY_RELATIVE_MOMENTUM_FEATURE_COLUMNS:
         assert column in captured["all_features"]
         assert column in metadata["classifier_features"]
         assert column in metadata["regressor_features"]
