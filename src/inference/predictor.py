@@ -27,7 +27,7 @@ from src.data.data_fetch import fetch_stock_data
 logging.basicConfig(
     filename=LOG_FILE,
     level=logging.INFO,
-    format='%(asctime)s: - %(levelname)s -%(message)s'
+    format="%(asctime)s: - %(levelname)s -%(message)s",
 )
 
 
@@ -69,10 +69,7 @@ def _add_prediction_relative_momentum(
         keep="first",
     )
     benchmark_momentum = benchmark_momentum.rename(
-        columns={
-            column: f"benchmark_{column}"
-            for column in benchmark_momentum_columns
-        }
+        columns={column: f"benchmark_{column}" for column in benchmark_momentum_columns}
     )
 
     df = df.merge(benchmark_momentum, on="prediction_date", how="left")
@@ -92,7 +89,9 @@ def _select_latest_complete_feature_row(
     if processed_data.empty:
         raise ValueError(f"No data available for ticker {ticker}")
 
-    missing_cols = [column for column in feature_columns if column not in processed_data]
+    missing_cols = [
+        column for column in feature_columns if column not in processed_data
+    ]
     if missing_cols:
         raise ValueError(f"Missing required columns: {missing_cols}")
 
@@ -122,7 +121,7 @@ def _select_latest_complete_feature_row(
     )
 
 
-def predict_price(ticker: str) -> dict:
+def predict_spy_relative_return(ticker: str) -> dict:
     """
     Predict SPY-relative excess return for one ticker using saved artifacts.
 
@@ -140,9 +139,9 @@ def predict_price(ticker: str) -> dict:
         logging.info(f"Loading model for {ticker}...")
 
         # Load the baseline model, its scaler, and feature metadata from training.
-        linear_model = joblib.load(MODEL_PATHS['linear'])
-        scaler_lr = joblib.load(MODEL_PATHS['linear_scaler'])
-        model_metadata = joblib.load(MODEL_PATHS['model_metadata'])
+        linear_model = joblib.load(MODEL_PATHS["linear"])
+        scaler_lr = joblib.load(MODEL_PATHS["linear_scaler"])
+        model_metadata = joblib.load(MODEL_PATHS["model_metadata"])
 
         classifier_params = copy.deepcopy(XG_PARAMS_CLASSIFIER)
         regressor_params = copy.deepcopy(XG_PARAMS_REGRESSOR)
@@ -150,22 +149,25 @@ def predict_price(ticker: str) -> dict:
         xgb_classifier = XGBClassifier(**classifier_params)
         xgb_regressor = XGBRegressor(**regressor_params)
 
-        xgb_classifier.load_model(MODEL_PATHS['classifier'])
-        xgb_regressor.load_model(MODEL_PATHS['regressor'])
+        xgb_classifier.load_model(MODEL_PATHS["classifier"])
+        xgb_regressor.load_model(MODEL_PATHS["regressor"])
 
         # data_preparator.scalar is the saved training-time scaler artifact name.
-        data_preparator = joblib.load(MODEL_PATHS['preparator'])
+        data_preparator = joblib.load(MODEL_PATHS["preparator"])
         feature_columns = data_preparator.feature_columns
 
         # calculate_data is called on one ticker's history, matching its assumptions.
         data = fetch_stock_data(ticker, period="5y")
         processed_data = calculate_data(data)
         if any(
-            column in feature_columns or column in model_metadata["classifier_features"]
+            column in feature_columns
+            or column in model_metadata["classifier_features"]
             or column in model_metadata["regressor_features"]
             for column in SPY_RELATIVE_MOMENTUM_FEATURE_COLUMNS
         ):
-            benchmark_data = data if ticker == "SPY" else fetch_stock_data("SPY", period="5y")
+            benchmark_data = (
+                data if ticker == "SPY" else fetch_stock_data("SPY", period="5y")
+            )
             benchmark_processed_data = calculate_data(benchmark_data)
             processed_data = _add_prediction_relative_momentum(
                 processed_data,
@@ -178,7 +180,9 @@ def predict_price(ticker: str) -> dict:
             ticker,
         )
 
-        latest_features = numeric_latest_feature_row.to_numpy(dtype=float).reshape(1, -1)
+        latest_features = numeric_latest_feature_row.to_numpy(dtype=float).reshape(
+            1, -1
+        )
         latest_features = data_preparator.scalar.transform(latest_features)
         latest_features_df = pd.DataFrame(latest_features, columns=feature_columns)
 
@@ -202,16 +206,21 @@ def predict_price(ticker: str) -> dict:
 
         # Return model outputs without converting SPY-relative return into a price.
         result = {
-            'linear_predicted_return': float(lr_prediction),
-            'predicted_excess_return': float(predicted_excess_return),
-            'signal': signal,
+            "linear_predicted_return": float(lr_prediction),
+            "predicted_excess_return": float(predicted_excess_return),
+            "signal": signal,
         }
 
         logging.info(f"Prediction for {ticker}: {result}")
         return result
     except ValueError:
-        logging.error(f"Error predicting price for {ticker}: invalid input data")
+        logging.error(
+            f"Error predicting SPY-relative return for {ticker}: invalid input data"
+        )
         raise
     except Exception as e:
-        logging.error(f"Error predicting price for {ticker}: {e}")
+        logging.error(f"Error predicting SPY-relative return for {ticker}: {e}")
         return {"error": str(e)}
+
+
+predict_price = predict_spy_relative_return

@@ -83,13 +83,13 @@ def install_predictor_fakes(monkeypatch, latest_row, regressor_prediction=0.05):
     monkeypatch.setattr(predictor, "calculate_data", lambda data: data)
 
 
-def test_predict_price_returns_plain_python_output_types(monkeypatch):
+def test_predict_spy_relative_return_returns_plain_python_output_types(monkeypatch):
     install_predictor_fakes(
         monkeypatch,
         latest_row={"Close": np.float64(100.0), "Volume": np.float64(1000.0)},
     )
 
-    result = predictor.predict_price("AAPL")
+    result = predictor.predict_spy_relative_return("AAPL")
 
     assert isinstance(result["linear_predicted_return"], float)
     assert isinstance(result["predicted_excess_return"], float)
@@ -101,7 +101,11 @@ def test_predict_price_returns_plain_python_output_types(monkeypatch):
     assert "direction" not in result
 
 
-def test_predict_price_returns_underperform_signal_for_non_positive_excess_return(
+def test_predict_price_alias_points_to_spy_relative_predictor():
+    assert predictor.predict_price is predictor.predict_spy_relative_return
+
+
+def test_predict_spy_relative_return_returns_underperform_signal_for_non_positive_excess_return(
     monkeypatch,
 ):
     install_predictor_fakes(
@@ -110,27 +114,27 @@ def test_predict_price_returns_underperform_signal_for_non_positive_excess_retur
         regressor_prediction=-0.01,
     )
 
-    result = predictor.predict_price("AAPL")
+    result = predictor.predict_spy_relative_return("AAPL")
 
     assert result["predicted_excess_return"] == float(np.float32(-0.01))
     assert result["signal"] == "Expected to underperform SPY"
 
 
-def test_predict_price_rejects_invalid_latest_features(monkeypatch):
+def test_predict_spy_relative_return_rejects_invalid_latest_features(monkeypatch):
     install_predictor_fakes(
         monkeypatch,
         latest_row={"Close": np.nan, "Volume": np.inf},
     )
 
     with pytest.raises(ValueError) as exc_info:
-        predictor.predict_price("AAPL")
+        predictor.predict_spy_relative_return("AAPL")
 
     message = str(exc_info.value)
     assert "Close" in message
     assert "Volume" in message
 
 
-def test_predict_price_uses_latest_complete_feature_row(monkeypatch):
+def test_predict_spy_relative_return_uses_latest_complete_feature_row(monkeypatch):
     metadata = {
         "linear_features": ["Close"],
         "classifier_features": ["Close", "Volume"],
@@ -166,7 +170,7 @@ def test_predict_price_uses_latest_complete_feature_row(monkeypatch):
     monkeypatch.setattr(predictor, "fetch_stock_data", lambda ticker, period="5y": processed_data)
     monkeypatch.setattr(predictor, "calculate_data", lambda data: data.copy())
 
-    result = predictor.predict_price("AAPL")
+    result = predictor.predict_spy_relative_return("AAPL")
 
     assert "error" not in result
     assert FakeRegressor.last_values["Close"].iloc[0] == 100.0
@@ -193,7 +197,7 @@ def test_latest_complete_feature_row_reports_missing_features_when_none_complete
     assert "Volume" in message
 
 
-def test_predict_price_computes_relative_momentum_for_saved_feature_contract(
+def test_predict_spy_relative_return_computes_relative_momentum_for_saved_feature_contract(
     monkeypatch,
 ):
     class MomentumPreparator:
@@ -259,7 +263,7 @@ def test_predict_price_computes_relative_momentum_for_saved_feature_contract(
     monkeypatch.setattr(predictor, "fetch_stock_data", fake_fetch_stock_data)
     monkeypatch.setattr(predictor, "calculate_data", lambda data: data.copy())
 
-    result = predictor.predict_price("AAPL")
+    result = predictor.predict_spy_relative_return("AAPL")
 
     assert "error" not in result
     assert FakeClassifier.last_columns == metadata["classifier_features"]
@@ -267,7 +271,7 @@ def test_predict_price_computes_relative_momentum_for_saved_feature_contract(
     assert np.isclose(FakeRegressor.last_values["relative_momentum_10d"].iloc[0], 0.15)
 
 
-def test_predict_price_falls_back_to_latest_complete_relative_momentum_row(
+def test_predict_spy_relative_return_falls_back_to_latest_complete_relative_momentum_row(
     monkeypatch,
 ):
     class MomentumPreparator:
@@ -334,7 +338,7 @@ def test_predict_price_falls_back_to_latest_complete_relative_momentum_row(
     monkeypatch.setattr(predictor, "fetch_stock_data", fake_fetch_stock_data)
     monkeypatch.setattr(predictor, "calculate_data", lambda data: data.copy())
 
-    result = predictor.predict_price("AAPL")
+    result = predictor.predict_spy_relative_return("AAPL")
 
     assert "error" not in result
     assert FakeRegressor.last_values["Close"].iloc[0] == 100.0
@@ -374,7 +378,7 @@ def test_get_stock_info_prints_spy_relative_prediction_without_expected_price(
     )
     monkeypatch.setattr(
         app,
-        "predict_price",
+        "predict_spy_relative_return",
         lambda ticker: {
             "predicted_excess_return": -0.001864,
             "signal": "Expected to underperform SPY",

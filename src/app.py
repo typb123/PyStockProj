@@ -1,6 +1,6 @@
 from src.config import PREDICTION_DAYS
 from src.data.data_fetch import fetch_stock_data
-from src.inference.predictor import predict_price
+from src.inference.predictor import predict_spy_relative_return
 from src.utils.helpers import get_prediction_date
 import yfinance as yf
 
@@ -40,7 +40,7 @@ def get_stock_info(ticker):
         )
 
         # Fetch prediction
-        prediction = predict_price(ticker)
+        prediction = predict_spy_relative_return(ticker)
 
         # ---- Output Results ----
         print(f"\nStock Information for {ticker}:")

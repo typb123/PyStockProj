@@ -881,6 +881,24 @@ def test_top_n_ranked_selection_rejects_missing_metadata_columns():
         )
 
 
+def test_top_n_ranked_selection_rejects_duplicate_date_ticker_candidates():
+    metadata = pd.concat(
+        [
+            make_ranked_selection_metadata(),
+            make_ranked_selection_metadata().iloc[[0]],
+        ],
+        ignore_index=True,
+    )
+    predicted_excess_returns = np.arange(len(metadata), dtype=float)
+
+    with pytest.raises(ValueError, match="duplicate candidate rows"):
+        build_top_n_ranked_selection_report(
+            metadata,
+            predicted_excess_returns,
+            top_n_values=(1,),
+        )
+
+
 def test_top_n_basket_backtest_selects_model_top_n_within_each_date():
     metadata = make_ranked_selection_metadata()
     ranked_predictions = np.array([0.90, 0.80, 0.70, 0.10, 0.20, 0.30])

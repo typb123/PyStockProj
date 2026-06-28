@@ -1318,6 +1318,20 @@ def _validate_ranked_selection_inputs(metadata, predicted_excess_returns):
         raise ValueError(
             "split_metadata and predicted_excess_returns must have the same length."
         )
+    duplicate_candidates = metadata.duplicated(
+        subset=["prediction_date", "Ticker"],
+        keep=False,
+    )
+    if duplicate_candidates.any():
+        duplicates = (
+            metadata.loc[duplicate_candidates, ["prediction_date", "Ticker"]]
+            .drop_duplicates()
+            .to_dict(orient="records")
+        )
+        raise ValueError(
+            "split_metadata contains duplicate candidate rows for "
+            f"(prediction_date, Ticker): {duplicates}"
+        )
 
 
 def _empty_ranked_selection_stats(score_column=None):

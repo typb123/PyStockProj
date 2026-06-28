@@ -220,10 +220,8 @@ class DataPreparator:
         """
         if test_size <= 0 or test_size >= 1:
             raise ValueError("test_size must be greater than 0 and less than 1.")
-        if val_size < 0 or val_size >= 1:
-            raise ValueError(
-                "val_size must be greater than or equal to 0 and less than 1."
-            )
+        if val_size <= 0 or val_size >= 1:
+            raise ValueError("val_size must be greater than 0 and less than 1.")
         if val_size + test_size >= 1:
             raise ValueError("val_size + test_size must be less than 1.")
 

@@ -371,6 +371,7 @@ def test_prepare_for_train_rejects_invalid_split_sizes():
     invalid_split_args = [
         {"val_size": 0.25, "test_size": 0},
         {"val_size": 0.25, "test_size": 1},
+        {"val_size": 0, "test_size": 0.25},
         {"val_size": -0.1, "test_size": 0.25},
         {"val_size": 1, "test_size": 0.25},
         {"val_size": 0.75, "test_size": 0.25},
@@ -379,3 +380,15 @@ def test_prepare_for_train_rejects_invalid_split_sizes():
     for kwargs in invalid_split_args:
         with pytest.raises(ValueError):
             preparator.prepare_for_train(df, prediction_days=1, **kwargs)
+
+
+def test_prepare_for_train_rejects_zero_validation_size_with_clear_error():
+    df = make_panel_feature_frame(num_dates=30)
+
+    with pytest.raises(ValueError, match="val_size must be greater than 0"):
+        DataPreparator().prepare_for_train(
+            df,
+            prediction_days=1,
+            val_size=0,
+            test_size=0.25,
+        )
