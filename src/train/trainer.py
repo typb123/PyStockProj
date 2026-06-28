@@ -26,6 +26,7 @@ from src.train.evaluation import (
     build_probability_summary,
     build_probability_tail_report,
     build_probability_threshold_report,
+    build_probability_ranked_top_n_selection_reports,
     build_predicted_return_quantile_report,
     build_regression_report,
     build_return_correlation_report,
@@ -98,9 +99,12 @@ def log_feature_importances(model_name, feature_importances, top_n=5):
         logging.debug(f"{row['feature']}: {row['importance']:.4f}")
 
 
-def format_top_n_ranked_selection_summary(top_n_report):
+def format_top_n_ranked_selection_summary(
+    top_n_report,
+    title="XGBoost Top-N Ranked Selection Summary:",
+):
     """Format nested Top-N ranked-selection diagnostics for readable INFO logs."""
-    lines = ["XGBoost Top-N Ranked Selection Summary:"]
+    lines = [title]
 
     for bucket_name, bucket_report in top_n_report.items():
         model = bucket_report.get("model", {})
@@ -166,9 +170,12 @@ def format_top_n_ranked_selection_summary(top_n_report):
     return "\n".join(lines)
 
 
-def format_top_n_basket_backtest_summary(top_n_report):
+def format_top_n_basket_backtest_summary(
+    top_n_report,
+    title="XGBoost Top-N Basket Backtest Summary:",
+):
     """Format nested Top-N basket backtest diagnostics for readable INFO logs."""
-    lines = ["XGBoost Top-N Basket Backtest Summary:"]
+    lines = [title]
 
     for bucket_name, bucket_report in top_n_report.items():
         model = bucket_report.get("model", {})
@@ -546,6 +553,19 @@ def log_xgboost_test_report(
     )
     top_n_ranked_selection_report = top_n_selection_reports["ranked_selection"]
     top_n_basket_backtest_report = top_n_selection_reports["basket_backtest"]
+    classifier_top_n_selection_reports = build_probability_ranked_top_n_selection_reports(
+        test_split_metadata,
+        classifier_probability_up,
+        prediction_days=prediction_days,
+        random_trials=random_trials,
+        random_trial_workers=random_trial_workers,
+    )
+    classifier_top_n_ranked_selection_report = classifier_top_n_selection_reports[
+        "ranked_selection"
+    ]
+    classifier_top_n_basket_backtest_report = classifier_top_n_selection_reports[
+        "basket_backtest"
+    ]
 
     logging.info(
         f"XGBoost Beat-Benchmark Classification Report: {classification_report_data}"
@@ -574,15 +594,39 @@ def log_xgboost_test_report(
     logging.info(f"XGBoost Combined Signal Report: {combined_signal_report}")
     logging.info(format_top_n_ranked_selection_summary(top_n_ranked_selection_report))
     logging.info(format_top_n_basket_backtest_summary(top_n_basket_backtest_report))
+    logging.info(
+        format_top_n_ranked_selection_summary(
+            classifier_top_n_ranked_selection_report,
+            title="XGBoost Classifier-Probability Top-N Ranked Selection Summary:",
+        )
+    )
+    logging.info(
+        format_top_n_basket_backtest_summary(
+            classifier_top_n_basket_backtest_report,
+            title="XGBoost Classifier-Probability Top-N Basket Backtest Summary:",
+        )
+    )
     logging.debug(
         f"XGBoost Top-N Ranked Selection Report: {top_n_ranked_selection_report}"
     )
     logging.debug(
         f"XGBoost Top-N Basket Backtest Report: {top_n_basket_backtest_report}"
     )
+    logging.debug(
+        "XGBoost Classifier-Probability Top-N Ranked Selection Report: "
+        f"{classifier_top_n_ranked_selection_report}"
+    )
+    logging.debug(
+        "XGBoost Classifier-Probability Top-N Basket Backtest Report: "
+        f"{classifier_top_n_basket_backtest_report}"
+    )
     return {
         "ranked_selection": top_n_ranked_selection_report,
         "basket_backtest": top_n_basket_backtest_report,
+        "classifier_probability_ranked_selection": (
+            classifier_top_n_ranked_selection_report
+        ),
+        "classifier_probability_basket_backtest": classifier_top_n_basket_backtest_report,
     }
 
 

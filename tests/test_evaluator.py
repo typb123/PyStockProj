@@ -8,6 +8,7 @@ from src.train.evaluator import (
     build_actual_return_baseline_report,
     build_classification_report,
     build_combined_signal_report,
+    build_probability_ranked_top_n_selection_reports,
     build_probability_summary,
     build_probability_tail_report,
     build_probability_threshold_report,
@@ -20,7 +21,9 @@ from src.train.evaluator import (
     build_top_n_selection_reports,
     build_trading_relevance_report,
 )
+import src.train.evaluation as evaluation
 import src.train.evaluation.baselines as baselines
+import src.train.evaluator as evaluator
 
 
 def test_build_classification_report_includes_beat_benchmark_baselines_and_counts():
@@ -423,6 +426,56 @@ def test_top_n_selection_reports_match_compatibility_wrappers():
 
     assert combined_report["ranked_selection"] == ranked_report
     assert combined_report["basket_backtest"] == basket_report
+
+
+def test_probability_ranked_top_n_selection_reports_rank_by_probability():
+    metadata = make_ranked_selection_metadata()
+    predicted_excess_returns = np.array([0.90, 0.80, 0.70, 0.10, 0.20, 0.30])
+    classifier_probabilities = np.array([0.10, 0.90, 0.20, 0.30, 0.80, 0.70])
+
+    regressor_report = build_top_n_selection_reports(
+        metadata,
+        predicted_excess_returns,
+        top_n_values=(1,),
+        random_seed=7,
+        random_trials=5,
+    )
+    probability_report = build_probability_ranked_top_n_selection_reports(
+        metadata,
+        classifier_probabilities,
+        top_n_values=(1,),
+        random_seed=7,
+        random_trials=5,
+    )
+
+    probability_top_1 = probability_report["ranked_selection"]["top_1"]["model"]
+    regressor_top_1 = regressor_report["ranked_selection"]["top_1"]["model"]
+    assert np.isclose(
+        probability_top_1["average_selected_raw_forward_return"],
+        (0.02 + 0.20) / 2,
+    )
+    assert np.isclose(
+        probability_top_1["average_predicted_beat_benchmark_probability"],
+        (0.90 + 0.80) / 2,
+    )
+    assert not np.isclose(
+        probability_top_1["average_selected_raw_forward_return"],
+        regressor_top_1["average_selected_raw_forward_return"],
+    )
+    assert probability_report.keys() == {"ranked_selection", "basket_backtest"}
+
+
+def test_probability_ranked_top_n_selection_reports_are_exported():
+    assert (
+        evaluation.build_probability_ranked_top_n_selection_reports
+        is build_probability_ranked_top_n_selection_reports
+    )
+    assert (
+        evaluator.build_probability_ranked_top_n_selection_reports
+        is build_probability_ranked_top_n_selection_reports
+    )
+    assert "build_probability_ranked_top_n_selection_reports" in evaluation.__all__
+    assert "build_probability_ranked_top_n_selection_reports" in evaluator.__all__
 
 
 def test_top_n_selection_reports_returns_direct_expected_values():

@@ -85,18 +85,66 @@ def build_top_n_selection_reports(
     momentum_score_column=None,
     prediction_days=None,
 ):
-    """Build ranked-selection and basket-backtest Top-N reports in one pass."""
+    """Build regressor-ranked Top-N reports using predicted excess return."""
+    return _build_top_n_selection_reports_for_score(
+        split_metadata,
+        ranked_predictions,
+        "predicted_excess_return",
+        top_n_values=top_n_values,
+        random_seed=random_seed,
+        random_trials=random_trials,
+        random_trial_workers=random_trial_workers,
+        momentum_score_column=momentum_score_column,
+        prediction_days=prediction_days,
+    )
+
+
+def build_probability_ranked_top_n_selection_reports(
+    split_metadata,
+    classifier_probabilities,
+    top_n_values=(5, 10, 20),
+    random_seed=42,
+    random_trials=100,
+    random_trial_workers=4,
+    momentum_score_column=None,
+    prediction_days=None,
+):
+    """Build classifier-probability-ranked Top-N reports."""
+    return _build_top_n_selection_reports_for_score(
+        split_metadata,
+        classifier_probabilities,
+        "predicted_beat_benchmark_probability",
+        top_n_values=top_n_values,
+        random_seed=random_seed,
+        random_trials=random_trials,
+        random_trial_workers=random_trial_workers,
+        momentum_score_column=momentum_score_column,
+        prediction_days=prediction_days,
+    )
+
+
+def _build_top_n_selection_reports_for_score(
+    split_metadata,
+    ranking_scores,
+    score_column,
+    top_n_values=(5, 10, 20),
+    random_seed=42,
+    random_trials=100,
+    random_trial_workers=4,
+    momentum_score_column=None,
+    prediction_days=None,
+):
+    """Build ranked-selection and basket-backtest Top-N reports for a score column."""
     if random_trials < 1:
         raise ValueError("random_trials must be at least 1.")
     if random_trial_workers < 1:
         raise ValueError("random_trial_workers must be at least 1.")
 
     metadata = split_metadata.copy()
-    ranked_predictions = np.asarray(ranked_predictions, dtype=float)
-    _validate_ranked_selection_inputs(metadata, ranked_predictions)
+    ranking_scores = np.asarray(ranking_scores, dtype=float)
+    _validate_ranked_selection_inputs(metadata, ranking_scores)
 
-    score_column = "predicted_excess_return"
-    metadata[score_column] = ranked_predictions
+    metadata[score_column] = ranking_scores
     metadata = metadata[metadata["Ticker"] != "SPY"].copy()
     momentum_score_column = _resolve_momentum_score_column(
         metadata,
