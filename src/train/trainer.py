@@ -19,7 +19,7 @@ from sklearn.preprocessing import StandardScaler
 from src.data.data_prep import DataPreparator
 from src.data.technical_indicators import calculate_data
 from src.data.data_fetch import fetch_stock_data
-from src.train.evaluator import (
+from src.train.evaluation import (
     build_actual_return_baseline_report,
     build_classification_report,
     build_combined_signal_report,
