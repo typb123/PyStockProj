@@ -123,10 +123,10 @@ Added faster experiment controls:
 python -m src.train.trainer --prediction-days 10 --period 10y --random-trials 20
 
 # Full check
-python -m src.train.trainer --all-horizons --period max --parallel-random-trials --random-trial-workers 4
+python -m src.train.trainer --all-horizons --period max --random-trial-workers 4
 ```
 
 Notes:
 - `--random-trials` defaults to `100`; use `20` for quick iteration.
-- `--parallel-random-trials` is opt-in and preserves the default sequential RNG behavior when not used.
+- `--random-trial-workers` defaults to `4`; use `1` for sequential random-baseline execution.
 - Max all-horizons runtime improved from about `8m42s` to about `3m36s`; post-fit report time dropped from about `122–127s`/horizon to about `45–47s`/horizon.

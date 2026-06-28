@@ -23,11 +23,13 @@ def _random_top_n_selection_stats(
     selected_count_by_date,
     random_seed,
     random_trials,
-    parallel_random_trials=False,
     random_trial_workers=4,
 ):
     """Build random ranked-selection and basket baselines for Top-N buckets."""
-    if parallel_random_trials and random_trials > 1:
+    if random_trial_workers < 1:
+        raise ValueError("random_trial_workers must be at least 1.")
+
+    if random_trial_workers > 1 and random_trials > 1:
         trial_seeds = _random_trial_seeds(random_seed, random_trials)
         worker_count = min(int(random_trial_workers), int(random_trials))
         seed_chunks = np.array_split(
@@ -54,8 +56,8 @@ def _random_top_n_selection_stats(
                 basket_trial_stats.extend(basket_chunk)
     else:
         # Preserve the legacy default path: one RNG seeded once, consumed across
-        # dates and trials. With one trial, explicit parallel mode uses this
-        # no-pool path as well.
+        # dates and trials. Single-worker and single-trial runs avoid process-pool
+        # overhead and keep this no-pool path.
         ranked_trial_stats, basket_trial_stats = (
             _sequential_random_top_n_selection_trial_stats(
                 grouped_metadata,

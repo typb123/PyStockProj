@@ -494,7 +494,6 @@ def log_xgboost_test_report(
     regressor_predictions,
     prediction_days=PREDICTION_DAYS,
     random_trials=100,
-    parallel_random_trials=False,
     random_trial_workers=4,
 ):
     """
@@ -543,7 +542,6 @@ def log_xgboost_test_report(
         regressor_predictions,
         prediction_days=prediction_days,
         random_trials=random_trials,
-        parallel_random_trials=parallel_random_trials,
         random_trial_workers=random_trial_workers,
     )
     top_n_ranked_selection_report = top_n_selection_reports["ranked_selection"]
@@ -688,7 +686,6 @@ def train_models(
     data: pd.DataFrame,
     prediction_days: int = PREDICTION_DAYS,
     random_trials: int = 100,
-    parallel_random_trials: bool = False,
     random_trial_workers: int = 4,
     classifier_params: dict | None = None,
     regressor_params: dict | None = None,
@@ -833,7 +830,6 @@ def train_models(
         regressor.predict(x_test_regressor),
         prediction_days=prediction_days,
         random_trials=random_trials,
-        parallel_random_trials=parallel_random_trials,
         random_trial_workers=random_trial_workers,
     )
 
@@ -944,18 +940,12 @@ def parse_args(argv=None):
         ),
     )
     parser.add_argument(
-        "--parallel-random-trials",
-        action="store_true",
-        default=False,
-        help="Enable parallel execution of Top-N random baseline trials.",
-    )
-    parser.add_argument(
         "--random-trial-workers",
         type=_positive_random_trial_workers,
         default=4,
         help=(
-            "Worker count for parallel Top-N random baseline trials. "
-            "Only used with --parallel-random-trials."
+            "Worker count for Top-N random baseline trials. Use 1 for sequential "
+            "execution."
         ),
     )
 
@@ -991,7 +981,6 @@ def main(argv=None):
             data.copy(),
             prediction_days=prediction_days,
             random_trials=args.random_trials,
-            parallel_random_trials=args.parallel_random_trials,
             random_trial_workers=args.random_trial_workers,
         )
         logging.info(f"Model training completed for prediction_days={prediction_days}.")

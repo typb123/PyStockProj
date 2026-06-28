@@ -726,7 +726,6 @@ def test_parse_args_defaults_to_ten_prediction_days():
     assert args.period == "5y"
     assert args.no_cache is False
     assert args.random_trials == 100
-    assert args.parallel_random_trials is False
     assert args.random_trial_workers == 4
 
 
@@ -742,12 +741,6 @@ def test_parse_args_accepts_random_trials():
     assert args.random_trials == 20
 
 
-def test_parse_args_accepts_parallel_random_trials():
-    args = trainer.parse_args(["--parallel-random-trials"])
-
-    assert args.parallel_random_trials is True
-
-
 def test_parse_args_accepts_random_trial_workers():
     args = trainer.parse_args(["--random-trial-workers", "2"])
 
@@ -761,6 +754,11 @@ def test_parse_args_rejects_invalid_random_trials_values():
     ]:
         with pytest.raises(SystemExit):
             trainer.parse_args(argv)
+
+
+def test_parse_args_rejects_removed_parallel_random_trials_flag():
+    with pytest.raises(SystemExit):
+        trainer.parse_args(["--parallel-random-trials"])
 
 
 def test_parse_args_rejects_invalid_random_trial_workers_values():
@@ -868,7 +866,6 @@ def test_save_horizon_model_artifacts_preserves_legacy_paths_for_default_horizon
 def test_main_trains_all_horizons_and_logs_comparison(monkeypatch, caplog, capsys):
     trained_horizons = []
     trained_random_trials = []
-    trained_parallel_random_trials = []
     trained_random_trial_workers = []
     prepare_calls = []
 
@@ -882,12 +879,10 @@ def test_main_trains_all_horizons_and_logs_comparison(monkeypatch, caplog, capsy
         data,
         prediction_days,
         random_trials=100,
-        parallel_random_trials=False,
         random_trial_workers=4,
     ):
         trained_horizons.append(prediction_days)
         trained_random_trials.append(random_trials)
-        trained_parallel_random_trials.append(parallel_random_trials)
         trained_random_trial_workers.append(random_trial_workers)
         return {
             "prediction_days": prediction_days,
@@ -923,7 +918,6 @@ def test_main_trains_all_horizons_and_logs_comparison(monkeypatch, caplog, capsy
                 "10y",
                 "--random-trials",
                 "20",
-                "--parallel-random-trials",
                 "--random-trial-workers",
                 "2",
             ]
@@ -932,7 +926,6 @@ def test_main_trains_all_horizons_and_logs_comparison(monkeypatch, caplog, capsy
     assert prepare_calls == [(trainer.TRAINING_TICKERS, "10y", True)]
     assert trained_horizons == [5, 10, 20, 50]
     assert trained_random_trials == [20, 20, 20, 20]
-    assert trained_parallel_random_trials == [True, True, True, True]
     assert trained_random_trial_workers == [2, 2, 2, 2]
     assert "Selected YFinance period: 10y" in caplog.text
     assert "Raw YFinance OHLCV cache enabled: True" in caplog.text
@@ -947,7 +940,6 @@ def test_main_trains_all_horizons_and_logs_comparison(monkeypatch, caplog, capsy
 def test_main_single_horizon_prints_top_n_basket_summary(monkeypatch, capsys):
     trained_horizons = []
     trained_random_trials = []
-    trained_parallel_random_trials = []
     trained_random_trial_workers = []
     prepare_calls = []
 
@@ -961,12 +953,10 @@ def test_main_single_horizon_prints_top_n_basket_summary(monkeypatch, capsys):
         data,
         prediction_days,
         random_trials=100,
-        parallel_random_trials=False,
         random_trial_workers=4,
     ):
         trained_horizons.append(prediction_days)
         trained_random_trials.append(random_trials)
-        trained_parallel_random_trials.append(parallel_random_trials)
         trained_random_trial_workers.append(random_trial_workers)
         return {
             "prediction_days": prediction_days,
@@ -1003,7 +993,6 @@ def test_main_single_horizon_prints_top_n_basket_summary(monkeypatch, capsys):
             "--no-cache",
             "--random-trials",
             "20",
-            "--parallel-random-trials",
             "--random-trial-workers",
             "2",
         ]
@@ -1012,7 +1001,6 @@ def test_main_single_horizon_prints_top_n_basket_summary(monkeypatch, capsys):
     assert prepare_calls == [(trainer.TRAINING_TICKERS, "5y", False)]
     assert trained_horizons == [10]
     assert trained_random_trials == [20]
-    assert trained_parallel_random_trials == [True]
     assert trained_random_trial_workers == [2]
     output = capsys.readouterr().out
     assert "XGBoost Top-N Basket Backtest Summary:" in output
@@ -1034,14 +1022,12 @@ def test_log_xgboost_test_report_uses_explicit_direction_labels(monkeypatch):
         predicted_returns,
         prediction_days=None,
         random_trials=100,
-        parallel_random_trials=False,
         random_trial_workers=4,
     ):
         captured["split_metadata"] = split_metadata
         captured["ranked_predictions"] = np.asarray(predicted_returns)
         captured["prediction_days"] = prediction_days
         captured["random_trials"] = random_trials
-        captured["parallel_random_trials"] = parallel_random_trials
         captured["random_trial_workers"] = random_trial_workers
         return {
             "ranked_selection": {"top_5": {"selected_row_count": 1}},
@@ -1087,7 +1073,6 @@ def test_log_xgboost_test_report_uses_explicit_direction_labels(monkeypatch):
         classifier_probability_up=np.array([0.60, 0.40, 0.70]),
         regressor_predictions=regressor_predictions,
         random_trials=20,
-        parallel_random_trials=True,
         random_trial_workers=2,
     )
 
@@ -1097,7 +1082,6 @@ def test_log_xgboost_test_report_uses_explicit_direction_labels(monkeypatch):
     np.testing.assert_array_equal(captured["ranked_predictions"], regressor_predictions)
     assert captured["prediction_days"] == 10
     assert captured["random_trials"] == 20
-    assert captured["parallel_random_trials"] is True
     assert captured["random_trial_workers"] == 2
     assert not np.array_equal(captured["y_true"], (y_test > 0).astype(int))
 
@@ -1352,14 +1336,12 @@ def test_log_xgboost_test_report_logs_basket_summary_at_info_and_full_report_at_
         ranked_predictions,
         prediction_days=None,
         random_trials=100,
-        parallel_random_trials=False,
         random_trial_workers=4,
     ):
         captured["split_metadata"] = split_metadata
         captured["ranked_predictions"] = np.asarray(ranked_predictions)
         captured["prediction_days"] = prediction_days
         captured["random_trials"] = random_trials
-        captured["parallel_random_trials"] = parallel_random_trials
         captured["random_trial_workers"] = random_trial_workers
         return {
             "ranked_selection": {"top_5": {"model": {}}},
@@ -1387,7 +1369,6 @@ def test_log_xgboost_test_report_logs_basket_summary_at_info_and_full_report_at_
             classifier_probability_up=np.array([0.60]),
             regressor_predictions=regressor_predictions,
             random_trials=20,
-            parallel_random_trials=True,
             random_trial_workers=2,
         )
 
@@ -1395,7 +1376,6 @@ def test_log_xgboost_test_report_logs_basket_summary_at_info_and_full_report_at_
     np.testing.assert_array_equal(captured["ranked_predictions"], regressor_predictions)
     assert captured["prediction_days"] == 10
     assert captured["random_trials"] == 20
-    assert captured["parallel_random_trials"] is True
     assert captured["random_trial_workers"] == 2
     info_messages = [
         record.getMessage()

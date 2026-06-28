@@ -20,6 +20,7 @@ from src.train.evaluator import (
     build_top_n_selection_reports,
     build_trading_relevance_report,
 )
+import src.train.evaluation.baselines as baselines
 
 
 def test_build_classification_report_includes_beat_benchmark_baselines_and_counts():
@@ -523,7 +524,7 @@ def test_top_n_selection_reports_returns_direct_expected_values():
     )
 
 
-def test_top_n_parallel_random_trials_are_deterministic():
+def test_top_n_random_trials_workers_greater_than_one_are_deterministic():
     metadata = make_ranked_selection_metadata()
     metadata["relative_momentum"] = [0.01, 0.05, -0.02, 0.04, 0.03, 0.10]
     predicted_excess_returns = np.array([0.90, 0.80, 0.70, 0.10, 0.20, 0.30])
@@ -534,7 +535,6 @@ def test_top_n_parallel_random_trials_are_deterministic():
         top_n_values=(1, 2),
         random_seed=7,
         random_trials=5,
-        parallel_random_trials=True,
         random_trial_workers=2,
     )
     second_parallel_report = build_top_n_selection_reports(
@@ -543,7 +543,6 @@ def test_top_n_parallel_random_trials_are_deterministic():
         top_n_values=(1, 2),
         random_seed=7,
         random_trials=5,
-        parallel_random_trials=True,
         random_trial_workers=2,
     )
 
@@ -560,7 +559,16 @@ def test_top_n_parallel_random_trials_are_deterministic():
     assert basket_random["random_trials"] == 5
 
 
-def test_top_n_parallel_random_trials_single_trial_works_without_pool():
+def test_top_n_random_trial_worker_one_uses_sequential_no_pool_path(monkeypatch):
+    class RaisingProcessPoolExecutor:
+        def __init__(self, *args, **kwargs):
+            raise AssertionError("ProcessPoolExecutor should not be used")
+
+    monkeypatch.setattr(
+        baselines,
+        "ProcessPoolExecutor",
+        RaisingProcessPoolExecutor,
+    )
     metadata = make_ranked_selection_metadata()
     predicted_excess_returns = np.array([0.90, 0.80, 0.70, 0.10, 0.20, 0.30])
 
@@ -569,9 +577,8 @@ def test_top_n_parallel_random_trials_single_trial_works_without_pool():
         predicted_excess_returns,
         top_n_values=(1,),
         random_seed=7,
-        random_trials=1,
-        parallel_random_trials=True,
-        random_trial_workers=2,
+        random_trials=5,
+        random_trial_workers=1,
     )
 
     ranked_random = report["ranked_selection"]["top_1"]["random_baseline"]
@@ -579,9 +586,48 @@ def test_top_n_parallel_random_trials_single_trial_works_without_pool():
     assert ranked_random["date_count"] == 2
     assert ranked_random["selected_row_count"] == 2
     assert ranked_random["random_seed"] == 7
-    assert ranked_random["random_baseline_trials"] == 1
+    assert ranked_random["random_baseline_trials"] == 5
     assert basket_random["random_seed"] == 7
-    assert basket_random["random_trials"] == 1
+    assert basket_random["random_trials"] == 5
+
+
+def test_top_n_random_trial_workers_greater_than_one_uses_process_pool(monkeypatch):
+    pool_calls = []
+
+    class RecordingProcessPoolExecutor:
+        def __init__(self, max_workers):
+            pool_calls.append(("init", max_workers))
+
+        def __enter__(self):
+            pool_calls.append(("enter", None))
+            return self
+
+        def __exit__(self, exc_type, exc, traceback):
+            pool_calls.append(("exit", None))
+
+        def map(self, worker, tasks):
+            task_list = list(tasks)
+            pool_calls.append(("map", len(task_list)))
+            return [worker(task) for task in task_list]
+
+    monkeypatch.setattr(
+        baselines,
+        "ProcessPoolExecutor",
+        RecordingProcessPoolExecutor,
+    )
+    metadata = make_ranked_selection_metadata()
+    predicted_excess_returns = np.array([0.90, 0.80, 0.70, 0.10, 0.20, 0.30])
+
+    build_top_n_selection_reports(
+        metadata,
+        predicted_excess_returns,
+        top_n_values=(1,),
+        random_seed=7,
+        random_trials=5,
+        random_trial_workers=2,
+    )
+
+    assert pool_calls == [("init", 2), ("enter", None), ("map", 2), ("exit", None)]
 
 
 def test_top_n_ranked_selection_uses_min_available_candidates_per_date():
@@ -1174,6 +1220,13 @@ def test_top_n_basket_backtest_rejects_invalid_inputs():
             metadata,
             np.arange(len(metadata), dtype=float),
             random_trials=0,
+        )
+
+    with pytest.raises(ValueError, match="random_trial_workers"):
+        build_top_n_basket_backtest_report(
+            metadata,
+            np.arange(len(metadata), dtype=float),
+            random_trial_workers=0,
         )
 
 

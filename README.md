@@ -53,7 +53,7 @@ Useful runtime controls:
 
 ```bash
 python -m src.train.trainer --prediction-days 10 --period 10y --random-trials 20
-python -m src.train.trainer --all-horizons --period max --parallel-random-trials --random-trial-workers 4
+python -m src.train.trainer --all-horizons --period max --random-trial-workers 4
 ```
 
 ## Scripts
