@@ -157,7 +157,6 @@ TRAINING_TICKERS = [
     "WDC",
     "PANW",
     "ZS",
-    "CRM",
     "DDOG",
     "NET",
     "PLTR",

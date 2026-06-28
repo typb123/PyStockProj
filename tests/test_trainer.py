@@ -7,6 +7,7 @@ from src.config import (
     MODEL_FEATURE_COLUMNS,
     MOMENTUM_FEATURE_COLUMNS,
     RELATIVE_MOMENTUM_FEATURE_COLUMNS,
+    TRAINING_TICKERS,
 )
 import src.train.trainer as trainer
 
@@ -580,6 +581,14 @@ def test_model_metadata_does_not_include_linear_regression_prediction():
     assert "LinearRegression_Prediction" not in metadata["classifier_feature_names"]
     assert "LinearRegression_Prediction" not in metadata["regressor_feature_names"]
     assert metadata["prediction_days"] == 5
+    assert metadata["target_type"] == "spy_relative_excess_forward_return"
+    assert metadata["benchmark_ticker"] == "SPY"
+    assert metadata["regressor_target"] == "targetReturns"
+    assert metadata["classifier_target"] == "beat_benchmark_target"
+
+
+def test_training_tickers_have_no_duplicates():
+    assert len(TRAINING_TICKERS) == len(set(TRAINING_TICKERS))
 
 
 def test_train_models_metadata_includes_momentum_features_and_excludes_targets(
@@ -695,6 +704,10 @@ def test_train_models_metadata_includes_momentum_features_and_excludes_targets(
 
     assert metadata["classifier_features"] == MODEL_FEATURE_COLUMNS
     assert metadata["regressor_features"] == MODEL_FEATURE_COLUMNS
+    assert metadata["target_type"] == "spy_relative_excess_forward_return"
+    assert metadata["benchmark_ticker"] == "SPY"
+    assert metadata["regressor_target"] == "targetReturns"
+    assert metadata["classifier_target"] == "beat_benchmark_target"
     assert target_columns.isdisjoint(captured["all_features"])
     assert target_columns.isdisjoint(metadata["classifier_features"])
     assert target_columns.isdisjoint(metadata["regressor_features"])

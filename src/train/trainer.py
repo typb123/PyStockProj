@@ -599,6 +599,10 @@ def build_model_metadata(
         "classifier_feature_names": classifier_features,
         "regressor_feature_names": regressor_features,
         "prediction_days": prediction_days,
+        "target_type": "spy_relative_excess_forward_return",
+        "benchmark_ticker": "SPY",
+        "regressor_target": "targetReturns",
+        "classifier_target": "beat_benchmark_target",
     }
 
 
@@ -685,7 +689,7 @@ def train_models(
     random_trial_workers: int = 4,
     classifier_params: dict | None = None,
     regressor_params: dict | None = None,
-) -> None:
+) -> dict:
     """
     Train the linear baseline, beat-benchmark classifier, and excess-return regressor.
 
