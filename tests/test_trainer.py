@@ -1,3 +1,5 @@
+"""Trainer tests for caching, metadata, CLI validation, and report plumbing."""
+
 import logging
 import pandas as pd
 import numpy as np

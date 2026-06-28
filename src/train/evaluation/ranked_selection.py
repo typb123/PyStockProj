@@ -7,6 +7,7 @@ from src.train.evaluation.validation import _mean_or_nan, _up_rate_or_nan
 
 
 def _select_top_n_by_score(grouped_metadata, selected_count_by_date, score_column):
+    """Select each date's highest-scoring rows for a Top-N candidate bucket."""
     selected_groups = []
 
     for prediction_date, date_group in grouped_metadata:
@@ -18,6 +19,7 @@ def _select_top_n_by_score(grouped_metadata, selected_count_by_date, score_colum
     return selected_groups
 
 def _ranked_selection_stats(selected_groups, grouped_metadata, score_column=None):
+    """Aggregate per-row and per-date outcomes for selected ranked candidates."""
     if not selected_groups:
         return _empty_ranked_selection_stats(score_column=score_column)
 
@@ -98,6 +100,7 @@ def _ranked_selection_stats(selected_groups, grouped_metadata, score_column=None
     return stats
 
 def _empty_ranked_selection_stats(score_column=None):
+    """Return the empty-result shape for Top-N ranked selection reports."""
     stats = {
         "date_count": 0,
         "selected_row_count": 0,

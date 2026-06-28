@@ -26,6 +26,7 @@ def _random_top_n_selection_stats(
     parallel_random_trials=False,
     random_trial_workers=4,
 ):
+    """Build random ranked-selection and basket baselines for Top-N buckets."""
     if parallel_random_trials and random_trials > 1:
         trial_seeds = _random_trial_seeds(random_seed, random_trials)
         worker_count = min(int(random_trial_workers), int(random_trials))
@@ -80,6 +81,7 @@ def _sequential_random_top_n_selection_trial_stats(
     random_seed,
     random_trials,
 ):
+    """Run random Top-N trials with the legacy single-RNG sequence."""
     rng = np.random.default_rng(random_seed)
     ranked_trial_stats = []
     basket_trial_stats = []
@@ -106,6 +108,7 @@ def _sequential_random_top_n_selection_trial_stats(
     return ranked_trial_stats, basket_trial_stats
 
 def _random_trial_seeds(random_seed, random_trials):
+    """Derive independent trial seeds for parallel random baseline workers."""
     rng = np.random.default_rng(random_seed)
     return [
         int(seed)
@@ -118,6 +121,7 @@ def _random_trial_seeds(random_seed, random_trials):
     ]
 
 def _random_top_n_selection_stats_worker(args):
+    """Run a chunk of random Top-N trials inside a process-pool worker."""
     grouped_metadata, selected_count_by_date, trial_seeds = args
     ranked_trial_stats = []
     basket_trial_stats = []
@@ -140,6 +144,7 @@ def _select_random_trial_groups(
     selected_count_by_date,
     trial_seed,
 ):
+    """Select random rows per prediction date for one baseline trial."""
     rng = np.random.default_rng(trial_seed)
     selected_groups = []
     for prediction_date, date_group in grouped_metadata:
@@ -161,6 +166,7 @@ def _combined_momentum_ranked_selection_stats(
     grouped_metadata,
     momentum_score_column,
 ):
+    """Attach availability metadata to absolute-momentum ranked stats."""
     if selected_groups is None:
         stats = _empty_ranked_selection_stats(score_column=momentum_score_column)
         stats["available"] = False
@@ -184,6 +190,7 @@ def _combined_relative_momentum_ranked_selection_stats(
     grouped_metadata,
     relative_momentum_score_column,
 ):
+    """Attach availability metadata to SPY-relative momentum ranked stats."""
     if selected_groups is None:
         stats = _empty_ranked_selection_stats(
             score_column=relative_momentum_score_column
@@ -209,6 +216,7 @@ def _combined_momentum_basket_backtest_stats(
     selected_groups,
     momentum_score_column,
 ):
+    """Attach availability metadata to absolute-momentum basket stats."""
     if selected_groups is None:
         stats = _empty_basket_backtest_stats()
         stats["available"] = False
@@ -227,6 +235,7 @@ def _combined_relative_momentum_basket_backtest_stats(
     selected_groups,
     relative_momentum_score_column,
 ):
+    """Attach availability metadata to SPY-relative momentum basket stats."""
     if selected_groups is None:
         stats = _empty_basket_backtest_stats()
         stats["available"] = False
@@ -243,6 +252,7 @@ def _combined_relative_momentum_basket_backtest_stats(
     return stats
 
 def _resolve_momentum_score_column(metadata, momentum_score_column, prediction_days):
+    """Choose the absolute-momentum baseline column for this horizon."""
     if momentum_score_column is not None:
         return momentum_score_column
 
@@ -254,6 +264,7 @@ def _resolve_momentum_score_column(metadata, momentum_score_column, prediction_d
     return "dailyReturn"
 
 def _resolve_relative_momentum_score_column(metadata, prediction_days):
+    """Choose the SPY-relative momentum baseline column for this horizon."""
     if prediction_days is None:
         return "relative_momentum"
 
@@ -265,6 +276,7 @@ def _random_basket_backtest_stats(
     random_seed,
     random_trials,
 ):
+    """Build the legacy random basket backtest baseline."""
     rng = np.random.default_rng(random_seed)
     trial_stats = []
 
@@ -290,6 +302,7 @@ def _random_basket_backtest_stats(
     return stats
 
 def _average_random_basket_trial_stats(trial_stats):
+    """Average basket backtest metrics across random trials."""
     if not trial_stats:
         return _empty_basket_backtest_stats()
 
@@ -306,6 +319,7 @@ def _momentum_basket_backtest_stats(
     selected_count_by_date,
     momentum_score_column,
 ):
+    """Build the absolute-momentum basket baseline when its score exists."""
     metadata_columns = set()
     for _, date_group in grouped_metadata:
         metadata_columns.update(date_group.columns)
@@ -334,6 +348,7 @@ def _relative_momentum_basket_backtest_stats(
     selected_count_by_date,
     relative_momentum_score_column,
 ):
+    """Build the SPY-relative momentum basket baseline when its score exists."""
     metadata_columns = set()
     for _, date_group in grouped_metadata:
         metadata_columns.update(date_group.columns)
@@ -359,6 +374,7 @@ def _relative_momentum_basket_backtest_stats(
     return stats
 
 def _benchmark_basket_backtest_stats(grouped_metadata):
+    """Represent the SPY benchmark as the per-date basket comparator."""
     if not grouped_metadata:
         return _empty_basket_backtest_stats()
 
@@ -385,6 +401,7 @@ def _random_ranked_selection_stats(
     random_seed,
     random_trials,
 ):
+    """Build the legacy random ranked-selection baseline."""
     rng = np.random.default_rng(random_seed)
     trial_stats = []
 
@@ -407,6 +424,7 @@ def _random_ranked_selection_stats(
     return _average_random_trial_stats(trial_stats, random_seed, random_trials)
 
 def _average_random_trial_stats(trial_stats, random_seed, random_trials):
+    """Average ranked-selection metrics across random trials."""
     if not trial_stats:
         stats = _empty_ranked_selection_stats()
     else:
@@ -427,6 +445,7 @@ def _momentum_ranked_selection_stats(
     selected_count_by_date,
     momentum_score_column,
 ):
+    """Build the absolute-momentum ranked-selection baseline."""
     metadata_columns = set()
     for _, date_group in grouped_metadata:
         metadata_columns.update(date_group.columns)
@@ -459,6 +478,7 @@ def _relative_momentum_ranked_selection_stats(
     selected_count_by_date,
     relative_momentum_score_column,
 ):
+    """Build the SPY-relative momentum ranked-selection baseline."""
     metadata_columns = set()
     for _, date_group in grouped_metadata:
         metadata_columns.update(date_group.columns)
@@ -490,6 +510,7 @@ def _relative_momentum_ranked_selection_stats(
     return stats
 
 def _universe_ranked_selection_stats(grouped_metadata):
+    """Summarize the full non-SPY candidate universe by prediction date."""
     if not grouped_metadata:
         return {
             "date_count": 0,

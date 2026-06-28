@@ -107,6 +107,7 @@ SPLIT_METADATA_COLUMNS = [
 
 
 def flatten_feature_groups(feature_groups: dict[str, list[str]]) -> list[str]:
+    """Flatten ordered feature groups into the final model feature order."""
     return [
         column
         for feature_columns in feature_groups.values()
@@ -129,6 +130,7 @@ def validate_feature_contract(
     feature_groups: dict[str, list[str]] = MODEL_FEATURE_GROUPS,
     target_columns: list[str] = TARGET_COLUMNS,
 ) -> None:
+    """Fail fast if feature groups are empty, duplicated, or overlap targets."""
     empty_groups = [
         group_name
         for group_name, feature_columns in feature_groups.items()

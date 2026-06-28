@@ -4,31 +4,37 @@ import numpy as np
 
 
 def _mean_or_nan(values):
+    """Return the arithmetic mean, using NaN for empty selections."""
     if len(values) == 0:
         return np.nan
     return float(np.mean(values))
 
 def _validate_probability_inputs(probability_up, actual_returns):
+    """Validate paired beat-benchmark probabilities and excess returns."""
     if len(probability_up) == 0:
         raise ValueError("probability_up must contain at least one value.")
     if len(probability_up) != len(actual_returns):
         raise ValueError("probability_up and actual_returns must have the same length.")
 
 def _validate_return_inputs(actual_returns, predicted_returns):
+    """Validate paired actual and predicted SPY-relative excess returns."""
     if len(actual_returns) == 0:
         raise ValueError("actual_returns must contain at least one value.")
     if len(actual_returns) != len(predicted_returns):
         raise ValueError("actual_returns and predicted_returns must have the same length.")
 
 def _up_rate_or_nan(returns):
+    """Return the fraction of positive returns, using NaN for empty selections."""
     if len(returns) == 0:
         return np.nan
     return float(np.mean(np.asarray(returns) > 0))
 
 def _tail_count(values, fraction):
+    """Return a nonzero tail size for percentile-style bucket reports."""
     return max(1, int(np.ceil(len(values) * fraction)))
 
 def _tail_stats(indices, actual_returns):
+    """Summarize actual excess returns selected by ranked probability indices."""
     selected_returns = actual_returns[indices]
     return {
         "count": int(len(indices)),
@@ -37,6 +43,7 @@ def _tail_stats(indices, actual_returns):
     }
 
 def _return_bucket_stats(indices, actual_returns, predicted_returns):
+    """Summarize actual and predicted excess returns for one ranked bucket."""
     selected_actual_returns = actual_returns[indices]
     selected_predicted_returns = predicted_returns[indices]
     return {
@@ -47,11 +54,13 @@ def _return_bucket_stats(indices, actual_returns, predicted_returns):
     }
 
 def _correlation_or_nan(left, right):
+    """Return Pearson correlation when both arrays have usable variation."""
     if len(left) < 2 or np.std(left) == 0 or np.std(right) == 0:
         return np.nan
     return float(np.corrcoef(left, right)[0, 1])
 
 def _rank_values(values):
+    """Rank values with stable ordering and averaged ranks for ties."""
     order = np.argsort(values, kind="mergesort")
     ranks = np.empty(len(values), dtype=float)
     sorted_values = values[order]
@@ -68,6 +77,7 @@ def _rank_values(values):
     return ranks
 
 def _validate_ranked_selection_inputs(metadata, predicted_excess_returns):
+    """Validate the candidate table used by Top-N ranked selection reports."""
     required_columns = {
         "Ticker",
         "prediction_date",

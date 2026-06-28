@@ -1,3 +1,5 @@
+"""Prepare SPY-relative model features, labels, splits, and metadata."""
+
 import pandas as pd
 import numpy as np
 from typing import Dict, List
@@ -22,6 +24,7 @@ class DataPreparator:
     """
 
     def __init__(self, benchmark_ticker: str = "SPY"):
+        """Create a preparator using the benchmark ticker for relative targets."""
         self.scalar = StandardScaler()
         self.feature_columns: List[str] = []
         self.benchmark_ticker = benchmark_ticker
@@ -48,6 +51,7 @@ class DataPreparator:
         return df
 
     def _normalize_prediction_date(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Ensure each row has a normalized date and ticker identifier."""
         df = df.copy()
         if "prediction_date" not in df.columns:
             if isinstance(df.index, pd.DatetimeIndex):
@@ -63,6 +67,7 @@ class DataPreparator:
         return df
 
     def _validate_required_columns(self, df: pd.DataFrame) -> None:
+        """Verify generated base model features exist before target construction."""
         missing_columns = [
             col for col in BASE_MODEL_FEATURE_COLUMNS if col not in df.columns
         ]
@@ -74,12 +79,14 @@ class DataPreparator:
         df: pd.DataFrame,
         prediction_days: int,
     ) -> pd.DataFrame:
+        """Add ticker-aware raw forward returns for the prediction horizon."""
         df = df.sort_values(["Ticker", "prediction_date"]).copy()
         future_close = df.groupby("Ticker", sort=False)["Close"].shift(-prediction_days)
         df["raw_forward_return"] = (future_close - df["Close"]) / df["Close"]
         return df
 
     def _build_benchmark_forward_returns(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Build date-aligned benchmark forward returns for target creation."""
         benchmark_rows = df[df["Ticker"] == self.benchmark_ticker]
         if benchmark_rows.empty:
             raise ValueError(f"Benchmark ticker {self.benchmark_ticker} is missing.")
@@ -96,6 +103,7 @@ class DataPreparator:
         )
 
     def _add_benchmark_relative_momentum(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Add same-date benchmark-relative trailing momentum features."""
         momentum_columns = [
             "momentum_5d",
             "momentum_10d",
@@ -140,6 +148,7 @@ class DataPreparator:
         df: pd.DataFrame,
         benchmark_returns: pd.DataFrame,
     ) -> pd.DataFrame:
+        """Create SPY-relative excess-return and beat-benchmark labels."""
         candidates = df[df["Ticker"] != self.benchmark_ticker].copy()
         candidates = candidates.merge(
             benchmark_returns,
@@ -156,6 +165,7 @@ class DataPreparator:
         return candidates
 
     def _drop_unusable_rows(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Drop rows missing required model features or target fields."""
         return df.dropna(
             subset=self.feature_columns + TARGET_COLUMNS
         ).copy()
@@ -167,6 +177,7 @@ class DataPreparator:
         val_size: float,
         test_size: float,
     ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+        """Create global chronological train/validation/test splits with embargo."""
         unique_dates = np.array(sorted(df["prediction_date"].drop_duplicates()))
         num_dates = len(unique_dates)
         test_count = int(np.ceil(num_dates * test_size))
@@ -193,6 +204,7 @@ class DataPreparator:
         return train_df, val_df, test_df
 
     def _build_split_metadata(self, split_df: pd.DataFrame) -> pd.DataFrame:
+        """Preserve evaluation-only columns needed by Top-N reports."""
         optional_momentum_columns = [
             *ABSOLUTE_MOMENTUM_FEATURE_COLUMNS,
             *SPY_RELATIVE_MOMENTUM_FEATURE_COLUMNS,

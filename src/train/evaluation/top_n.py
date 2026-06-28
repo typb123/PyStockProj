@@ -201,6 +201,7 @@ def _select_available_top_n_groups(
     score_column,
     metadata_columns,
 ):
+    """Select Top-N groups when a baseline score column is available."""
     if score_column not in metadata_columns:
         return None
 

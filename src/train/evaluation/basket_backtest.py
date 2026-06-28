@@ -7,6 +7,7 @@ from src.train.evaluation.validation import _mean_or_nan, _up_rate_or_nan
 
 
 def _basket_backtest_stats(selected_groups):
+    """Summarize equal-weight basket returns across selected prediction dates."""
     if not selected_groups:
         return _empty_basket_backtest_stats()
 
@@ -29,6 +30,7 @@ def _basket_backtest_stats(selected_groups):
     return _summarize_basket_date_stats(date_stats)
 
 def _summarize_basket_date_stats(date_stats):
+    """Convert per-date basket outcomes into basket backtest report metrics."""
     basket_raw_returns = date_stats["basket_raw_return"].to_numpy()
     basket_excess_returns = date_stats["basket_excess_return"].to_numpy()
 
@@ -47,6 +49,7 @@ def _summarize_basket_date_stats(date_stats):
     }
 
 def _empty_basket_backtest_stats():
+    """Return the empty-result shape for Top-N basket backtest reports."""
     return {
         "average_basket_raw_return": np.nan,
         "average_basket_benchmark_return": np.nan,

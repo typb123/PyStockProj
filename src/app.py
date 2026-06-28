@@ -1,3 +1,5 @@
+"""Console app for ticker lookup and SPY-relative prediction display."""
+
 from src.config import PREDICTION_DAYS
 from src.data.data_fetch import fetch_stock_data
 from src.inference.predictor import predict_spy_relative_return
@@ -11,7 +13,7 @@ GOODBYE = "Exiting the program. Thank you and goodbye!"
 
 
 def get_stock_info(ticker):
-    """Fetch and display my stock information"""
+    """Display price context and the model's SPY-relative excess-return signal."""
     try:
         one_month_stock_data = fetch_stock_data(ticker, period="1mo")
         one_year_stock_data = fetch_stock_data(ticker, period="1y")
@@ -73,7 +75,7 @@ def get_stock_info(ticker):
 
 
 def main_menu():
-    """Main Menu for my console application"""
+    """Run the simple interactive ticker prompt."""
     print(WELCOME_MESSAGE)
 
     while True:

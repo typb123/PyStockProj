@@ -86,6 +86,7 @@ def _select_latest_complete_feature_row(
     feature_columns: list[str],
     ticker: str,
 ) -> pd.Series:
+    """Return the newest row usable by every saved model feature column."""
     if processed_data.empty:
         raise ValueError(f"No data available for ticker {ticker}")
 
@@ -122,18 +123,10 @@ def _select_latest_complete_feature_row(
 
 
 def predict_spy_relative_return(ticker: str) -> dict:
-    """
-    Predict SPY-relative excess return for one ticker using saved artifacts.
+    """Predict SPY-relative excess return for one ticker using saved artifacts.
 
-    Linear Regression is reported separately as linear_predicted_return. XGBoost
-    classifier is still loaded for artifact compatibility, while XGBoost
-    regressor predicts excess return versus SPY.
-
-    Parameters:
-        ticker (str)
-
-    Returns:
-        dict: Contains the predicted SPY-relative excess return and signal
+    The linear model is reported as a baseline, while the XGBoost regressor
+    supplies the excess-return signal used by the console app.
     """
     try:
         logging.info(f"Loading model for {ticker}...")

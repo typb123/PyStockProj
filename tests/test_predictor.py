@@ -1,3 +1,5 @@
+"""Prediction-time behavior tests for saved SPY-relative model artifacts."""
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -8,21 +10,29 @@ from src.config import MODEL_PATHS
 
 
 class IdentityScaler:
+    """Test scaler that preserves feature values while exercising scaler calls."""
+
     def transform(self, values):
         return values
 
 
 class FakePreparator:
+    """Minimal saved preparator shape used by predictor artifact loading tests."""
+
     feature_columns = ["Close", "Volume"]
     scalar = IdentityScaler()
 
 
 class FakeLinearModel:
+    """Linear baseline fake returning a stable raw prediction value."""
+
     def predict(self, values):
         return np.array([0.03], dtype=np.float64)
 
 
 class FakeClassifier:
+    """XGBoost classifier fake that records feature alignment."""
+
     last_columns = None
 
     def __init__(self, **kwargs):
@@ -37,6 +47,8 @@ class FakeClassifier:
 
 
 class FakeRegressor:
+    """XGBoost regressor fake that records aligned prediction inputs."""
+
     prediction = 0.05
     last_columns = None
     last_values = None
@@ -54,6 +66,7 @@ class FakeRegressor:
 
 
 def install_predictor_fakes(monkeypatch, latest_row, regressor_prediction=0.05):
+    """Install fake artifacts and data fetches for predictor integration tests."""
     metadata = {
         "linear_features": ["Close"],
         "classifier_features": ["Close", "Volume"],

@@ -1,3 +1,5 @@
+"""Feature contract tests for model-feature ordering and validation guarantees."""
+
 import pytest
 
 from src.features.feature_contract import (

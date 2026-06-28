@@ -1,3 +1,5 @@
+"""Technical indicator tests for past-looking features used by the model contract."""
+
 import numpy as np
 import pandas as pd
 

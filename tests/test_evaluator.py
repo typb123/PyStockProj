@@ -1,3 +1,5 @@
+"""Evaluation report tests for SPY-relative ranked watchlist diagnostics."""
+
 import numpy as np
 import pandas as pd
 import pytest

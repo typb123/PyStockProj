@@ -1,3 +1,5 @@
+"""Data preparation tests for SPY-relative target creation and split metadata."""
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -12,6 +14,7 @@ from src.data.data_prep import DataPreparator
 
 
 def make_panel_feature_frame(tickers=("AAA", "BBB", "SPY"), num_dates=50):
+    """Build a complete synthetic panel with model features and SPY benchmark rows."""
     dates = pd.bdate_range("2024-01-01", periods=num_dates)
     frames = []
 

@@ -286,18 +286,21 @@ def format_horizon_comparison_summary(horizon_reports):
 
 
 def _format_percent(value):
+    """Format optional numeric report values as percentages for logs."""
     if value is None or pd.isna(value):
         return "n/a"
     return f"{float(value):.2%}"
 
 
 def _format_percent_delta(left, right):
+    """Format the percentage-point difference between two report values."""
     if left is None or right is None or pd.isna(left) or pd.isna(right):
         return "n/a"
     return f"{float(left) - float(right):.2%}"
 
 
 def _sanitize_cache_key(value):
+    """Normalize ticker and period strings for filesystem cache paths."""
     return re.sub(r"[^A-Za-z0-9_.-]+", "_", str(value)).strip("_")
 
 
@@ -870,6 +873,7 @@ def train_models(
 
 
 def _positive_int(value, argument_name="value"):
+    """Parse a command-line value as a positive integer."""
     try:
         parsed = int(value)
     except ValueError as exc:
@@ -885,18 +889,22 @@ def _positive_int(value, argument_name="value"):
 
 
 def _positive_prediction_days(value):
+    """Parse the prediction horizon CLI argument."""
     return _positive_int(value, "prediction_days")
 
 
 def _positive_random_trials(value):
+    """Parse the random baseline trial-count CLI argument."""
     return _positive_int(value, "random_trials")
 
 
 def _positive_random_trial_workers(value):
+    """Parse the random baseline worker-count CLI argument."""
     return _positive_int(value, "random_trial_workers")
 
 
 def parse_args(argv=None):
+    """Parse trainer CLI options and resolve the requested prediction horizons."""
     parser = argparse.ArgumentParser(
         description="Train SPY-relative stock prediction models."
     )
@@ -962,6 +970,7 @@ def parse_args(argv=None):
 
 
 def main(argv=None):
+    """Run the end-to-end training workflow from CLI arguments."""
     args = parse_args(argv)
     use_cache = not args.no_cache
     logging.info(f"Selected YFinance period: {args.period}")
