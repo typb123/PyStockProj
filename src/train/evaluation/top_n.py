@@ -14,7 +14,12 @@ from src.train.evaluation.baselines import (
     _resolve_relative_momentum_score_column,
     _universe_ranked_selection_stats,
 )
-from src.train.evaluation.basket_backtest import _basket_backtest_stats
+from src.train.evaluation.basket_backtest import (
+    _basket_backtest_date_stats,
+    _basket_backtest_stats,
+    _bootstrap_basket_confidence_intervals,
+    _summarize_basket_date_stats,
+)
 from src.train.evaluation.ranked_selection import (
     _ranked_selection_stats,
     _select_top_n_by_score,
@@ -34,6 +39,8 @@ def build_top_n_ranked_selection_report(
     random_trial_workers=4,
     momentum_score_column=None,
     prediction_days=None,
+    bootstrap_trials=500,
+    bootstrap_seed=42,
 ):
     """Evaluate ranked stock selection within each prediction date.
 
@@ -50,6 +57,8 @@ def build_top_n_ranked_selection_report(
         random_trial_workers=random_trial_workers,
         momentum_score_column=momentum_score_column,
         prediction_days=prediction_days,
+        bootstrap_trials=bootstrap_trials,
+        bootstrap_seed=bootstrap_seed,
     )["ranked_selection"]
 
 def build_top_n_basket_backtest_report(
@@ -61,6 +70,8 @@ def build_top_n_basket_backtest_report(
     random_trial_workers=4,
     momentum_score_column=None,
     prediction_days=None,
+    bootstrap_trials=500,
+    bootstrap_seed=42,
 ):
     """Summarize equal-weight top-N baskets selected within each prediction date.
 
@@ -77,6 +88,8 @@ def build_top_n_basket_backtest_report(
         random_trial_workers=random_trial_workers,
         momentum_score_column=momentum_score_column,
         prediction_days=prediction_days,
+        bootstrap_trials=bootstrap_trials,
+        bootstrap_seed=bootstrap_seed,
     )["basket_backtest"]
 
 
@@ -128,6 +141,8 @@ def build_top_n_selection_reports(
     random_trial_workers=4,
     momentum_score_column=None,
     prediction_days=None,
+    bootstrap_trials=500,
+    bootstrap_seed=42,
 ):
     """Build regressor-ranked Top-N reports using predicted excess return."""
     return _build_top_n_selection_reports_for_score(
@@ -140,6 +155,8 @@ def build_top_n_selection_reports(
         random_trial_workers=random_trial_workers,
         momentum_score_column=momentum_score_column,
         prediction_days=prediction_days,
+        bootstrap_trials=bootstrap_trials,
+        bootstrap_seed=bootstrap_seed,
     )
 
 
@@ -152,6 +169,8 @@ def build_probability_ranked_top_n_selection_reports(
     random_trial_workers=4,
     momentum_score_column=None,
     prediction_days=None,
+    bootstrap_trials=500,
+    bootstrap_seed=42,
 ):
     """Build classifier-probability-ranked Top-N reports."""
     return _build_top_n_selection_reports_for_score(
@@ -164,6 +183,8 @@ def build_probability_ranked_top_n_selection_reports(
         random_trial_workers=random_trial_workers,
         momentum_score_column=momentum_score_column,
         prediction_days=prediction_days,
+        bootstrap_trials=bootstrap_trials,
+        bootstrap_seed=bootstrap_seed,
     )
 
 
@@ -177,12 +198,16 @@ def _build_top_n_selection_reports_for_score(
     random_trial_workers=4,
     momentum_score_column=None,
     prediction_days=None,
+    bootstrap_trials=500,
+    bootstrap_seed=42,
 ):
     """Build ranked-selection and basket-backtest Top-N reports for a score column."""
     if random_trials < 1:
         raise ValueError("random_trials must be at least 1.")
     if random_trial_workers < 1:
         raise ValueError("random_trial_workers must be at least 1.")
+    if bootstrap_trials < 1:
+        raise ValueError("bootstrap_trials must be at least 1.")
 
     metadata = split_metadata.copy()
     ranking_scores = np.asarray(ranking_scores, dtype=float)
@@ -209,9 +234,10 @@ def _build_top_n_selection_reports_for_score(
     basket_backtest_by_year_report = {}
     grouped_metadata_by_year = _grouped_metadata_by_year(grouped_metadata)
     universe_ranked_stats = _universe_ranked_selection_stats(grouped_metadata)
-    universe_basket_stats = _basket_backtest_stats(
+    universe_date_stats = _basket_backtest_date_stats(
         [date_group for _, date_group in grouped_metadata]
     )
+    universe_basket_stats = _summarize_basket_date_stats(universe_date_stats)
     benchmark_basket_stats = _benchmark_basket_backtest_stats(grouped_metadata)
 
     for top_n in top_n_values:
@@ -248,6 +274,11 @@ def _build_top_n_selection_reports_for_score(
             relative_momentum_score_column,
             metadata_columns,
         )
+        model_date_stats = _basket_backtest_date_stats(model_selected_groups)
+        momentum_date_stats = _available_basket_date_stats(momentum_selected_groups)
+        relative_momentum_date_stats = _available_basket_date_stats(
+            relative_momentum_selected_groups
+        )
 
         ranked_selection_report[key] = {
             "model": _ranked_selection_stats(
@@ -271,7 +302,7 @@ def _build_top_n_selection_reports_for_score(
             "universe": universe_ranked_stats,
         }
         basket_backtest_report[key] = {
-            "model": _basket_backtest_stats(model_selected_groups),
+            "model": _summarize_basket_date_stats(model_date_stats),
             "random_baseline": random_basket_stats,
             "momentum_baseline": _combined_momentum_basket_backtest_stats(
                 momentum_selected_groups,
@@ -283,6 +314,14 @@ def _build_top_n_selection_reports_for_score(
             ),
             "universe": universe_basket_stats,
             "benchmark": benchmark_basket_stats,
+            "bootstrap_confidence_intervals": _bootstrap_basket_confidence_intervals(
+                model_date_stats,
+                momentum_date_stats=momentum_date_stats,
+                relative_momentum_date_stats=relative_momentum_date_stats,
+                universe_date_stats=universe_date_stats,
+                bootstrap_trials=bootstrap_trials,
+                bootstrap_seed=bootstrap_seed,
+            ),
         }
         basket_backtest_by_year_report[key] = _build_basket_backtest_by_year_report(
             grouped_metadata_by_year,
@@ -334,6 +373,14 @@ def _selected_groups_by_year(selected_groups):
         year = _prediction_year_from_group(selected_group)
         grouped_by_year.setdefault(year, []).append(selected_group)
     return grouped_by_year
+
+
+def _available_basket_date_stats(selected_groups):
+    """Return per-date basket stats only when a baseline is available."""
+    if selected_groups is None:
+        return None
+
+    return _basket_backtest_date_stats(selected_groups)
 
 
 def _build_basket_backtest_by_year_report(

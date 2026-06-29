@@ -209,3 +209,18 @@ Implementation note:
 * Saved metadata records the selected candidate and params.
 * Tests passed: `146 passed`.
 * Current read: this is infrastructure, not proof of improvement yet. Next step is to run the 10d / 10-year experiment and see which candidate is selected.
+
+### Validation-selected config checks
+
+* 10d / 10y improved versus the prior fixed-config run and beat momentum across top-5, top-10, and top-20.
+* 10d / max still beat random/universe but trailed momentum slightly.
+* 20d / 10y beat random/universe strongly but still trailed momentum, especially in top-5 and top-10.
+* Current read: validation-based selection is useful infrastructure, but it does not yet prove a durable model edge. The model’s advantage is still horizon- and period-sensitive.
+* Next step: inspect which candidates were selected and add stability/significance diagnostics before expanding the config search.
+
+### Bootstrap confidence intervals
+
+* Added date-level bootstrap confidence intervals to Top-N basket diagnostics.
+* Bootstrap resamples by `prediction_date`, preserving daily basket structure.
+* 10d / 10y still shows positive model excess, but model-minus-momentum CIs cross zero.
+* Current read: the model clearly beats random/universe in this run, but the edge over momentum is not statistically convincing yet.

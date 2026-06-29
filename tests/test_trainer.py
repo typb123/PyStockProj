@@ -509,6 +509,68 @@ def test_format_top_n_basket_backtest_summary_formats_normal_report():
     )
 
 
+def test_format_top_n_basket_backtest_summary_formats_bootstrap_ci_line():
+    report = {
+        "top_5": {
+            "model": {
+                "average_basket_raw_return": 0.0123,
+                "average_basket_excess_return": 0.01,
+                "beat_benchmark_rate": 0.5288,
+            },
+            "random_baseline": {
+                "average_basket_excess_return": 0.004,
+            },
+            "momentum_baseline": {
+                "available": True,
+                "average_basket_excess_return": 0.008,
+            },
+            "relative_momentum_baseline": {
+                "available": True,
+                "average_basket_excess_return": 0.009,
+            },
+            "universe": {
+                "average_basket_excess_return": 0.0015,
+            },
+            "benchmark": {
+                "average_basket_raw_return": 0.0023,
+            },
+            "bootstrap_confidence_intervals": {
+                "model_average_basket_excess_return": {
+                    "available": True,
+                    "ci_lower": 0.0052,
+                    "ci_upper": 0.0178,
+                    "confidence_level": 0.95,
+                },
+                "model_minus_momentum_baseline_average_basket_excess_return": {
+                    "available": True,
+                    "ci_lower": -0.0008,
+                    "ci_upper": 0.0083,
+                    "confidence_level": 0.95,
+                },
+                "model_minus_relative_momentum_baseline_average_basket_excess_return": {
+                    "available": True,
+                    "ci_lower": -0.001,
+                    "ci_upper": 0.006,
+                    "confidence_level": 0.95,
+                },
+                "model_minus_universe_average_basket_excess_return": {
+                    "available": True,
+                    "ci_lower": 0.001,
+                    "ci_upper": 0.012,
+                    "confidence_level": 0.95,
+                },
+            },
+        }
+    }
+
+    summary = trainer.format_top_n_basket_backtest_summary(report)
+
+    assert "model excess 95% CI=[0.52%, 1.78%]" in summary
+    assert "model minus momentum 95% CI=[-0.08%, 0.83%]" in summary
+    assert "model minus relative momentum 95% CI=[-0.10%, 0.60%]" in summary
+    assert "model minus universe 95% CI=[0.10%, 1.20%]" in summary
+
+
 def test_format_top_n_basket_backtest_summary_handles_unavailable_momentum():
     report = {
         "top_10": {

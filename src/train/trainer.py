@@ -240,6 +240,11 @@ def format_top_n_basket_backtest_summary(
             f"model minus relative momentum={minus_relative_momentum_text}, "
             f"beat benchmark rate={_format_percent(beat_rate)}"
         )
+        ci_text = _format_basket_bootstrap_ci_summary(
+            bucket_report.get("bootstrap_confidence_intervals", {})
+        )
+        if ci_text:
+            lines.append(f"  {ci_text}")
 
     return "\n".join(lines)
 
@@ -381,6 +386,54 @@ def _format_count(value):
     if value is None or pd.isna(value):
         return "n/a"
     return str(int(value))
+
+
+def _format_basket_bootstrap_ci_summary(ci_report):
+    """Format compact bootstrap CI diagnostics for one basket bucket."""
+    if not ci_report:
+        return ""
+
+    ci_specs = [
+        (
+            "model excess",
+            ci_report.get("model_average_basket_excess_return"),
+        ),
+        (
+            "model minus momentum",
+            ci_report.get("model_minus_momentum_baseline_average_basket_excess_return"),
+        ),
+        (
+            "model minus relative momentum",
+            ci_report.get(
+                "model_minus_relative_momentum_baseline_average_basket_excess_return"
+            ),
+        ),
+        (
+            "model minus universe",
+            ci_report.get("model_minus_universe_average_basket_excess_return"),
+        ),
+    ]
+    formatted_intervals = [
+        _format_bootstrap_interval(label, interval)
+        for label, interval in ci_specs
+        if interval and interval.get("available") is True
+    ]
+    return ", ".join(formatted_intervals)
+
+
+def _format_bootstrap_interval(label, interval):
+    """Format one percentile bootstrap interval for logs."""
+    confidence_level = interval.get("confidence_level")
+    confidence_text = (
+        "CI"
+        if confidence_level is None or pd.isna(confidence_level)
+        else f"{float(confidence_level):.0%} CI"
+    )
+    return (
+        f"{label} {confidence_text}="
+        f"[{_format_percent(interval.get('ci_lower'))}, "
+        f"{_format_percent(interval.get('ci_upper'))}]"
+    )
 
 
 def _finite_report_float(value):

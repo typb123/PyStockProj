@@ -24,6 +24,7 @@ from src.train.evaluator import (
 )
 import src.train.evaluation as evaluation
 import src.train.evaluation.baselines as baselines
+from src.train.evaluation.basket_backtest import _bootstrap_basket_confidence_intervals
 import src.train.evaluator as evaluator
 
 
@@ -467,6 +468,134 @@ def test_model_only_top_n_basket_backtest_report_skips_baselines():
         report["top_1"]["model"]["average_basket_excess_return"],
         (0.09 + -0.06) / 2,
     )
+
+
+def test_top_n_basket_bootstrap_confidence_intervals_resample_prediction_dates():
+    metadata = pd.DataFrame(
+        {
+            "Ticker": ["AAA", "BBB", "AAA", "BBB"],
+            "prediction_date": pd.to_datetime(
+                ["2024-01-01", "2024-01-01", "2024-01-02", "2024-01-02"]
+            ),
+            "raw_forward_return": [0.10, 0.00, 0.20, 0.00],
+            "benchmark_forward_return": [0.00, 0.00, 0.00, 0.00],
+            "excess_forward_return": [0.10, 0.00, 0.20, 0.00],
+            "beat_benchmark_target": [1, 0, 1, 0],
+            "dailyReturn": [0.10, 0.00, 0.20, 0.00],
+        }
+    )
+    ranked_predictions = np.array([0.90, 0.80, 0.70, 0.60])
+
+    report = build_top_n_selection_reports(
+        metadata,
+        ranked_predictions,
+        top_n_values=(2,),
+        random_trials=2,
+        bootstrap_trials=200,
+        bootstrap_seed=7,
+    )
+
+    model_ci = report["basket_backtest"]["top_2"][
+        "bootstrap_confidence_intervals"
+    ]["model_average_basket_excess_return"]
+    assert np.isclose(model_ci["mean"], 0.075)
+    assert 0.05 <= model_ci["ci_lower"] <= model_ci["mean"]
+    assert model_ci["mean"] <= model_ci["ci_upper"] <= 0.10
+    assert model_ci["resampled_dates"] == 2
+
+
+def test_top_n_basket_bootstrap_confidence_intervals_are_deterministic():
+    metadata = make_ranked_selection_metadata()
+    ranked_predictions = np.array([0.90, 0.80, 0.70, 0.10, 0.20, 0.30])
+
+    first_report = build_top_n_selection_reports(
+        metadata,
+        ranked_predictions,
+        top_n_values=(1,),
+        random_seed=11,
+        random_trials=3,
+        bootstrap_trials=100,
+        bootstrap_seed=123,
+    )
+    second_report = build_top_n_selection_reports(
+        metadata,
+        ranked_predictions,
+        top_n_values=(1,),
+        random_seed=11,
+        random_trials=3,
+        bootstrap_trials=100,
+        bootstrap_seed=123,
+    )
+
+    assert (
+        first_report["basket_backtest"]["top_1"]["bootstrap_confidence_intervals"]
+        == second_report["basket_backtest"]["top_1"]["bootstrap_confidence_intervals"]
+    )
+
+
+def test_top_n_basket_bootstrap_confidence_intervals_are_additive():
+    metadata = make_ranked_selection_metadata()
+    ranked_predictions = np.array([0.90, 0.80, 0.70, 0.10, 0.20, 0.30])
+
+    report = build_top_n_selection_reports(
+        metadata,
+        ranked_predictions,
+        top_n_values=(1,),
+        random_seed=7,
+        random_trials=2,
+        bootstrap_trials=50,
+    )
+    basket_top_1 = report["basket_backtest"]["top_1"]
+
+    assert {
+        "model",
+        "random_baseline",
+        "momentum_baseline",
+        "relative_momentum_baseline",
+        "universe",
+        "benchmark",
+        "bootstrap_confidence_intervals",
+    }.issubset(basket_top_1)
+    ci_report = basket_top_1["bootstrap_confidence_intervals"]
+    assert set(ci_report) == {
+        "model_average_basket_excess_return",
+        "momentum_baseline_average_basket_excess_return",
+        "relative_momentum_baseline_average_basket_excess_return",
+        "universe_average_basket_excess_return",
+        "model_minus_momentum_baseline_average_basket_excess_return",
+        "model_minus_relative_momentum_baseline_average_basket_excess_return",
+        "model_minus_universe_average_basket_excess_return",
+    }
+    model_ci = ci_report["model_average_basket_excess_return"]
+    assert model_ci["bootstrap_trials"] == 50
+    assert model_ci["confidence_level"] == 0.95
+    assert model_ci["ci_lower"] <= model_ci["mean"] <= model_ci["ci_upper"]
+
+
+def test_basket_bootstrap_confidence_intervals_handle_empty_and_single_date():
+    empty_report = _bootstrap_basket_confidence_intervals(
+        pd.DataFrame(columns=["prediction_date", "basket_excess_return"]),
+        bootstrap_trials=10,
+    )
+    empty_model_ci = empty_report["model_average_basket_excess_return"]
+    assert empty_model_ci["available"] is False
+    assert empty_model_ci["resampled_dates"] == 0
+    assert "No prediction dates" in empty_model_ci["reason"]
+
+    single_date_report = _bootstrap_basket_confidence_intervals(
+        pd.DataFrame(
+            {
+                "prediction_date": pd.to_datetime(["2024-01-01"]),
+                "basket_excess_return": [0.04],
+            }
+        ),
+        bootstrap_trials=10,
+    )
+    single_model_ci = single_date_report["model_average_basket_excess_return"]
+    assert single_model_ci["mean"] == 0.04
+    assert single_model_ci["ci_lower"] == 0.04
+    assert single_model_ci["ci_upper"] == 0.04
+    assert "Fewer than two prediction dates" in single_model_ci["note"]
 
 
 def test_probability_ranked_top_n_selection_reports_rank_by_probability():
@@ -1495,6 +1624,7 @@ def test_top_n_basket_backtest_includes_universe_and_benchmark_summaries():
         "relative_momentum_baseline",
         "universe",
         "benchmark",
+        "bootstrap_confidence_intervals",
     }
     assert np.isclose(report["top_1"]["universe"]["average_basket_raw_return"], 0.05)
     assert np.isclose(
