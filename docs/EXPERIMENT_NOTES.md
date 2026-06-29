@@ -197,3 +197,15 @@ Implementation note:
   * top-20 excess: -0.01%
 * Current read: classifier probability is not useful as a standalone ranking signal in the current setup.
 * Next step: keep regressor-ranked Top-N as the primary ranking report and add by-year diagnostics.
+
+### Validation-based regressor config selection
+
+* Added validation-based XGBoost regressor config selection.
+* Candidate 0 is the current/default regressor config; two small conservative variants are tested against it.
+* Each candidate is trained on the train split and scored on validation Top-N basket excess return.
+* Selection metric is mean validation excess across top-5, top-10, and top-20.
+* Validation scoring is model-only, so random/momentum/universe baselines are not recomputed for every candidate.
+* Final test reporting still runs once using the selected regressor.
+* Saved metadata records the selected candidate and params.
+* Tests passed: `146 passed`.
+* Current read: this is infrastructure, not proof of improvement yet. Next step is to run the 10d / 10-year experiment and see which candidate is selected.

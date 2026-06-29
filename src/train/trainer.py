@@ -23,6 +23,7 @@ from src.train.evaluation import (
     build_actual_return_baseline_report,
     build_classification_report,
     build_combined_signal_report,
+    build_model_only_top_n_basket_backtest_report,
     build_probability_summary,
     build_probability_tail_report,
     build_probability_threshold_report,
@@ -57,6 +58,7 @@ ALL_HORIZONS = [5, 10, 20, 50]
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 YFINANCE_CACHE_DIR = PROJECT_ROOT / "data/cache/yfinance"
 YFINANCE_CACHE_FORMAT = "csv"
+VALIDATION_TOP_N_SELECTION_VALUES = (5, 10, 20)
 
 
 def validate_input_data(data):
@@ -381,6 +383,248 @@ def _format_count(value):
     return str(int(value))
 
 
+def _finite_report_float(value):
+    """Return a finite float for scalar report values, otherwise None."""
+    if value is None or pd.isna(value):
+        return None
+    value = float(value)
+    if not np.isfinite(value):
+        return None
+    return value
+
+
+def _candidate_params_with_overrides(base_params, overrides):
+    """Return XGBoost params with conservative candidate overrides applied."""
+    candidate_params = dict(base_params)
+    candidate_params.update(overrides)
+    return candidate_params
+
+
+def build_xgboost_regressor_candidate_configs(base_params=None):
+    """Build the small validation-selection candidate set for the regressor."""
+    base_params = dict(XG_PARAMS_REGRESSOR if base_params is None else base_params)
+    base_max_depth = int(base_params.get("max_depth", 5))
+    base_min_child_weight = float(base_params.get("min_child_weight", 5))
+    base_gamma = float(base_params.get("gamma", 0.05))
+    base_reg_lambda = float(base_params.get("reg_lambda", 5.0))
+
+    candidate_specs = [
+        ("candidate_0_baseline", {}),
+        (
+            "candidate_1_shallower_more_regularized",
+            {
+                "max_depth": max(2, base_max_depth - 1),
+                "min_child_weight": base_min_child_weight + 2,
+                "gamma": base_gamma * 1.5,
+                "reg_lambda": base_reg_lambda * 1.5,
+            },
+        ),
+        (
+            "candidate_2_slightly_deeper_less_regularized",
+            {
+                "max_depth": base_max_depth + 1,
+                "min_child_weight": max(1, base_min_child_weight - 2),
+                "gamma": base_gamma * 0.7,
+                "reg_lambda": base_reg_lambda * 0.7,
+            },
+        ),
+    ]
+
+    candidates = []
+    seen_param_sets = set()
+    for candidate_id, (candidate_name, overrides) in enumerate(candidate_specs):
+        params = _candidate_params_with_overrides(base_params, overrides)
+        param_key = tuple(sorted(params.items()))
+        if param_key in seen_param_sets:
+            continue
+        seen_param_sets.add(param_key)
+        candidates.append(
+            {
+                "candidate_id": candidate_id,
+                "candidate_name": candidate_name,
+                "params": params,
+            }
+        )
+
+    return candidates
+
+
+def _validation_top_n_model_excess_returns(
+    validation_basket_report,
+    top_n_values=VALIDATION_TOP_N_SELECTION_VALUES,
+):
+    """Extract bucket-level validation model basket excess returns."""
+    bucket_excess_returns = {}
+    usable_values = []
+
+    for top_n in top_n_values:
+        bucket_name = f"top_{top_n}"
+        excess_return = _finite_report_float(
+            validation_basket_report.get(bucket_name, {})
+            .get("model", {})
+            .get("average_basket_excess_return")
+        )
+        bucket_excess_returns[bucket_name] = excess_return
+        if excess_return is not None:
+            usable_values.append(excess_return)
+
+    return bucket_excess_returns, usable_values
+
+
+def _validation_top_n_mean_excess_return(
+    validation_basket_report,
+    top_n_values=VALIDATION_TOP_N_SELECTION_VALUES,
+):
+    """Mean available validation model basket excess across Top-N buckets."""
+    bucket_excess_returns, usable_values = _validation_top_n_model_excess_returns(
+        validation_basket_report,
+        top_n_values=top_n_values,
+    )
+    if not usable_values:
+        return np.nan, bucket_excess_returns, 0
+
+    return float(np.mean(usable_values)), bucket_excess_returns, len(usable_values)
+
+
+def _is_better_validation_candidate(candidate_score, best_score):
+    """Return whether candidate_score should replace best_score."""
+    if candidate_score is None or pd.isna(candidate_score):
+        return False
+    if best_score is None or pd.isna(best_score):
+        return True
+    return float(candidate_score) > float(best_score)
+
+
+def select_xgboost_regressor_by_validation_top_n(
+    x_train,
+    y_train,
+    x_val,
+    y_val,
+    validation_split_metadata,
+    candidate_configs=None,
+    top_n_values=VALIDATION_TOP_N_SELECTION_VALUES,
+):
+    """Train candidate regressors and select by validation Top-N basket excess."""
+    candidate_configs = (
+        build_xgboost_regressor_candidate_configs()
+        if candidate_configs is None
+        else list(candidate_configs)
+    )
+    if not candidate_configs:
+        raise ValueError("At least one XGBoost regressor candidate is required.")
+
+    candidate_reports = []
+    selected_model = None
+    selected_candidate_report = None
+    best_score = None
+
+    for candidate_order, candidate_config in enumerate(candidate_configs):
+        params = dict(candidate_config["params"])
+        candidate_id = candidate_config.get("candidate_id", candidate_order)
+        candidate_name = candidate_config.get(
+            "candidate_name",
+            f"candidate_{candidate_id}",
+        )
+
+        candidate_model = XGBRegressor(**params)
+        candidate_model.fit(
+            x_train,
+            y_train,
+            eval_set=[(x_val, y_val)],
+            verbose=False,
+        )
+        validation_predictions = candidate_model.predict(x_val)
+        validation_basket_report = build_model_only_top_n_basket_backtest_report(
+            validation_split_metadata,
+            validation_predictions,
+            top_n_values=top_n_values,
+        )
+        (
+            validation_score,
+            bucket_excess_returns,
+            available_bucket_count,
+        ) = _validation_top_n_mean_excess_return(
+            validation_basket_report,
+            top_n_values=top_n_values,
+        )
+        candidate_report = {
+            "candidate_id": candidate_id,
+            "candidate_name": candidate_name,
+            "params": params,
+            "validation_top_n_mean_excess_return": validation_score,
+            "validation_top_n_basket_excess_returns": bucket_excess_returns,
+            "available_bucket_count": available_bucket_count,
+        }
+        candidate_reports.append(candidate_report)
+
+        if selected_model is None or _is_better_validation_candidate(
+            validation_score,
+            best_score,
+        ):
+            selected_model = candidate_model
+            selected_candidate_report = candidate_report
+            best_score = validation_score
+
+    if selected_candidate_report is None:
+        selected_candidate_report = candidate_reports[0]
+
+    for candidate_report in candidate_reports:
+        candidate_report["selected"] = candidate_report is selected_candidate_report
+
+    selection_report = {
+        "selection_metric": "validation_top_n_mean_excess_return",
+        "selection_bucket_policy": (
+            "Mean of available top_5/top_10/top_20 model "
+            "average_basket_excess_return values; unavailable or NaN buckets "
+            "are ignored."
+        ),
+        "top_n_values": list(top_n_values),
+        "candidates": candidate_reports,
+        "selected_candidate_id": selected_candidate_report["candidate_id"],
+        "selected_candidate_name": selected_candidate_report["candidate_name"],
+        "selected_params": selected_candidate_report["params"],
+        "selected_validation_top_n_mean_excess_return": (
+            selected_candidate_report["validation_top_n_mean_excess_return"]
+        ),
+    }
+
+    return selected_model, selection_report
+
+
+def format_xgboost_regressor_validation_selection_report(selection_report):
+    """Format validation-based XGBoost regressor selection for INFO logs."""
+    lines = ["XGBoost Regressor Validation Top-N Selection Report:"]
+    candidates = selection_report.get("candidates", [])
+
+    for candidate_report in candidates:
+        selected_suffix = " selected" if candidate_report.get("selected") else ""
+        bucket_excess_returns = candidate_report.get(
+            "validation_top_n_basket_excess_returns",
+            {},
+        )
+        bucket_names = sorted(
+            bucket_excess_returns,
+            key=lambda bucket_name: int(bucket_name.split("_", maxsplit=1)[1]),
+        )
+        bucket_text = ", ".join(
+            f"{bucket_name}={_format_percent(bucket_excess_returns.get(bucket_name))}"
+            for bucket_name in bucket_names
+        )
+        lines.append(
+            f"{candidate_report.get('candidate_name')}{selected_suffix}: "
+            f"score={_format_percent(candidate_report.get('validation_top_n_mean_excess_return'))}, "
+            f"{bucket_text}, "
+            f"params={candidate_report.get('params')}"
+        )
+
+    lines.append(
+        "selected="
+        f"{selection_report.get('selected_candidate_name')} "
+        f"score={_format_percent(selection_report.get('selected_validation_top_n_mean_excess_return'))}"
+    )
+    return "\n".join(lines)
+
+
 def _sanitize_cache_key(value):
     """Normalize ticker and period strings for filesystem cache paths."""
     return re.sub(r"[^A-Za-z0-9_.-]+", "_", str(value)).strip("_")
@@ -577,6 +821,7 @@ def log_xgboost_test_report(
     prediction_days=PREDICTION_DAYS,
     random_trials=100,
     random_trial_workers=4,
+    regressor_validation_selection_report=None,
 ):
     """
     Log final SPY-relative XGBoost diagnostics without tuning on test data.
@@ -674,6 +919,12 @@ def log_xgboost_test_report(
         f"XGBoost Regressor Excess Return Correlation Report: {return_correlation_report}"
     )
     logging.info(f"XGBoost Combined Signal Report: {combined_signal_report}")
+    if regressor_validation_selection_report:
+        logging.info(
+            format_xgboost_regressor_validation_selection_report(
+                regressor_validation_selection_report
+            )
+        )
     logging.info(format_top_n_ranked_selection_summary(top_n_ranked_selection_report))
     logging.info(format_top_n_basket_backtest_summary(top_n_basket_backtest_report))
     if top_n_basket_backtest_by_year_report:
@@ -717,6 +968,7 @@ def log_xgboost_test_report(
         f"{classifier_top_n_basket_backtest_by_year_report}"
     )
     return {
+        "regressor_validation_selection": regressor_validation_selection_report or {},
         "ranked_selection": top_n_ranked_selection_report,
         "basket_backtest": top_n_basket_backtest_report,
         "basket_backtest_by_year": top_n_basket_backtest_by_year_report,
@@ -953,12 +1205,19 @@ def train_models(
     log_feature_importances("XGBoost Classifier", feature_importance_clf)
 
     logging.info("Training XGBoost Regressor...")
-    regressor = XGBRegressor(**(regressor_params or XG_PARAMS_REGRESSOR))
-    regressor.fit(
+    regressor_candidate_configs = build_xgboost_regressor_candidate_configs(
+        regressor_params or XG_PARAMS_REGRESSOR
+    )
+    (
+        regressor,
+        regressor_validation_selection_report,
+    ) = select_xgboost_regressor_by_validation_top_n(
         x_train_regressor,
         y_train,
-        eval_set=[(x_val_regressor, y_val)],
-        verbose=False,
+        x_val_regressor,
+        y_val,
+        prepared_data["split_metadata"]["val"],
+        candidate_configs=regressor_candidate_configs,
     )
     evaluate_model(regressor, x_test_regressor, y_test, model_type="regression")
     # Validation probabilities choose the beat-benchmark threshold; test evaluates it once.
@@ -975,6 +1234,7 @@ def train_models(
         prediction_days=prediction_days,
         random_trials=random_trials,
         random_trial_workers=random_trial_workers,
+        regressor_validation_selection_report=regressor_validation_selection_report,
     )
 
     importances_reg = regressor.feature_importances_
@@ -989,6 +1249,15 @@ def train_models(
         classifier_features,
         regressor_features,
         prediction_days,
+    )
+    model_metadata["regressor_validation_selection"] = (
+        regressor_validation_selection_report
+    )
+    model_metadata["xgboost_regressor_selected_candidate_name"] = (
+        regressor_validation_selection_report.get("selected_candidate_name")
+    )
+    model_metadata["xgboost_regressor_selected_params"] = (
+        regressor_validation_selection_report.get("selected_params")
     )
     saved_paths = save_horizon_model_artifacts(
         prediction_days,
@@ -1008,6 +1277,10 @@ def train_models(
         "prediction_days": prediction_days,
         "model_metadata": model_metadata,
         "artifact_paths": saved_paths,
+        "regressor_validation_selection": xgboost_test_reports.get(
+            "regressor_validation_selection",
+            {},
+        ),
         "basket_backtest": xgboost_test_reports["basket_backtest"],
     }
 

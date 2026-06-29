@@ -8,6 +8,7 @@ from src.train.evaluator import (
     build_actual_return_baseline_report,
     build_classification_report,
     build_combined_signal_report,
+    build_model_only_top_n_basket_backtest_report,
     build_probability_ranked_top_n_selection_reports,
     build_probability_summary,
     build_probability_tail_report,
@@ -448,6 +449,24 @@ def test_top_n_selection_reports_match_compatibility_wrappers():
 
     assert combined_report["ranked_selection"] == ranked_report
     assert combined_report["basket_backtest"] == basket_report
+
+
+def test_model_only_top_n_basket_backtest_report_skips_baselines():
+    metadata = make_ranked_selection_metadata()
+    ranked_predictions = np.array([0.90, 0.80, 0.70, 0.10, 0.20, 0.30])
+
+    report = build_model_only_top_n_basket_backtest_report(
+        metadata,
+        ranked_predictions,
+        top_n_values=(1,),
+    )
+
+    assert set(report) == {"top_1"}
+    assert set(report["top_1"]) == {"model"}
+    assert np.isclose(
+        report["top_1"]["model"]["average_basket_excess_return"],
+        (0.09 + -0.06) / 2,
+    )
 
 
 def test_probability_ranked_top_n_selection_reports_rank_by_probability():

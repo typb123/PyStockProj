@@ -79,6 +79,46 @@ def build_top_n_basket_backtest_report(
         prediction_days=prediction_days,
     )["basket_backtest"]
 
+
+def build_model_only_top_n_basket_backtest_report(
+    split_metadata,
+    ranked_predictions,
+    top_n_values=(5, 10, 20),
+):
+    """Summarize model-selected Top-N baskets without baseline evaluation.
+
+    This intentionally skips random and momentum baselines so validation model
+    selection can optimize the same basket metric used in final reports without
+    running expensive random trials for every candidate.
+    """
+    metadata = split_metadata.copy()
+    ranked_predictions = np.asarray(ranked_predictions, dtype=float)
+    _validate_ranked_selection_inputs(metadata, ranked_predictions)
+
+    score_column = "predicted_excess_return"
+    metadata[score_column] = ranked_predictions
+    metadata = metadata[metadata["Ticker"] != "SPY"].copy()
+    grouped_metadata = list(metadata.groupby("prediction_date", sort=True))
+    basket_backtest_report = {}
+
+    for top_n in top_n_values:
+        key = f"top_{top_n}"
+        selected_count_by_date = {
+            prediction_date: min(int(top_n), len(date_group))
+            for prediction_date, date_group in grouped_metadata
+        }
+        model_selected_groups = _select_top_n_by_score(
+            grouped_metadata,
+            selected_count_by_date,
+            score_column,
+        )
+        basket_backtest_report[key] = {
+            "model": _basket_backtest_stats(model_selected_groups),
+        }
+
+    return basket_backtest_report
+
+
 def build_top_n_selection_reports(
     split_metadata,
     ranked_predictions,

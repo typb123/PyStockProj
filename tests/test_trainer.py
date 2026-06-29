@@ -7,6 +7,7 @@ import pytest
 
 from src.config import (
     TRAINING_TICKERS,
+    XG_PARAMS_REGRESSOR,
 )
 from src.features.feature_contract import (
     ABSOLUTE_MOMENTUM_FEATURE_COLUMNS,
@@ -724,6 +725,296 @@ def test_training_tickers_have_no_duplicates():
     assert len(TRAINING_TICKERS) == len(set(TRAINING_TICKERS))
 
 
+def test_xgboost_regressor_candidates_include_default_baseline():
+    candidates = trainer.build_xgboost_regressor_candidate_configs()
+
+    assert candidates[0]["candidate_id"] == 0
+    assert candidates[0]["candidate_name"] == "candidate_0_baseline"
+    assert candidates[0]["params"] == XG_PARAMS_REGRESSOR
+    assert len(candidates) >= 2
+
+
+def test_validation_top_n_selection_chooses_best_candidate_and_preserves_splits(
+    monkeypatch,
+):
+    captured_fit_calls = []
+
+    class FakeRegressor:
+        def __init__(self, **params):
+            self.params = params
+            self.feature_importances_ = np.array([1.0])
+
+        def fit(self, x, y, eval_set=None, verbose=False):
+            captured_fit_calls.append(
+                {
+                    "x": x.copy(),
+                    "y": np.asarray(y).copy(),
+                    "eval_x": eval_set[0][0].copy(),
+                    "eval_y": np.asarray(eval_set[0][1]).copy(),
+                    "verbose": verbose,
+                }
+            )
+            return self
+
+        def predict(self, x):
+            return np.full(len(x), self.params["validation_score"])
+
+    def fake_model_only_report(split_metadata, ranked_predictions, top_n_values):
+        score = float(np.asarray(ranked_predictions)[0])
+        return {
+            f"top_{top_n}": {
+                "model": {"average_basket_excess_return": score + top_n / 10000}
+            }
+            for top_n in top_n_values
+        }
+
+    monkeypatch.setattr(trainer, "XGBRegressor", FakeRegressor)
+    monkeypatch.setattr(
+        trainer,
+        "build_model_only_top_n_basket_backtest_report",
+        fake_model_only_report,
+    )
+
+    x_train = pd.DataFrame({"feature_a": [1.0, 2.0], "feature_b": [3.0, 4.0]})
+    x_val = pd.DataFrame({"feature_a": [5.0, 6.0], "feature_b": [7.0, 8.0]})
+    y_train = np.array([0.01, -0.02])
+    y_val = np.array([0.03, 0.04])
+    validation_metadata = pd.DataFrame({"Ticker": ["AAA", "BBB"]})
+    candidates = [
+        {
+            "candidate_id": 0,
+            "candidate_name": "candidate_0_baseline",
+            "params": {"validation_score": 0.01},
+        },
+        {
+            "candidate_id": 1,
+            "candidate_name": "candidate_1_better",
+            "params": {"validation_score": 0.03},
+        },
+    ]
+
+    selected_model, report = trainer.select_xgboost_regressor_by_validation_top_n(
+        x_train,
+        y_train,
+        x_val,
+        y_val,
+        validation_metadata,
+        candidate_configs=candidates,
+    )
+
+    assert selected_model.params == {"validation_score": 0.03}
+    assert report["selection_metric"] == "validation_top_n_mean_excess_return"
+    assert report["selected_candidate_id"] == 1
+    assert report["candidates"][0]["selected"] is False
+    assert report["candidates"][1]["selected"] is True
+    assert report["candidates"][1]["available_bucket_count"] == 3
+    assert "unavailable or NaN buckets are ignored" in report["selection_bucket_policy"]
+    assert len(captured_fit_calls) == 2
+    for fit_call in captured_fit_calls:
+        pd.testing.assert_frame_equal(fit_call["x"], x_train)
+        pd.testing.assert_frame_equal(fit_call["eval_x"], x_val)
+        np.testing.assert_array_equal(fit_call["y"], y_train)
+        np.testing.assert_array_equal(fit_call["eval_y"], y_val)
+        assert fit_call["verbose"] is False
+
+
+def test_format_xgboost_regressor_validation_selection_report_is_readable():
+    report = {
+        "candidates": [
+            {
+                "candidate_name": "candidate_0_baseline",
+                "params": {"max_depth": 5},
+                "validation_top_n_mean_excess_return": 0.01,
+                "validation_top_n_basket_excess_returns": {
+                    "top_5": 0.02,
+                    "top_10": 0.01,
+                    "top_20": 0.00,
+                },
+                "selected": False,
+            },
+            {
+                "candidate_name": "candidate_1_better",
+                "params": {"max_depth": 4},
+                "validation_top_n_mean_excess_return": 0.03,
+                "validation_top_n_basket_excess_returns": {
+                    "top_5": 0.04,
+                    "top_10": 0.03,
+                    "top_20": 0.02,
+                },
+                "selected": True,
+            },
+        ],
+        "selected_candidate_name": "candidate_1_better",
+        "selected_validation_top_n_mean_excess_return": 0.03,
+    }
+
+    summary = trainer.format_xgboost_regressor_validation_selection_report(report)
+
+    assert summary.startswith("XGBoost Regressor Validation Top-N Selection Report:")
+    assert "candidate_0_baseline: score=1.00%" in summary
+    assert "candidate_1_better selected: score=3.00%" in summary
+    assert "top_5=4.00%, top_10=3.00%, top_20=2.00%" in summary
+    assert "selected=candidate_1_better score=3.00%" in summary
+
+
+def test_train_models_uses_selected_regressor_predictions_for_final_report(
+    monkeypatch,
+):
+    rows = 4
+    feature_count = len(MODEL_FEATURE_COLUMNS)
+    y_train = np.array([0.01, 0.02, -0.01, 0.03])
+    y_val = np.array([0.01, -0.02, 0.02, 0.03])
+    captured = {}
+
+    class FakePreparator:
+        def __init__(self):
+            self.feature_columns = list(MODEL_FEATURE_COLUMNS)
+            self.scalar = None
+
+        def prepare_for_train(self, data, prediction_days, test_size):
+            split_metadata = pd.DataFrame(
+                {
+                    "Ticker": ["AAA"] * rows,
+                    "prediction_date": pd.date_range("2024-01-01", periods=rows),
+                    "dailyReturn": [0.01] * rows,
+                    "raw_forward_return": [0.02] * rows,
+                    "benchmark_forward_return": [0.01] * rows,
+                    "excess_forward_return": [0.01] * rows,
+                    "beat_benchmark_target": [1] * rows,
+                }
+            )
+            return {
+                "x_train": np.ones((rows, feature_count)),
+                "x_val": np.ones((rows, feature_count)) * 2,
+                "x_test": np.ones((rows, feature_count)) * 3,
+                "y_train": y_train,
+                "y_val": y_val,
+                "y_test": np.array([0.02, -0.01, 0.01, 0.03]),
+                "direction_y_train": np.array([1, 1, 0, 1]),
+                "direction_y_val": np.array([1, 0, 1, 1]),
+                "direction_y_test": np.array([1, 0, 1, 1]),
+                "feature_names": list(MODEL_FEATURE_COLUMNS),
+                "split_metadata": {
+                    "val": split_metadata.copy(),
+                    "test": split_metadata.copy(),
+                },
+            }
+
+    class FakeLinearRegression:
+        def fit(self, x, y):
+            self.coef_ = np.ones(x.shape[1])
+            return self
+
+        def predict(self, x):
+            return np.zeros(len(x))
+
+    class FakeClassifier:
+        def __init__(self, **params):
+            self.feature_importances_ = np.array([])
+
+        def fit(self, x, y, eval_set=None, verbose=False):
+            self.feature_importances_ = np.ones(x.shape[1])
+            return self
+
+        def predict(self, x):
+            return np.ones(len(x), dtype=int)
+
+        def predict_proba(self, x):
+            return np.column_stack([np.zeros(len(x)), np.ones(len(x))])
+
+        def save_model(self, path):
+            pass
+
+    class FakeRegressor:
+        def __init__(self, **params):
+            self.params = params
+            self.feature_importances_ = np.array([])
+
+        def fit(self, x, y, eval_set=None, verbose=False):
+            captured.setdefault("regressor_fit_y", []).append(np.asarray(y).copy())
+            self.feature_importances_ = np.ones(x.shape[1])
+            return self
+
+        def predict(self, x):
+            return np.full(len(x), self.params["prediction"])
+
+        def save_model(self, path):
+            pass
+
+    candidates = [
+        {
+            "candidate_id": 0,
+            "candidate_name": "candidate_0_baseline",
+            "params": {"prediction": 0.01},
+        },
+        {
+            "candidate_id": 1,
+            "candidate_name": "candidate_1_selected",
+            "params": {"prediction": 0.04},
+        },
+    ]
+
+    def fake_model_only_report(split_metadata, ranked_predictions, top_n_values):
+        score = float(np.asarray(ranked_predictions)[0])
+        return {
+            f"top_{top_n}": {"model": {"average_basket_excess_return": score}}
+            for top_n in top_n_values
+        }
+
+    def fake_log_xgboost_test_report(*args, **kwargs):
+        captured["final_regressor_predictions"] = np.asarray(args[8])
+        captured["selection_report"] = kwargs["regressor_validation_selection_report"]
+        return {
+            "regressor_validation_selection": captured["selection_report"],
+            "basket_backtest": {},
+        }
+
+    monkeypatch.setattr(trainer, "DataPreparator", FakePreparator)
+    monkeypatch.setattr(trainer, "LinearRegression", FakeLinearRegression)
+    monkeypatch.setattr(trainer, "XGBClassifier", FakeClassifier)
+    monkeypatch.setattr(trainer, "XGBRegressor", FakeRegressor)
+    monkeypatch.setattr(
+        trainer,
+        "build_xgboost_regressor_candidate_configs",
+        lambda base_params: candidates,
+    )
+    monkeypatch.setattr(
+        trainer,
+        "build_model_only_top_n_basket_backtest_report",
+        fake_model_only_report,
+    )
+    monkeypatch.setattr(trainer, "evaluate_model", lambda *args, **kwargs: None)
+    monkeypatch.setattr(trainer, "log_xgboost_test_report", fake_log_xgboost_test_report)
+    monkeypatch.setattr(
+        trainer, "log_feature_importances", lambda *args, **kwargs: None
+    )
+    def fake_save_horizon_model_artifacts(*args, **kwargs):
+        captured["saved_model_metadata"] = args[5]
+        return {"model_metadata": "models/horizon_10/model_metadata.pkl"}
+
+    monkeypatch.setattr(
+        trainer,
+        "save_horizon_model_artifacts",
+        fake_save_horizon_model_artifacts,
+    )
+
+    report = trainer.train_models(pd.DataFrame({"Close": [1.0]}), prediction_days=10)
+
+    np.testing.assert_array_equal(captured["regressor_fit_y"][0], y_train)
+    np.testing.assert_array_equal(captured["final_regressor_predictions"], [0.04] * rows)
+    assert captured["selection_report"]["selected_candidate_id"] == 1
+    assert report["regressor_validation_selection"]["selected_candidate_id"] == 1
+    assert captured["saved_model_metadata"]["regressor_validation_selection"][
+        "selected_candidate_id"
+    ] == 1
+    assert captured["saved_model_metadata"][
+        "xgboost_regressor_selected_candidate_name"
+    ] == "candidate_1_selected"
+    assert captured["saved_model_metadata"]["xgboost_regressor_selected_params"] == {
+        "prediction": 0.04
+    }
+
+
 def test_train_models_metadata_includes_momentum_features_and_excludes_targets(
     monkeypatch,
 ):
@@ -766,7 +1057,10 @@ def test_train_models_metadata_includes_momentum_features_and_excludes_targets(
                 "direction_y_val": np.array([1, 0, 1, 1]),
                 "direction_y_test": np.array([1, 0, 1, 1]),
                 "feature_names": list(MODEL_FEATURE_COLUMNS),
-                "split_metadata": {"test": split_metadata},
+                "split_metadata": {
+                    "val": split_metadata.copy(),
+                    "test": split_metadata,
+                },
             }
 
     class FakeLinearRegression:
@@ -1229,6 +1523,11 @@ def test_log_xgboost_test_report_uses_explicit_direction_labels(monkeypatch):
         regressor_predictions=regressor_predictions,
         random_trials=20,
         random_trial_workers=2,
+        regressor_validation_selection_report={
+            "candidates": [],
+            "selected_candidate_name": "candidate_0_baseline",
+            "selected_validation_top_n_mean_excess_return": 0.01,
+        },
     )
 
     np.testing.assert_array_equal(captured["y_true"], direction_y_test)
@@ -1249,6 +1548,7 @@ def test_log_xgboost_test_report_uses_explicit_direction_labels(monkeypatch):
     assert captured["random_trial_workers"] == 2
     assert captured["classifier_random_trial_workers"] == 2
     assert set(report) == {
+        "regressor_validation_selection",
         "ranked_selection",
         "basket_backtest",
         "basket_backtest_by_year",
@@ -1256,6 +1556,9 @@ def test_log_xgboost_test_report_uses_explicit_direction_labels(monkeypatch):
         "classifier_probability_basket_backtest",
         "classifier_probability_basket_backtest_by_year",
     }
+    assert report["regressor_validation_selection"]["selected_candidate_name"] == (
+        "candidate_0_baseline"
+    )
     assert report["basket_backtest_by_year"] == {"top_5": {"2024": {"model": {}}}}
     assert report["classifier_probability_basket_backtest_by_year"] == {
         "top_5": {"2024": {"classifier_model": {}}}
