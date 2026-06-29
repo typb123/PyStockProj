@@ -224,3 +224,12 @@ Implementation note:
 * Bootstrap resamples by `prediction_date`, preserving daily basket structure.
 * 10d / 10y still shows positive model excess, but model-minus-momentum CIs cross zero.
 * Current read: the model clearly beats random/universe in this run, but the edge over momentum is not statistically convincing yet.
+
+### Walk-forward Top-N evaluation
+
+* Added expanding-window yearly walk-forward evaluation for SPY-relative Top-N diagnostics.
+* Default setup: 5 years minimum training history, 1 validation year, 1 test year, 1-year step.
+* Each fold selects the XGBoost regressor config on validation Top-N performance, then evaluates the selected model on the next test year.
+* Initial 10d / 10y run produced 5 folds. The model beat the universe baseline in 80% of folds, but did not reliably beat momentum.
+* Aggregate model-minus-momentum was negative across Top-N buckets: top-5 -0.47%, top-10 -0.15%, top-20 -0.15%.
+* Current read: the model has stock-selection signal versus the universe, but not enough evidence of independent edge versus momentum.

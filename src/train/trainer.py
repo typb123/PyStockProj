@@ -45,6 +45,16 @@ from src.config import (
     TEST_SIZE,
 )
 from src.features.feature_contract import MODEL_FEATURE_COLUMNS
+from src.train.evaluation.walk_forward import (
+    DEFAULT_WALK_FORWARD_MIN_TRAIN_YEARS,
+    DEFAULT_WALK_FORWARD_TEST_YEARS,
+    DEFAULT_WALK_FORWARD_VALIDATION_YEARS,
+    build_expanding_yearly_walk_forward_folds,
+    build_walk_forward_aggregate_summary,
+    build_walk_forward_fold_report,
+    build_walk_forward_split,
+    prepare_walk_forward_model_frame,
+)
 
 
 logging.basicConfig(
@@ -1338,6 +1348,171 @@ def train_models(
     }
 
 
+def run_walk_forward_models(
+    data: pd.DataFrame,
+    prediction_days: int = PREDICTION_DAYS,
+    random_trials: int = 100,
+    random_trial_workers: int = 4,
+    min_train_years: int = DEFAULT_WALK_FORWARD_MIN_TRAIN_YEARS,
+    validation_years: int = DEFAULT_WALK_FORWARD_VALIDATION_YEARS,
+    test_years: int = DEFAULT_WALK_FORWARD_TEST_YEARS,
+    regressor_params: dict | None = None,
+) -> dict:
+    """Run expanding-window walk-forward Top-N diagnostics for one horizon."""
+    logging.info(
+        "Running walk-forward evaluation "
+        f"for prediction_days={prediction_days}, "
+        f"min_train_years={min_train_years}, validation_years={validation_years}, "
+        f"test_years={test_years}."
+    )
+    data = validate_input_data(data)
+    prepared_frame, feature_columns = prepare_walk_forward_model_frame(
+        data,
+        prediction_days=prediction_days,
+    )
+    folds = build_expanding_yearly_walk_forward_folds(
+        prepared_frame,
+        min_train_years=min_train_years,
+        validation_years=validation_years,
+        test_years=test_years,
+    )
+    if not folds:
+        raise ValueError(
+            "Not enough prediction years to create walk-forward folds with the "
+            "requested windows."
+        )
+
+    fold_reports = []
+    regressor_candidate_configs = build_xgboost_regressor_candidate_configs(
+        regressor_params or XG_PARAMS_REGRESSOR
+    )
+    for fold in folds:
+        logging.info(
+            "Starting walk-forward fold "
+            f"{fold['fold_index']}: train={fold['train_date_range']}, "
+            f"validation={fold['validation_date_range']}, "
+            f"test={fold['test_date_range']}."
+        )
+        split = build_walk_forward_split(
+            prepared_frame,
+            fold,
+            feature_columns,
+            prediction_days=prediction_days,
+        )
+        x_train = pd.DataFrame(split["x_train"], columns=feature_columns)
+        x_val = pd.DataFrame(split["x_val"], columns=feature_columns)
+        x_test = pd.DataFrame(split["x_test"], columns=feature_columns)
+        selected_regressor, selection_report = (
+            select_xgboost_regressor_by_validation_top_n(
+                x_train,
+                split["y_train"],
+                x_val,
+                split["y_val"],
+                split["split_metadata"]["val"],
+                candidate_configs=regressor_candidate_configs,
+            )
+        )
+        test_predictions = selected_regressor.predict(x_test)
+        top_n_reports = build_top_n_selection_reports(
+            split["split_metadata"]["test"],
+            test_predictions,
+            prediction_days=prediction_days,
+            random_trials=random_trials,
+            random_trial_workers=random_trial_workers,
+        )
+        report_fold = dict(fold)
+        split_date_ranges = split.get("split_date_ranges", {})
+        report_fold["train_date_range"] = split_date_ranges.get(
+            "train",
+            fold["train_date_range"],
+        )
+        report_fold["validation_date_range"] = split_date_ranges.get(
+            "validation",
+            fold["validation_date_range"],
+        )
+        report_fold["test_date_range"] = split_date_ranges.get(
+            "test",
+            fold["test_date_range"],
+        )
+        fold_report = build_walk_forward_fold_report(
+            report_fold,
+            selection_report,
+            top_n_reports["basket_backtest"],
+        )
+        fold_reports.append(fold_report)
+        logging.info(format_walk_forward_fold_summary(fold_report))
+
+    aggregate_summary = build_walk_forward_aggregate_summary(fold_reports)
+    return {
+        "prediction_days": int(prediction_days),
+        "folds": fold_reports,
+        "aggregate": aggregate_summary,
+    }
+
+
+def format_walk_forward_fold_summary(fold_report):
+    """Format one walk-forward fold for concise logs."""
+    lines = [
+        "Walk-Forward Fold "
+        f"{fold_report['fold_index']}: "
+        f"train={_format_date_range(fold_report['train_date_range'])}, "
+        f"validation={_format_date_range(fold_report['validation_date_range'])}, "
+        f"test={_format_date_range(fold_report['test_date_range'])}, "
+        f"selected={fold_report.get('selected_candidate_name')} "
+        f"score={_format_percent(fold_report.get('validation_selection_score'))}"
+    ]
+    for bucket_name, bucket_metrics in fold_report.get("top_n", {}).items():
+        lines.append(
+            "  "
+            f"{bucket_name}: "
+            f"model excess={_format_percent(bucket_metrics.get('model_excess'))}, "
+            "model minus momentum="
+            f"{_format_percent(bucket_metrics.get('model_minus_momentum'))}, "
+            "model minus universe="
+            f"{_format_percent(bucket_metrics.get('model_minus_universe'))}"
+        )
+    return "\n".join(lines)
+
+
+def format_walk_forward_summary(walk_forward_report):
+    """Format aggregate walk-forward diagnostics for console and logs."""
+    aggregate = walk_forward_report.get("aggregate", {})
+    lines = [
+        "Walk-Forward Top-N Summary:",
+        f"folds={aggregate.get('fold_count', 0)}",
+    ]
+    selected_counts = aggregate.get("selected_candidate_counts", {})
+    if selected_counts:
+        lines.append(f"selected candidate counts={selected_counts}")
+
+    for bucket_name, bucket_summary in aggregate.get("top_n", {}).items():
+        lines.append(
+            f"{bucket_name}: "
+            "avg model excess="
+            f"{_format_percent(bucket_summary.get('average_model_excess'))}, "
+            "avg model minus momentum="
+            f"{_format_percent(bucket_summary.get('average_model_minus_momentum'))}, "
+            "avg model minus universe="
+            f"{_format_percent(bucket_summary.get('average_model_minus_universe'))}, "
+            "win rate vs momentum="
+            f"{_format_percent(bucket_summary.get('fold_win_rate_vs_momentum'))}, "
+            "win rate vs universe="
+            f"{_format_percent(bucket_summary.get('fold_win_rate_vs_universe'))}"
+        )
+
+    for fold_report in walk_forward_report.get("folds", []):
+        lines.append(format_walk_forward_fold_summary(fold_report))
+
+    return "\n".join(lines)
+
+
+def _format_date_range(date_range):
+    """Format date range metadata for logs."""
+    if not date_range or date_range.get("start") is None:
+        return "n/a"
+    return f"{date_range['start']}..{date_range['end']}"
+
+
 def _positive_int(value, argument_name="value"):
     """Parse a command-line value as a positive integer."""
     try:
@@ -1367,6 +1542,11 @@ def _positive_random_trials(value):
 def _positive_random_trial_workers(value):
     """Parse the random baseline worker-count CLI argument."""
     return _positive_int(value, "random_trial_workers")
+
+
+def _positive_year_count(value, argument_name="years"):
+    """Parse a positive walk-forward year-count CLI argument."""
+    return _positive_int(value, argument_name)
 
 
 def parse_args(argv=None):
@@ -1418,8 +1598,39 @@ def parse_args(argv=None):
             "execution."
         ),
     )
+    parser.add_argument(
+        "--walk-forward",
+        action="store_true",
+        help=(
+            "Run expanding-window yearly walk-forward evaluation for one horizon "
+            "instead of normal training/artifact saving."
+        ),
+    )
+    parser.add_argument(
+        "--walk-forward-min-train-years",
+        type=lambda value: _positive_year_count(value, "walk_forward_min_train_years"),
+        default=DEFAULT_WALK_FORWARD_MIN_TRAIN_YEARS,
+        help=(
+            "Minimum training-history window in years for walk-forward evaluation."
+        ),
+    )
+    parser.add_argument(
+        "--walk-forward-validation-years",
+        type=lambda value: _positive_year_count(value, "walk_forward_validation_years"),
+        default=DEFAULT_WALK_FORWARD_VALIDATION_YEARS,
+        help="Validation window in years for walk-forward evaluation.",
+    )
+    parser.add_argument(
+        "--walk-forward-test-years",
+        type=lambda value: _positive_year_count(value, "walk_forward_test_years"),
+        default=DEFAULT_WALK_FORWARD_TEST_YEARS,
+        help="Test window in years for walk-forward evaluation.",
+    )
 
     args = parser.parse_args(argv)
+    if args.walk_forward and args.all_horizons:
+        parser.error("--walk-forward supports one prediction horizon at a time.")
+
     if args.all_horizons:
         args.horizons = list(ALL_HORIZONS)
     else:
@@ -1443,6 +1654,22 @@ def main(argv=None):
     if data.empty:
         logging.error("No data fetched for training. Exiting...")
         return
+
+    if args.walk_forward:
+        prediction_days = args.horizons[0]
+        walk_forward_report = run_walk_forward_models(
+            data.copy(),
+            prediction_days=prediction_days,
+            random_trials=args.random_trials,
+            random_trial_workers=args.random_trial_workers,
+            min_train_years=args.walk_forward_min_train_years,
+            validation_years=args.walk_forward_validation_years,
+            test_years=args.walk_forward_test_years,
+        )
+        summary = format_walk_forward_summary(walk_forward_report)
+        logging.info(summary)
+        print(summary)
+        return walk_forward_report
 
     horizon_reports = {}
     for prediction_days in args.horizons:

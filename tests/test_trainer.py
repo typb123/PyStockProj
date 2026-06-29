@@ -1046,10 +1046,13 @@ def test_train_models_uses_selected_regressor_predictions_for_final_report(
         fake_model_only_report,
     )
     monkeypatch.setattr(trainer, "evaluate_model", lambda *args, **kwargs: None)
-    monkeypatch.setattr(trainer, "log_xgboost_test_report", fake_log_xgboost_test_report)
+    monkeypatch.setattr(
+        trainer, "log_xgboost_test_report", fake_log_xgboost_test_report
+    )
     monkeypatch.setattr(
         trainer, "log_feature_importances", lambda *args, **kwargs: None
     )
+
     def fake_save_horizon_model_artifacts(*args, **kwargs):
         captured["saved_model_metadata"] = args[5]
         return {"model_metadata": "models/horizon_10/model_metadata.pkl"}
@@ -1063,15 +1066,21 @@ def test_train_models_uses_selected_regressor_predictions_for_final_report(
     report = trainer.train_models(pd.DataFrame({"Close": [1.0]}), prediction_days=10)
 
     np.testing.assert_array_equal(captured["regressor_fit_y"][0], y_train)
-    np.testing.assert_array_equal(captured["final_regressor_predictions"], [0.04] * rows)
+    np.testing.assert_array_equal(
+        captured["final_regressor_predictions"], [0.04] * rows
+    )
     assert captured["selection_report"]["selected_candidate_id"] == 1
     assert report["regressor_validation_selection"]["selected_candidate_id"] == 1
-    assert captured["saved_model_metadata"]["regressor_validation_selection"][
-        "selected_candidate_id"
-    ] == 1
-    assert captured["saved_model_metadata"][
-        "xgboost_regressor_selected_candidate_name"
-    ] == "candidate_1_selected"
+    assert (
+        captured["saved_model_metadata"]["regressor_validation_selection"][
+            "selected_candidate_id"
+        ]
+        == 1
+    )
+    assert (
+        captured["saved_model_metadata"]["xgboost_regressor_selected_candidate_name"]
+        == "candidate_1_selected"
+    )
     assert captured["saved_model_metadata"]["xgboost_regressor_selected_params"] == {
         "prediction": 0.04
     }
@@ -1186,7 +1195,9 @@ def test_train_models_metadata_includes_momentum_features_and_excludes_targets(
     trainer.train_models(pd.DataFrame({"Close": [1.0]}), prediction_days=10)
 
     metadata = captured["model_metadata"]
-    for column in ABSOLUTE_MOMENTUM_FEATURE_COLUMNS + SPY_RELATIVE_MOMENTUM_FEATURE_COLUMNS:
+    for column in (
+        ABSOLUTE_MOMENTUM_FEATURE_COLUMNS + SPY_RELATIVE_MOMENTUM_FEATURE_COLUMNS
+    ):
         assert column in captured["all_features"]
         assert column in metadata["classifier_features"]
         assert column in metadata["regressor_features"]
@@ -1202,6 +1213,144 @@ def test_train_models_metadata_includes_momentum_features_and_excludes_targets(
     assert target_columns.isdisjoint(metadata["regressor_features"])
 
 
+def test_run_walk_forward_models_records_selected_candidate_and_test_metrics(
+    monkeypatch,
+):
+    captured = {}
+    prepared_frame = pd.DataFrame({"prediction_date": pd.to_datetime(["2020-01-01"])})
+    fold = {
+        "fold_index": 0,
+        "train_years": [2015, 2016, 2017, 2018, 2019],
+        "validation_years": [2020],
+        "test_years": [2021],
+        "train_date_range": {"start": "2015-01-01", "end": "2019-12-31"},
+        "validation_date_range": {"start": "2020-01-01", "end": "2020-12-31"},
+        "test_date_range": {"start": "2021-01-01", "end": "2021-12-31"},
+    }
+
+    class FakeRegressor:
+        def predict(self, x):
+            captured["predict_x"] = x.copy()
+            return np.array([0.20, 0.10])
+
+    def fake_select(
+        x_train,
+        y_train,
+        x_val,
+        y_val,
+        validation_split_metadata,
+        candidate_configs=None,
+    ):
+        captured["candidate_configs"] = candidate_configs
+        pd.testing.assert_frame_equal(
+            validation_split_metadata,
+            pd.DataFrame({"Ticker": ["AAA", "BBB"]}),
+        )
+        return FakeRegressor(), {
+            "selected_candidate_id": 1,
+            "selected_candidate_name": "candidate_1",
+            "selected_validation_top_n_mean_excess_return": 0.03,
+        }
+
+    def fake_top_n_reports(
+        split_metadata,
+        ranked_predictions,
+        prediction_days=None,
+        random_trials=100,
+        random_trial_workers=4,
+    ):
+        captured["top_n_predictions"] = np.asarray(ranked_predictions)
+        captured["top_n_prediction_days"] = prediction_days
+        captured["top_n_random_trials"] = random_trials
+        captured["top_n_random_trial_workers"] = random_trial_workers
+        return {
+            "basket_backtest": {
+                "top_5": {
+                    "model": {"average_basket_excess_return": 0.04},
+                    "momentum_baseline": {"average_basket_excess_return": 0.01},
+                    "universe": {"average_basket_excess_return": 0.02},
+                }
+            }
+        }
+
+    monkeypatch.setattr(
+        trainer,
+        "prepare_walk_forward_model_frame",
+        lambda data, prediction_days: (prepared_frame, ["feature_a"]),
+    )
+    monkeypatch.setattr(
+        trainer,
+        "build_expanding_yearly_walk_forward_folds",
+        lambda *args, **kwargs: [fold],
+    )
+    monkeypatch.setattr(
+        trainer,
+        "build_walk_forward_split",
+        lambda *args, **kwargs: {
+            "x_train": np.array([[1.0], [2.0]]),
+            "x_val": np.array([[3.0], [4.0]]),
+            "x_test": np.array([[5.0], [6.0]]),
+            "y_train": np.array([0.01, 0.02]),
+            "y_val": np.array([0.03, 0.04]),
+            "split_metadata": {
+                "val": pd.DataFrame({"Ticker": ["AAA", "BBB"]}),
+                "test": pd.DataFrame({"Ticker": ["AAA", "BBB"]}),
+            },
+            "split_date_ranges": {
+                "train": {"start": "2015-01-01", "end": "2019-12-15"},
+                "validation": {"start": "2020-01-01", "end": "2020-12-15"},
+                "test": {"start": "2021-01-01", "end": "2021-12-31"},
+            },
+        },
+    )
+    monkeypatch.setattr(
+        trainer,
+        "build_xgboost_regressor_candidate_configs",
+        lambda params: [
+            {"candidate_id": 0, "candidate_name": "candidate_0", "params": {}}
+        ],
+    )
+    monkeypatch.setattr(
+        trainer,
+        "select_xgboost_regressor_by_validation_top_n",
+        fake_select,
+    )
+    monkeypatch.setattr(trainer, "build_top_n_selection_reports", fake_top_n_reports)
+
+    report = trainer.run_walk_forward_models(
+        pd.DataFrame({"Close": [1.0]}),
+        prediction_days=10,
+        random_trials=7,
+        random_trial_workers=2,
+    )
+
+    assert report["prediction_days"] == 10
+    assert report["folds"][0]["selected_candidate_name"] == "candidate_1"
+    assert report["folds"][0]["validation_selection_score"] == 0.03
+    assert report["folds"][0]["train_date_range"] == {
+        "start": "2015-01-01",
+        "end": "2019-12-15",
+    }
+    assert report["folds"][0]["validation_date_range"] == {
+        "start": "2020-01-01",
+        "end": "2020-12-15",
+    }
+    assert report["folds"][0]["test_date_range"] == {
+        "start": "2021-01-01",
+        "end": "2021-12-31",
+    }
+    assert np.isclose(report["folds"][0]["top_n"]["top_5"]["model_excess"], 0.04)
+    assert np.isclose(
+        report["folds"][0]["top_n"]["top_5"]["model_minus_momentum"],
+        0.03,
+    )
+    np.testing.assert_array_equal(captured["top_n_predictions"], [0.20, 0.10])
+    assert captured["top_n_prediction_days"] == 10
+    assert captured["top_n_random_trials"] == 7
+    assert captured["top_n_random_trial_workers"] == 2
+    assert report["aggregate"]["selected_candidate_counts"] == {"candidate_1": 1}
+
+
 def test_parse_args_defaults_to_ten_prediction_days():
     args = trainer.parse_args([])
 
@@ -1212,6 +1361,7 @@ def test_parse_args_defaults_to_ten_prediction_days():
     assert args.no_cache is False
     assert args.random_trials == 100
     assert args.random_trial_workers == 4
+    assert args.walk_forward is False
 
 
 def test_parse_args_accepts_period():
@@ -1230,6 +1380,28 @@ def test_parse_args_accepts_random_trial_workers():
     args = trainer.parse_args(["--random-trial-workers", "2"])
 
     assert args.random_trial_workers == 2
+
+
+def test_parse_args_accepts_walk_forward_options():
+    args = trainer.parse_args(
+        [
+            "--walk-forward",
+            "--prediction-days",
+            "20",
+            "--walk-forward-min-train-years",
+            "4",
+            "--walk-forward-validation-years",
+            "2",
+            "--walk-forward-test-years",
+            "1",
+        ]
+    )
+
+    assert args.walk_forward is True
+    assert args.horizons == [20]
+    assert args.walk_forward_min_train_years == 4
+    assert args.walk_forward_validation_years == 2
+    assert args.walk_forward_test_years == 1
 
 
 def test_parse_args_rejects_invalid_random_trials_values():
@@ -1285,6 +1457,11 @@ def test_parse_args_all_horizons_resolves_research_horizons():
 def test_parse_args_rejects_all_horizons_with_prediction_days():
     with pytest.raises(SystemExit):
         trainer.parse_args(["--all-horizons", "--prediction-days", "5"])
+
+
+def test_parse_args_rejects_walk_forward_with_all_horizons():
+    with pytest.raises(SystemExit):
+        trainer.parse_args(["--walk-forward", "--all-horizons"])
 
 
 def test_build_horizon_model_paths_uses_horizon_specific_directory():
@@ -1494,6 +1671,122 @@ def test_main_single_horizon_prints_top_n_basket_summary(monkeypatch, capsys):
     assert "XGBoost Beat-Benchmark Classification Report" not in output
 
 
+def test_main_walk_forward_runs_walk_forward_path(monkeypatch, capsys):
+    prepare_calls = []
+    walk_forward_calls = []
+
+    def fake_prepare_data_parallel(tickers, period="5y", use_cache=True):
+        prepare_calls.append((list(tickers), period, use_cache))
+        return pd.DataFrame({"Close": [1.0]})
+
+    def fake_run_walk_forward_models(
+        data,
+        prediction_days,
+        random_trials=100,
+        random_trial_workers=4,
+        min_train_years=5,
+        validation_years=1,
+        test_years=1,
+    ):
+        walk_forward_calls.append(
+            {
+                "prediction_days": prediction_days,
+                "random_trials": random_trials,
+                "random_trial_workers": random_trial_workers,
+                "min_train_years": min_train_years,
+                "validation_years": validation_years,
+                "test_years": test_years,
+            }
+        )
+        return {
+            "prediction_days": prediction_days,
+            "folds": [
+                {
+                    "fold_index": 0,
+                    "train_date_range": {
+                        "start": "2015-01-01",
+                        "end": "2019-12-31",
+                    },
+                    "validation_date_range": {
+                        "start": "2020-01-01",
+                        "end": "2020-12-31",
+                    },
+                    "test_date_range": {
+                        "start": "2021-01-01",
+                        "end": "2021-12-31",
+                    },
+                    "selected_candidate_name": "candidate_0",
+                    "validation_selection_score": 0.01,
+                    "top_n": {
+                        "top_5": {
+                            "model_excess": 0.02,
+                            "model_minus_momentum": 0.01,
+                            "model_minus_universe": 0.03,
+                        }
+                    },
+                }
+            ],
+            "aggregate": {
+                "fold_count": 1,
+                "selected_candidate_counts": {"candidate_0": 1},
+                "top_n": {
+                    "top_5": {
+                        "average_model_excess": 0.02,
+                        "average_model_minus_momentum": 0.01,
+                        "average_model_minus_universe": 0.03,
+                        "fold_win_rate_vs_momentum": 1.0,
+                        "fold_win_rate_vs_universe": 1.0,
+                    }
+                },
+            },
+        }
+
+    monkeypatch.setattr(trainer, "prepare_data_parallel", fake_prepare_data_parallel)
+    monkeypatch.setattr(
+        trainer,
+        "run_walk_forward_models",
+        fake_run_walk_forward_models,
+    )
+    monkeypatch.setattr(
+        trainer,
+        "train_models",
+        lambda *args, **kwargs: pytest.fail("normal training path should not run"),
+    )
+
+    report = trainer.main(
+        [
+            "--walk-forward",
+            "--prediction-days",
+            "10",
+            "--period",
+            "10y",
+            "--random-trials",
+            "20",
+            "--random-trial-workers",
+            "2",
+            "--walk-forward-min-train-years",
+            "4",
+        ]
+    )
+
+    assert prepare_calls == [(trainer.TRAINING_TICKERS, "10y", True)]
+    assert walk_forward_calls == [
+        {
+            "prediction_days": 10,
+            "random_trials": 20,
+            "random_trial_workers": 2,
+            "min_train_years": 4,
+            "validation_years": 1,
+            "test_years": 1,
+        }
+    ]
+    assert report["aggregate"]["fold_count"] == 1
+    output = capsys.readouterr().out
+    assert "Walk-Forward Top-N Summary:" in output
+    assert "top_5:" in output
+    assert "XGBoost Top-N Basket Backtest Summary:" not in output
+
+
 def test_log_xgboost_test_report_uses_explicit_direction_labels(monkeypatch):
     captured = {}
 
@@ -1535,9 +1828,7 @@ def test_log_xgboost_test_report_uses_explicit_direction_labels(monkeypatch):
         return {
             "ranked_selection": {"top_5": {"selected_row_count": 1}},
             "basket_backtest": {"top_5": {"model": {}}},
-            "basket_backtest_by_year": {
-                "top_5": {"2024": {"classifier_model": {}}}
-            },
+            "basket_backtest_by_year": {"top_5": {"2024": {"classifier_model": {}}}},
         }
 
     monkeypatch.setattr(
@@ -1955,6 +2246,7 @@ def test_log_xgboost_test_report_logs_basket_summary_at_info_and_full_report_at_
         "build_combined_signal_report",
         lambda *args, **kwargs: {"selected_count": 0},
     )
+
     def fake_build_top_n_selection_reports(
         split_metadata,
         ranked_predictions,

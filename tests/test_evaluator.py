@@ -25,6 +25,12 @@ from src.train.evaluator import (
 import src.train.evaluation as evaluation
 import src.train.evaluation.baselines as baselines
 from src.train.evaluation.basket_backtest import _bootstrap_basket_confidence_intervals
+from src.train.evaluation.walk_forward import (
+    build_expanding_yearly_walk_forward_folds,
+    build_walk_forward_aggregate_summary,
+    build_walk_forward_fold_report,
+    build_walk_forward_split,
+)
 import src.train.evaluator as evaluator
 
 
@@ -389,6 +395,24 @@ def make_by_year_top_n_metadata():
     )
 
 
+def make_walk_forward_yearly_frame(start_year=2015, end_year=2023):
+    rows = []
+    for year in range(start_year, end_year + 1):
+        rows.append(
+            {
+                "Ticker": "AAA",
+                "prediction_date": pd.Timestamp(f"{year}-06-30"),
+                "raw_forward_return": 0.02,
+                "benchmark_forward_return": 0.01,
+                "excess_forward_return": 0.01,
+                "targetReturns": 0.01,
+                "beat_benchmark_target": 1,
+                "dailyReturn": 0.01,
+            }
+        )
+    return pd.DataFrame(rows)
+
+
 def assert_nested_reports_close(actual, expected):
     assert actual.keys() == expected.keys()
     for key, actual_value in actual.items():
@@ -399,6 +423,198 @@ def assert_nested_reports_close(actual, expected):
             assert np.isclose(actual_value, expected_value, equal_nan=True)
         else:
             assert actual_value == expected_value
+
+
+def test_walk_forward_fold_generation_uses_expanding_chronological_windows():
+    frame = make_walk_forward_yearly_frame(2015, 2023)
+
+    folds = build_expanding_yearly_walk_forward_folds(
+        frame,
+        min_train_years=3,
+        validation_years=1,
+        test_years=1,
+    )
+
+    assert len(folds) == 5
+    assert folds[0]["train_years"] == [2015, 2016, 2017]
+    assert folds[0]["validation_years"] == [2018]
+    assert folds[0]["test_years"] == [2019]
+    assert folds[1]["train_years"] == [2015, 2016, 2017, 2018]
+    assert folds[1]["validation_years"] == [2019]
+    assert folds[1]["test_years"] == [2020]
+    assert folds[-1]["test_years"] == [2023]
+    assert folds[0]["train_date_range"] == {
+        "start": "2015-06-30",
+        "end": "2017-06-30",
+    }
+    assert folds[0]["validation_date_range"] == {
+        "start": "2018-06-30",
+        "end": "2018-06-30",
+    }
+    assert folds[0]["test_date_range"] == {
+        "start": "2019-06-30",
+        "end": "2019-06-30",
+    }
+
+
+def test_walk_forward_fold_generation_has_no_within_fold_date_leakage():
+    frame = make_walk_forward_yearly_frame(2015, 2022)
+
+    folds = build_expanding_yearly_walk_forward_folds(
+        frame,
+        min_train_years=3,
+        validation_years=1,
+        test_years=1,
+    )
+
+    for fold in folds:
+        train_years = set(fold["train_years"])
+        validation_years = set(fold["validation_years"])
+        test_years = set(fold["test_years"])
+        assert train_years.isdisjoint(validation_years)
+        assert train_years.isdisjoint(test_years)
+        assert validation_years.isdisjoint(test_years)
+        assert max(train_years) < min(validation_years)
+        assert max(validation_years) < min(test_years)
+
+
+def test_walk_forward_split_embargoes_boundary_prediction_dates():
+    rows = []
+    for year in [2020, 2021, 2022]:
+        for day in range(1, 6):
+            rows.append(
+                {
+                    "_source_index": f"{year}-{day}",
+                    "Ticker": "AAA",
+                    "prediction_date": pd.Timestamp(f"{year}-01-0{day}"),
+                    "feature_a": float(day),
+                    "targetReturns": 0.01,
+                    "raw_forward_return": 0.02,
+                    "benchmark_forward_return": 0.01,
+                    "excess_forward_return": 0.01,
+                    "beat_benchmark_target": 1,
+                    "dailyReturn": 0.01,
+                }
+            )
+    frame = pd.DataFrame(rows)
+    fold = {
+        "train_years": [2020],
+        "validation_years": [2021],
+        "test_years": [2022],
+    }
+
+    split = build_walk_forward_split(
+        frame,
+        fold,
+        feature_columns=["feature_a"],
+        prediction_days=2,
+    )
+
+    assert split["split_metadata"]["train"]["prediction_date"].max() == pd.Timestamp(
+        "2020-01-03"
+    )
+    assert split["split_metadata"]["val"]["prediction_date"].max() == pd.Timestamp(
+        "2021-01-03"
+    )
+    assert split["split_metadata"]["test"]["prediction_date"].min() == pd.Timestamp(
+        "2022-01-01"
+    )
+    assert len(split["x_train"]) == 3
+    assert len(split["x_val"]) == 3
+    assert len(split["x_test"]) == 5
+
+
+def test_walk_forward_aggregate_summary_computes_means_win_rates_and_candidates():
+    fold_reports = [
+        {
+            "selected_candidate_name": "candidate_0_baseline",
+            "top_n": {
+                "top_5": {
+                    "model_excess": 0.02,
+                    "model_minus_momentum": 0.01,
+                    "model_minus_universe": 0.03,
+                },
+                "top_10": {
+                    "model_excess": 0.01,
+                    "model_minus_momentum": -0.01,
+                    "model_minus_universe": 0.02,
+                },
+            },
+        },
+        {
+            "selected_candidate_name": "candidate_1",
+            "top_n": {
+                "top_5": {
+                    "model_excess": 0.04,
+                    "model_minus_momentum": -0.02,
+                    "model_minus_universe": 0.01,
+                },
+                "top_10": {
+                    "model_excess": 0.03,
+                    "model_minus_momentum": 0.02,
+                    "model_minus_universe": -0.01,
+                },
+            },
+        },
+    ]
+
+    summary = build_walk_forward_aggregate_summary(
+        fold_reports,
+        top_n_buckets=("top_5", "top_10"),
+    )
+
+    assert summary["fold_count"] == 2
+    assert summary["selected_candidate_counts"] == {
+        "candidate_0_baseline": 1,
+        "candidate_1": 1,
+    }
+    assert np.isclose(summary["top_n"]["top_5"]["average_model_excess"], 0.03)
+    assert np.isclose(
+        summary["top_n"]["top_5"]["average_model_minus_momentum"],
+        -0.005,
+    )
+    assert summary["top_n"]["top_5"]["fold_win_rate_vs_momentum"] == 0.5
+    assert summary["top_n"]["top_5"]["fold_win_rate_vs_universe"] == 1.0
+    assert summary["top_n"]["top_10"]["fold_win_rate_vs_momentum"] == 0.5
+    assert summary["top_n"]["top_10"]["fold_win_rate_vs_universe"] == 0.5
+
+
+def test_walk_forward_fold_report_records_selected_candidate_and_bucket_metrics():
+    fold = {
+        "fold_index": 0,
+        "train_date_range": {"start": "2015-01-01", "end": "2019-12-31"},
+        "validation_date_range": {"start": "2020-01-01", "end": "2020-12-31"},
+        "test_date_range": {"start": "2021-01-01", "end": "2021-12-31"},
+        "train_years": [2015, 2016, 2017, 2018, 2019],
+        "validation_years": [2020],
+        "test_years": [2021],
+    }
+    selection_report = {
+        "selected_candidate_id": 1,
+        "selected_candidate_name": "candidate_1",
+        "selected_validation_top_n_mean_excess_return": 0.03,
+    }
+    basket_backtest = {
+        "top_5": {
+            "model": {"average_basket_excess_return": 0.04},
+            "momentum_baseline": {"average_basket_excess_return": 0.01},
+            "universe": {"average_basket_excess_return": 0.02},
+        }
+    }
+
+    report = build_walk_forward_fold_report(
+        fold,
+        selection_report,
+        basket_backtest,
+        top_n_buckets=("top_5",),
+    )
+
+    assert report["selected_candidate_id"] == 1
+    assert report["selected_candidate_name"] == "candidate_1"
+    assert report["validation_selection_score"] == 0.03
+    assert report["top_n"]["top_5"]["model_excess"] == 0.04
+    assert np.isclose(report["top_n"]["top_5"]["model_minus_momentum"], 0.03)
+    assert np.isclose(report["top_n"]["top_5"]["model_minus_universe"], 0.02)
 
 
 def test_top_n_ranked_selection_is_per_date_not_global():
