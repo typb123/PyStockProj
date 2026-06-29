@@ -182,3 +182,18 @@ Implementation note:
 * Keep the existing regressor-ranked Top-N report unchanged.
 * Do not change the SPY-relative target, model parameters, feature columns, or existing report keys.
 
+### Classifier-probability-ranked Top-N result
+
+* Added classifier-probability-ranked Top-N evaluation alongside the existing regressor-ranked report.
+* Ran the 10d / 10-year experiment.
+* Result: classifier probability ranking performed poorly.
+* Regressor-ranked Top-N remained much stronger:
+  * top-5 excess: 0.99%
+  * top-10 excess: 0.80%
+  * top-20 excess: 0.60%
+* Classifier-probability-ranked Top-N was near zero or negative:
+  * top-5 excess: 0.02%
+  * top-10 excess: 0.02%
+  * top-20 excess: -0.01%
+* Current read: classifier probability is not useful as a standalone ranking signal in the current setup.
+* Next step: keep regressor-ranked Top-N as the primary ranking report and add by-year diagnostics.
