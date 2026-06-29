@@ -365,6 +365,28 @@ def make_ranked_selection_metadata():
     )
 
 
+def make_by_year_top_n_metadata():
+    return pd.DataFrame(
+        {
+            "Ticker": ["AAA", "BBB", "AAA", "BBB", "AAA", "BBB"],
+            "prediction_date": [
+                "2022-12-30",
+                "2022-12-30",
+                "2023-01-03",
+                "2023-01-03",
+                "2023-06-01",
+                "2023-06-01",
+            ],
+            "raw_forward_return": [0.10, 0.01, -0.02, 0.08, 0.04, 0.01],
+            "benchmark_forward_return": [0.02, 0.02, 0.01, 0.01, 0.01, 0.01],
+            "excess_forward_return": [0.08, -0.01, -0.03, 0.07, 0.03, 0.00],
+            "beat_benchmark_target": [1, 0, 0, 1, 1, 0],
+            "dailyReturn": [0.09, 0.01, 0.02, 0.08, 0.04, 0.01],
+            "relative_momentum": [0.07, -0.01, 0.01, 0.07, 0.03, 0.00],
+        }
+    )
+
+
 def assert_nested_reports_close(actual, expected):
     assert actual.keys() == expected.keys()
     for key, actual_value in actual.items():
@@ -462,7 +484,189 @@ def test_probability_ranked_top_n_selection_reports_rank_by_probability():
         probability_top_1["average_selected_raw_forward_return"],
         regressor_top_1["average_selected_raw_forward_return"],
     )
-    assert probability_report.keys() == {"ranked_selection", "basket_backtest"}
+    assert probability_report.keys() == {
+        "ranked_selection",
+        "basket_backtest",
+        "basket_backtest_by_year",
+    }
+
+
+def test_top_n_selection_reports_include_by_year_basket_report_and_existing_keys():
+    metadata = make_by_year_top_n_metadata()
+    predicted_excess_returns = np.array([0.90, 0.10, 0.20, 0.80, 0.70, 0.60])
+
+    report = build_top_n_selection_reports(
+        metadata,
+        predicted_excess_returns,
+        random_seed=7,
+        random_trials=2,
+        random_trial_workers=1,
+    )
+
+    assert report.keys() == {
+        "ranked_selection",
+        "basket_backtest",
+        "basket_backtest_by_year",
+    }
+    assert set(report["basket_backtest_by_year"]) == {"top_5", "top_10", "top_20"}
+    assert set(report["basket_backtest_by_year"]["top_5"]) == {"2022", "2023"}
+    assert all(
+        isinstance(year, str)
+        for year in report["basket_backtest_by_year"]["top_5"]
+    )
+    assert set(report["basket_backtest_by_year"]["top_5"]["2023"]) == {
+        "model",
+        "random_baseline",
+        "momentum_baseline",
+        "relative_momentum_baseline",
+        "universe",
+        "benchmark",
+    }
+
+
+def test_top_n_basket_backtest_by_year_uses_prediction_date_year_and_selected_groups():
+    metadata = make_by_year_top_n_metadata()
+    predicted_excess_returns = np.array([0.90, 0.10, 0.20, 0.80, 0.70, 0.60])
+
+    report = build_top_n_selection_reports(
+        metadata,
+        predicted_excess_returns,
+        top_n_values=(1,),
+        random_seed=7,
+        random_trials=2,
+        random_trial_workers=1,
+    )
+
+    by_year = report["basket_backtest_by_year"]["top_1"]
+    assert set(by_year) == {"2022", "2023"}
+    assert by_year["2022"]["model"]["evaluated_dates"] == 1
+    assert by_year["2023"]["model"]["evaluated_dates"] == 2
+    assert np.isclose(
+        by_year["2022"]["model"]["average_basket_excess_return"],
+        0.08,
+    )
+    assert np.isclose(
+        by_year["2023"]["model"]["average_basket_excess_return"],
+        (0.07 + 0.03) / 2,
+    )
+    assert np.isclose(
+        by_year["2023"]["universe"]["average_basket_excess_return"],
+        ((-0.03 + 0.07) / 2 + (0.03 + 0.00) / 2) / 2,
+    )
+    assert by_year["2022"]["benchmark"]["average_basket_excess_return"] == 0.0
+
+
+def test_top_n_basket_backtest_by_year_random_baseline_is_deterministic_with_parallel_workers():
+    metadata = make_by_year_top_n_metadata()
+    predicted_excess_returns = np.array([0.90, 0.10, 0.20, 0.80, 0.70, 0.60])
+
+    first_report = build_top_n_selection_reports(
+        metadata,
+        predicted_excess_returns,
+        top_n_values=(1,),
+        random_seed=11,
+        random_trials=6,
+        random_trial_workers=2,
+    )
+    second_report = build_top_n_selection_reports(
+        metadata,
+        predicted_excess_returns,
+        top_n_values=(1,),
+        random_seed=11,
+        random_trials=6,
+        random_trial_workers=2,
+    )
+
+    assert_nested_reports_close(
+        second_report["basket_backtest_by_year"],
+        first_report["basket_backtest_by_year"],
+    )
+    random_baseline = first_report["basket_backtest_by_year"]["top_1"]["2023"][
+        "random_baseline"
+    ]
+    assert random_baseline["random_seed"] == 11
+    assert random_baseline["random_trials"] == 6
+
+
+def test_top_n_basket_backtest_by_year_random_baseline_is_deterministic_with_single_worker():
+    metadata = make_by_year_top_n_metadata()
+    predicted_excess_returns = np.array([0.90, 0.10, 0.20, 0.80, 0.70, 0.60])
+
+    first_report = build_top_n_selection_reports(
+        metadata,
+        predicted_excess_returns,
+        top_n_values=(1,),
+        random_seed=11,
+        random_trials=6,
+        random_trial_workers=1,
+    )
+    second_report = build_top_n_selection_reports(
+        metadata,
+        predicted_excess_returns,
+        top_n_values=(1,),
+        random_seed=11,
+        random_trials=6,
+        random_trial_workers=1,
+    )
+
+    assert_nested_reports_close(
+        second_report["basket_backtest_by_year"],
+        first_report["basket_backtest_by_year"],
+    )
+
+
+def test_top_n_random_baselines_match_across_worker_counts_with_independent_trial_seeds():
+    # The random baseline uses deterministic independent per-trial seeds, so
+    # worker count changes scheduling only, not selected trial baskets.
+    metadata = make_by_year_top_n_metadata()
+    predicted_excess_returns = np.array([0.90, 0.10, 0.20, 0.80, 0.70, 0.60])
+
+    single_worker_report = build_top_n_selection_reports(
+        metadata,
+        predicted_excess_returns,
+        top_n_values=(1,),
+        random_seed=11,
+        random_trials=6,
+        random_trial_workers=1,
+    )
+    parallel_report = build_top_n_selection_reports(
+        metadata,
+        predicted_excess_returns,
+        top_n_values=(1,),
+        random_seed=11,
+        random_trials=6,
+        random_trial_workers=2,
+    )
+
+    assert_nested_reports_close(
+        parallel_report["basket_backtest_by_year"]["top_1"]["2023"][
+            "random_baseline"
+        ],
+        single_worker_report["basket_backtest_by_year"]["top_1"]["2023"][
+            "random_baseline"
+        ],
+    )
+    assert_nested_reports_close(
+        parallel_report["basket_backtest"]["top_1"]["random_baseline"],
+        single_worker_report["basket_backtest"]["top_1"]["random_baseline"],
+    )
+
+
+def test_probability_ranked_top_n_selection_reports_include_by_year_basket_report():
+    metadata = make_by_year_top_n_metadata()
+    classifier_probabilities = np.array([0.10, 0.90, 0.20, 0.80, 0.70, 0.60])
+
+    report = build_probability_ranked_top_n_selection_reports(
+        metadata,
+        classifier_probabilities,
+        top_n_values=(1,),
+        random_seed=7,
+        random_trials=2,
+        random_trial_workers=1,
+    )
+
+    assert "basket_backtest_by_year" in report
+    assert set(report["basket_backtest_by_year"]["top_1"]) == {"2022", "2023"}
 
 
 def test_probability_ranked_top_n_selection_reports_are_exported():
@@ -610,6 +814,31 @@ def test_top_n_random_trials_workers_greater_than_one_are_deterministic():
     assert ranked_random["random_baseline_trials"] == 5
     assert basket_random["random_seed"] == 7
     assert basket_random["random_trials"] == 5
+
+
+def test_top_n_random_trials_worker_one_is_deterministic_with_independent_trial_seeds():
+    metadata = make_ranked_selection_metadata()
+    metadata["relative_momentum"] = [0.01, 0.05, -0.02, 0.04, 0.03, 0.10]
+    predicted_excess_returns = np.array([0.90, 0.80, 0.70, 0.10, 0.20, 0.30])
+
+    first_report = build_top_n_selection_reports(
+        metadata,
+        predicted_excess_returns,
+        top_n_values=(1, 2),
+        random_seed=7,
+        random_trials=5,
+        random_trial_workers=1,
+    )
+    second_report = build_top_n_selection_reports(
+        metadata,
+        predicted_excess_returns,
+        top_n_values=(1, 2),
+        random_seed=7,
+        random_trials=5,
+        random_trial_workers=1,
+    )
+
+    assert_nested_reports_close(second_report, first_report)
 
 
 def test_top_n_random_trial_worker_one_uses_sequential_no_pool_path(monkeypatch):

@@ -1,6 +1,7 @@
 """Public Top-N ranked-selection and basket-backtest orchestration."""
 
 import numpy as np
+import pandas as pd
 
 from src.train.evaluation.baselines import (
     _benchmark_basket_backtest_stats,
@@ -8,7 +9,7 @@ from src.train.evaluation.baselines import (
     _combined_momentum_ranked_selection_stats,
     _combined_relative_momentum_basket_backtest_stats,
     _combined_relative_momentum_ranked_selection_stats,
-    _random_top_n_selection_stats,
+    _random_top_n_selection_reports,
     _resolve_momentum_score_column,
     _resolve_relative_momentum_score_column,
     _universe_ranked_selection_stats,
@@ -19,6 +20,9 @@ from src.train.evaluation.ranked_selection import (
     _select_top_n_by_score,
 )
 from src.train.evaluation.validation import _validate_ranked_selection_inputs
+
+
+_PREDICTION_YEAR_COLUMN = "_prediction_year"
 
 
 def build_top_n_ranked_selection_report(
@@ -146,6 +150,9 @@ def _build_top_n_selection_reports_for_score(
 
     metadata[score_column] = ranking_scores
     metadata = metadata[metadata["Ticker"] != "SPY"].copy()
+    metadata[_PREDICTION_YEAR_COLUMN] = _prediction_year_strings(
+        metadata["prediction_date"]
+    )
     momentum_score_column = _resolve_momentum_score_column(
         metadata,
         momentum_score_column,
@@ -159,6 +166,8 @@ def _build_top_n_selection_reports_for_score(
     grouped_metadata = list(metadata.groupby("prediction_date", sort=True))
     ranked_selection_report = {}
     basket_backtest_report = {}
+    basket_backtest_by_year_report = {}
+    grouped_metadata_by_year = _grouped_metadata_by_year(grouped_metadata)
     universe_ranked_stats = _universe_ranked_selection_stats(grouped_metadata)
     universe_basket_stats = _basket_backtest_stats(
         [date_group for _, date_group in grouped_metadata]
@@ -176,7 +185,11 @@ def _build_top_n_selection_reports_for_score(
             selected_count_by_date,
             score_column,
         )
-        random_ranked_stats, random_basket_stats = _random_top_n_selection_stats(
+        (
+            random_ranked_stats,
+            random_basket_stats,
+            random_basket_by_year_stats,
+        ) = _random_top_n_selection_reports(
             grouped_metadata,
             selected_count_by_date,
             random_seed=random_seed,
@@ -231,11 +244,105 @@ def _build_top_n_selection_reports_for_score(
             "universe": universe_basket_stats,
             "benchmark": benchmark_basket_stats,
         }
+        basket_backtest_by_year_report[key] = _build_basket_backtest_by_year_report(
+            grouped_metadata_by_year,
+            model_selected_groups,
+            momentum_selected_groups,
+            relative_momentum_selected_groups,
+            momentum_score_column,
+            relative_momentum_score_column,
+            random_basket_by_year_stats,
+        )
 
     return {
         "ranked_selection": ranked_selection_report,
         "basket_backtest": basket_backtest_report,
+        "basket_backtest_by_year": basket_backtest_by_year_report,
     }
+
+
+def _prediction_year_strings(prediction_dates):
+    """Convert prediction dates to stable string year labels."""
+    parsed_dates = pd.to_datetime(prediction_dates, errors="raise")
+    if parsed_dates.isna().any():
+        raise ValueError("prediction_date must not contain null values.")
+
+    return parsed_dates.dt.year.astype(int).astype(str)
+
+
+def _grouped_metadata_by_year(grouped_metadata):
+    """Group date-level metadata groups by prediction_date year."""
+    grouped_by_year = {}
+    for prediction_date, date_group in grouped_metadata:
+        year = _prediction_year_from_group(date_group)
+        grouped_by_year.setdefault(year, []).append((prediction_date, date_group))
+    return grouped_by_year
+
+
+def _prediction_year_from_group(date_group):
+    """Return the string prediction year for one selected or candidate group."""
+    return str(date_group[_PREDICTION_YEAR_COLUMN].iloc[0])
+
+
+def _selected_groups_by_year(selected_groups):
+    """Group selected date baskets by prediction_date year."""
+    if selected_groups is None:
+        return None
+
+    grouped_by_year = {}
+    for selected_group in selected_groups:
+        year = _prediction_year_from_group(selected_group)
+        grouped_by_year.setdefault(year, []).append(selected_group)
+    return grouped_by_year
+
+
+def _build_basket_backtest_by_year_report(
+    grouped_metadata_by_year,
+    model_selected_groups,
+    momentum_selected_groups,
+    relative_momentum_selected_groups,
+    momentum_score_column,
+    relative_momentum_score_column,
+    random_basket_by_year_stats,
+):
+    """Build equal-weight Top-N basket diagnostics split by prediction year."""
+    model_selected_groups_by_year = _selected_groups_by_year(model_selected_groups)
+    momentum_selected_groups_by_year = _selected_groups_by_year(momentum_selected_groups)
+    relative_momentum_selected_groups_by_year = _selected_groups_by_year(
+        relative_momentum_selected_groups
+    )
+    by_year_report = {}
+
+    for year in sorted(grouped_metadata_by_year):
+        year_grouped_metadata = grouped_metadata_by_year[year]
+        by_year_report[year] = {
+            "model": _basket_backtest_stats(
+                model_selected_groups_by_year.get(year, [])
+            ),
+            "random_baseline": random_basket_by_year_stats.get(year, {}),
+            "momentum_baseline": _combined_momentum_basket_backtest_stats(
+                (
+                    None
+                    if momentum_selected_groups_by_year is None
+                    else momentum_selected_groups_by_year.get(year, [])
+                ),
+                momentum_score_column,
+            ),
+            "relative_momentum_baseline": _combined_relative_momentum_basket_backtest_stats(
+                (
+                    None
+                    if relative_momentum_selected_groups_by_year is None
+                    else relative_momentum_selected_groups_by_year.get(year, [])
+                ),
+                relative_momentum_score_column,
+            ),
+            "universe": _basket_backtest_stats(
+                [date_group for _, date_group in year_grouped_metadata]
+            ),
+            "benchmark": _benchmark_basket_backtest_stats(year_grouped_metadata),
+        }
+
+    return by_year_report
 
 def _select_available_top_n_groups(
     grouped_metadata,

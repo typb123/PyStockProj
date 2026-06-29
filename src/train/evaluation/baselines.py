@@ -6,6 +6,7 @@ import numpy as np
 import pandas as pd
 
 from src.train.evaluation.basket_backtest import (
+    _basket_backtest_date_stats,
     _basket_backtest_stats,
     _empty_basket_backtest_stats,
     _summarize_basket_date_stats,
@@ -26,11 +27,66 @@ def _random_top_n_selection_stats(
     random_trial_workers=4,
 ):
     """Build random ranked-selection and basket baselines for Top-N buckets."""
+    ranked_stats, basket_stats, _ = _random_top_n_selection_reports(
+        grouped_metadata,
+        selected_count_by_date,
+        random_seed=random_seed,
+        random_trials=random_trials,
+        random_trial_workers=random_trial_workers,
+    )
+    return ranked_stats, basket_stats
+
+
+def _random_top_n_selection_reports(
+    grouped_metadata,
+    selected_count_by_date,
+    random_seed,
+    random_trials,
+    random_trial_workers=4,
+):
+    """Build overall and by-year random baselines from one random trial run."""
     if random_trial_workers < 1:
         raise ValueError("random_trial_workers must be at least 1.")
 
+    trial_results = _random_top_n_selection_trial_results(
+        grouped_metadata,
+        selected_count_by_date,
+        random_seed,
+        random_trials,
+        random_trial_workers,
+    )
+    ranked_trial_stats = [trial["ranked_stats"] for trial in trial_results]
+    basket_trial_stats = [
+        _summarize_basket_date_stats(trial["basket_date_stats"])
+        for trial in trial_results
+    ]
+
+    ranked_stats = _average_random_trial_stats(
+        ranked_trial_stats,
+        random_seed,
+        random_trials,
+    )
+    basket_stats = _average_random_basket_trial_stats(basket_trial_stats)
+    basket_stats["random_seed"] = int(random_seed)
+    basket_stats["random_trials"] = int(random_trials)
+    basket_by_year_stats = _average_random_basket_trial_stats_by_year(
+        [trial["basket_date_stats"] for trial in trial_results],
+        random_seed,
+        random_trials,
+    )
+    return ranked_stats, basket_stats, basket_by_year_stats
+
+
+def _random_top_n_selection_trial_results(
+    grouped_metadata,
+    selected_count_by_date,
+    random_seed,
+    random_trials,
+    random_trial_workers,
+):
+    """Generate per-trial random selections through the centralized worker path."""
+    trial_seeds = _random_trial_seeds(random_seed, random_trials)
     if random_trial_workers > 1 and random_trials > 1:
-        trial_seeds = _random_trial_seeds(random_seed, random_trials)
         worker_count = min(int(random_trial_workers), int(random_trials))
         seed_chunks = np.array_split(
             np.asarray(trial_seeds, dtype=np.uint64),
@@ -45,72 +101,30 @@ def _random_top_n_selection_stats(
             for seed_chunk in seed_chunks
             if len(seed_chunk) > 0
         ]
-        ranked_trial_stats = []
-        basket_trial_stats = []
+        trial_results = []
         with ProcessPoolExecutor(max_workers=worker_count) as executor:
-            for ranked_chunk, basket_chunk in executor.map(
-                _random_top_n_selection_stats_worker,
+            for result_chunk in executor.map(
+                _random_top_n_selection_results_worker,
                 tasks,
             ):
-                ranked_trial_stats.extend(ranked_chunk)
-                basket_trial_stats.extend(basket_chunk)
-    else:
-        # Preserve the legacy default path: one RNG seeded once, consumed across
-        # dates and trials. Single-worker and single-trial runs avoid process-pool
-        # overhead and keep this no-pool path.
-        ranked_trial_stats, basket_trial_stats = (
-            _sequential_random_top_n_selection_trial_stats(
-                grouped_metadata,
-                selected_count_by_date,
-                random_seed,
-                random_trials,
-            )
+                trial_results.extend(result_chunk)
+        return trial_results
+
+    return [
+        _random_top_n_selection_trial_result(
+            grouped_metadata,
+            selected_count_by_date,
+            trial_seed,
         )
+        for trial_seed in trial_seeds
+    ]
 
-    ranked_stats = _average_random_trial_stats(
-        ranked_trial_stats,
-        random_seed,
-        random_trials,
-    )
-    basket_stats = _average_random_basket_trial_stats(basket_trial_stats)
-    basket_stats["random_seed"] = int(random_seed)
-    basket_stats["random_trials"] = int(random_trials)
-    return ranked_stats, basket_stats
-
-def _sequential_random_top_n_selection_trial_stats(
-    grouped_metadata,
-    selected_count_by_date,
-    random_seed,
-    random_trials,
-):
-    """Run random Top-N trials with the legacy single-RNG sequence."""
-    rng = np.random.default_rng(random_seed)
-    ranked_trial_stats = []
-    basket_trial_stats = []
-
-    for _ in range(random_trials):
-        selected_groups = []
-        for prediction_date, date_group in grouped_metadata:
-            selected_count = selected_count_by_date[prediction_date]
-            if selected_count == 0:
-                continue
-
-            selected_positions = rng.choice(
-                len(date_group),
-                size=selected_count,
-                replace=False,
-            )
-            selected_groups.append(date_group.iloc[selected_positions])
-
-        ranked_trial_stats.append(
-            _ranked_selection_stats(selected_groups, grouped_metadata)
-        )
-        basket_trial_stats.append(_basket_backtest_stats(selected_groups))
-
-    return ranked_trial_stats, basket_trial_stats
 
 def _random_trial_seeds(random_seed, random_trials):
-    """Derive independent trial seeds for parallel random baseline workers."""
+    """Derive independent per-trial seeds for random baseline evaluation."""
+    if int(random_trials) == 1:
+        return [int(random_seed)]
+
     rng = np.random.default_rng(random_seed)
     return [
         int(seed)
@@ -122,24 +136,37 @@ def _random_trial_seeds(random_seed, random_trials):
         )
     ]
 
-def _random_top_n_selection_stats_worker(args):
+
+def _random_top_n_selection_results_worker(args):
     """Run a chunk of random Top-N trials inside a process-pool worker."""
     grouped_metadata, selected_count_by_date, trial_seeds = args
-    ranked_trial_stats = []
-    basket_trial_stats = []
 
-    for trial_seed in trial_seeds:
-        selected_groups = _select_random_trial_groups(
+    return [
+        _random_top_n_selection_trial_result(
             grouped_metadata,
             selected_count_by_date,
             trial_seed,
         )
-        ranked_trial_stats.append(
-            _ranked_selection_stats(selected_groups, grouped_metadata)
-        )
-        basket_trial_stats.append(_basket_backtest_stats(selected_groups))
+        for trial_seed in trial_seeds
+    ]
 
-    return ranked_trial_stats, basket_trial_stats
+
+def _random_top_n_selection_trial_result(
+    grouped_metadata,
+    selected_count_by_date,
+    trial_seed,
+):
+    """Run one random Top-N trial and keep reusable selected-date outcomes."""
+    selected_groups = _select_random_trial_groups(
+        grouped_metadata,
+        selected_count_by_date,
+        trial_seed,
+    )
+    return {
+        "ranked_stats": _ranked_selection_stats(selected_groups, grouped_metadata),
+        "basket_date_stats": _basket_backtest_date_stats(selected_groups),
+    }
+
 
 def _select_random_trial_groups(
     grouped_metadata,
@@ -162,6 +189,7 @@ def _select_random_trial_groups(
         selected_groups.append(date_group.iloc[selected_positions])
 
     return selected_groups
+
 
 def _combined_momentum_ranked_selection_stats(
     selected_groups,
@@ -186,6 +214,7 @@ def _combined_momentum_ranked_selection_stats(
     stats["available"] = True
     stats["momentum_score_column"] = momentum_score_column
     return stats
+
 
 def _combined_relative_momentum_ranked_selection_stats(
     selected_groups,
@@ -214,6 +243,7 @@ def _combined_relative_momentum_ranked_selection_stats(
     stats["relative_momentum_score_column"] = relative_momentum_score_column
     return stats
 
+
 def _combined_momentum_basket_backtest_stats(
     selected_groups,
     momentum_score_column,
@@ -232,6 +262,7 @@ def _combined_momentum_basket_backtest_stats(
     stats["available"] = True
     stats["momentum_score_column"] = momentum_score_column
     return stats
+
 
 def _combined_relative_momentum_basket_backtest_stats(
     selected_groups,
@@ -253,6 +284,7 @@ def _combined_relative_momentum_basket_backtest_stats(
     stats["relative_momentum_score_column"] = relative_momentum_score_column
     return stats
 
+
 def _resolve_momentum_score_column(metadata, momentum_score_column, prediction_days):
     """Choose the absolute-momentum baseline column for this horizon."""
     if momentum_score_column is not None:
@@ -265,6 +297,7 @@ def _resolve_momentum_score_column(metadata, momentum_score_column, prediction_d
 
     return "dailyReturn"
 
+
 def _resolve_relative_momentum_score_column(metadata, prediction_days):
     """Choose the SPY-relative momentum baseline column for this horizon."""
     if prediction_days is None:
@@ -272,36 +305,23 @@ def _resolve_relative_momentum_score_column(metadata, prediction_days):
 
     return f"relative_momentum_{int(prediction_days)}d"
 
+
 def _random_basket_backtest_stats(
     grouped_metadata,
     selected_count_by_date,
     random_seed,
     random_trials,
 ):
-    """Build the legacy random basket backtest baseline."""
-    rng = np.random.default_rng(random_seed)
-    trial_stats = []
+    """Build a sequential random basket backtest baseline."""
+    _, basket_stats, _ = _random_top_n_selection_reports(
+        grouped_metadata,
+        selected_count_by_date,
+        random_seed=random_seed,
+        random_trials=random_trials,
+        random_trial_workers=1,
+    )
+    return basket_stats
 
-    for _ in range(random_trials):
-        selected_groups = []
-        for prediction_date, date_group in grouped_metadata:
-            selected_count = selected_count_by_date[prediction_date]
-            if selected_count == 0:
-                continue
-
-            selected_positions = rng.choice(
-                len(date_group),
-                size=selected_count,
-                replace=False,
-            )
-            selected_groups.append(date_group.iloc[selected_positions])
-
-        trial_stats.append(_basket_backtest_stats(selected_groups))
-
-    stats = _average_random_basket_trial_stats(trial_stats)
-    stats["random_seed"] = int(random_seed)
-    stats["random_trials"] = int(random_trials)
-    return stats
 
 def _average_random_basket_trial_stats(trial_stats):
     """Average basket backtest metrics across random trials."""
@@ -315,6 +335,55 @@ def _average_random_basket_trial_stats(trial_stats):
 
     stats["evaluated_dates"] = int(round(stats["evaluated_dates"]))
     return stats
+
+
+def _average_random_basket_trial_stats_by_year(
+    trial_date_stats,
+    random_seed,
+    random_trials,
+):
+    """Average random basket metrics across trials, grouped by prediction year."""
+    years = sorted(
+        {
+            year
+            for date_stats in trial_date_stats
+            for year in _prediction_years_from_date_stats(date_stats)
+        }
+    )
+    by_year_stats = {}
+
+    for year in years:
+        trial_stats = []
+        for date_stats in trial_date_stats:
+            year_date_stats = _filter_basket_date_stats_for_year(date_stats, year)
+            if len(year_date_stats) == 0:
+                trial_stats.append(_empty_basket_backtest_stats())
+            else:
+                trial_stats.append(_summarize_basket_date_stats(year_date_stats))
+
+        stats = _average_random_basket_trial_stats(trial_stats)
+        stats["random_seed"] = int(random_seed)
+        stats["random_trials"] = int(random_trials)
+        by_year_stats[year] = stats
+
+    return by_year_stats
+
+
+def _prediction_years_from_date_stats(date_stats):
+    """Return string prediction years represented by per-date basket stats."""
+    if len(date_stats) == 0:
+        return []
+
+    return date_stats["prediction_year"].astype(str)
+
+
+def _filter_basket_date_stats_for_year(date_stats, year):
+    """Select per-date basket rows for a string prediction year."""
+    if len(date_stats) == 0:
+        return date_stats
+
+    return date_stats.loc[date_stats["prediction_year"].astype(str) == str(year)]
+
 
 def _momentum_basket_backtest_stats(
     grouped_metadata,
@@ -344,6 +413,7 @@ def _momentum_basket_backtest_stats(
     stats["available"] = True
     stats["momentum_score_column"] = momentum_score_column
     return stats
+
 
 def _relative_momentum_basket_backtest_stats(
     grouped_metadata,
@@ -375,6 +445,7 @@ def _relative_momentum_basket_backtest_stats(
     stats["relative_momentum_score_column"] = relative_momentum_score_column
     return stats
 
+
 def _benchmark_basket_backtest_stats(grouped_metadata):
     """Represent the SPY benchmark as the per-date basket comparator."""
     if not grouped_metadata:
@@ -397,33 +468,23 @@ def _benchmark_basket_backtest_stats(grouped_metadata):
     )
     return _summarize_basket_date_stats(date_stats)
 
+
 def _random_ranked_selection_stats(
     grouped_metadata,
     selected_count_by_date,
     random_seed,
     random_trials,
 ):
-    """Build the legacy random ranked-selection baseline."""
-    rng = np.random.default_rng(random_seed)
-    trial_stats = []
+    """Build a sequential random ranked-selection baseline."""
+    ranked_stats, _, _ = _random_top_n_selection_reports(
+        grouped_metadata,
+        selected_count_by_date,
+        random_seed=random_seed,
+        random_trials=random_trials,
+        random_trial_workers=1,
+    )
+    return ranked_stats
 
-    for _ in range(random_trials):
-        selected_groups = []
-        for prediction_date, date_group in grouped_metadata:
-            selected_count = selected_count_by_date[prediction_date]
-            if selected_count == 0:
-                continue
-
-            selected_positions = rng.choice(
-                len(date_group),
-                size=selected_count,
-                replace=False,
-            )
-            selected_groups.append(date_group.iloc[selected_positions])
-
-        trial_stats.append(_ranked_selection_stats(selected_groups, grouped_metadata))
-
-    return _average_random_trial_stats(trial_stats, random_seed, random_trials)
 
 def _average_random_trial_stats(trial_stats, random_seed, random_trials):
     """Average ranked-selection metrics across random trials."""
@@ -441,6 +502,7 @@ def _average_random_trial_stats(trial_stats, random_seed, random_trials):
     stats["random_baseline_trials"] = int(random_trials)
     stats["random_seed"] = int(random_seed)
     return stats
+
 
 def _momentum_ranked_selection_stats(
     grouped_metadata,
@@ -474,6 +536,7 @@ def _momentum_ranked_selection_stats(
     stats["available"] = True
     stats["momentum_score_column"] = momentum_score_column
     return stats
+
 
 def _relative_momentum_ranked_selection_stats(
     grouped_metadata,
@@ -510,6 +573,7 @@ def _relative_momentum_ranked_selection_stats(
     stats["available"] = True
     stats["relative_momentum_score_column"] = relative_momentum_score_column
     return stats
+
 
 def _universe_ranked_selection_stats(grouped_metadata):
     """Summarize the full non-SPY candidate universe by prediction date."""

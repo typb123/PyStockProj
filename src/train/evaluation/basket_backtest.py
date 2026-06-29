@@ -11,23 +11,46 @@ def _basket_backtest_stats(selected_groups):
     if not selected_groups:
         return _empty_basket_backtest_stats()
 
+    return _summarize_basket_date_stats(_basket_backtest_date_stats(selected_groups))
+
+def _basket_backtest_date_stats(selected_groups):
+    """Build per-date equal-weight basket outcomes for selected groups."""
+    if not selected_groups:
+        return pd.DataFrame(
+            columns=[
+                "prediction_date",
+                "prediction_year",
+                "basket_raw_return",
+                "basket_benchmark_return",
+                "basket_excess_return",
+                "selected_count",
+            ]
+        )
+
     date_stats = pd.DataFrame(
         [
-            {
-                "basket_raw_return": float(selected_group["raw_forward_return"].mean()),
-                "basket_benchmark_return": float(
-                    selected_group["benchmark_forward_return"].mean()
-                ),
-                "basket_excess_return": float(
-                    selected_group["excess_forward_return"].mean()
-                ),
-                "selected_count": len(selected_group),
-            }
+            _basket_backtest_date_stat(selected_group)
             for selected_group in selected_groups
         ]
     )
+    return date_stats
 
-    return _summarize_basket_date_stats(date_stats)
+def _basket_backtest_date_stat(selected_group):
+    """Build one selected date group's equal-weight basket outcome."""
+    prediction_date = pd.to_datetime(
+        selected_group["prediction_date"].iloc[0],
+        errors="raise",
+    )
+    return {
+        "prediction_date": prediction_date,
+        "prediction_year": str(prediction_date.year),
+        "basket_raw_return": float(selected_group["raw_forward_return"].mean()),
+        "basket_benchmark_return": float(
+            selected_group["benchmark_forward_return"].mean()
+        ),
+        "basket_excess_return": float(selected_group["excess_forward_return"].mean()),
+        "selected_count": len(selected_group),
+    }
 
 def _summarize_basket_date_stats(date_stats):
     """Convert per-date basket outcomes into basket backtest report metrics."""

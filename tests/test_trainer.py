@@ -575,6 +575,73 @@ def test_format_top_n_basket_backtest_summary_accepts_custom_title():
     assert "XGBoost Top-N Basket Backtest Summary:" not in summary
 
 
+def test_format_top_n_basket_backtest_by_year_summary_formats_year_rows():
+    report = {
+        "top_5": {
+            "2022": {
+                "model": {
+                    "average_basket_excess_return": 0.015,
+                    "beat_benchmark_rate": 0.75,
+                    "evaluated_dates": 4,
+                },
+                "random_baseline": {
+                    "average_basket_excess_return": 0.004,
+                },
+                "momentum_baseline": {
+                    "available": True,
+                    "momentum_score_column": "momentum_10d",
+                    "average_basket_excess_return": 0.010,
+                },
+                "relative_momentum_baseline": {
+                    "available": True,
+                    "relative_momentum_score_column": "relative_momentum_10d",
+                    "average_basket_excess_return": 0.011,
+                },
+                "universe": {
+                    "average_basket_excess_return": 0.002,
+                },
+            },
+            "2023": {
+                "model": {
+                    "average_basket_excess_return": -0.001,
+                    "beat_benchmark_rate": 0.40,
+                    "evaluated_dates": 5,
+                },
+                "random_baseline": {
+                    "average_basket_excess_return": 0.003,
+                },
+                "momentum_baseline": {
+                    "available": False,
+                    "average_basket_excess_return": np.nan,
+                },
+                "relative_momentum_baseline": {
+                    "available": False,
+                    "average_basket_excess_return": np.nan,
+                },
+                "universe": {
+                    "average_basket_excess_return": 0.001,
+                },
+            },
+        }
+    }
+
+    summary = trainer.format_top_n_basket_backtest_by_year_summary(report)
+
+    assert summary == (
+        "XGBoost Top-N Basket Backtest By-Year Summary:\n"
+        "2022 top_5: model excess=1.50%, random excess=0.40%, "
+        "momentum_10d excess=1.00%, relative_momentum_10d excess=1.10%, "
+        "universe excess=0.20%, model minus random=1.10%, "
+        "model minus momentum=0.50%, model minus relative momentum=0.40%, beat benchmark rate=75.00%, "
+        "evaluated dates=4\n"
+        "2023 top_5: model excess=-0.10%, random excess=0.30%, "
+        "momentum excess=unavailable, relative_momentum excess=unavailable, "
+        "universe excess=0.10%, model minus random=-0.40%, "
+        "model minus momentum=unavailable, model minus relative momentum=unavailable, beat benchmark rate=40.00%, "
+        "evaluated dates=5"
+    )
+
+
 def test_format_horizon_comparison_summary_formats_basket_metrics():
     horizon_reports = {
         5: {
@@ -1094,6 +1161,7 @@ def test_log_xgboost_test_report_uses_explicit_direction_labels(monkeypatch):
         return {
             "ranked_selection": {"top_5": {"selected_row_count": 1}},
             "basket_backtest": {"top_5": {"model": {}}},
+            "basket_backtest_by_year": {"top_5": {"2024": {"model": {}}}},
         }
 
     def fake_build_probability_ranked_top_n_selection_reports(
@@ -1111,6 +1179,9 @@ def test_log_xgboost_test_report_uses_explicit_direction_labels(monkeypatch):
         return {
             "ranked_selection": {"top_5": {"selected_row_count": 1}},
             "basket_backtest": {"top_5": {"model": {}}},
+            "basket_backtest_by_year": {
+                "top_5": {"2024": {"classifier_model": {}}}
+            },
         }
 
     monkeypatch.setattr(
@@ -1180,8 +1251,14 @@ def test_log_xgboost_test_report_uses_explicit_direction_labels(monkeypatch):
     assert set(report) == {
         "ranked_selection",
         "basket_backtest",
+        "basket_backtest_by_year",
         "classifier_probability_ranked_selection",
         "classifier_probability_basket_backtest",
+        "classifier_probability_basket_backtest_by_year",
+    }
+    assert report["basket_backtest_by_year"] == {"top_5": {"2024": {"model": {}}}}
+    assert report["classifier_probability_basket_backtest_by_year"] == {
+        "top_5": {"2024": {"classifier_model": {}}}
     }
     assert not np.array_equal(captured["y_true"], (y_test > 0).astype(int))
 
@@ -1228,6 +1305,31 @@ def test_log_xgboost_test_report_logs_top_n_summary_at_info_and_full_report_at_d
             "benchmark": {
                 "average_basket_raw_return": 0.0023,
             },
+        }
+    }
+    basket_by_year_report = {
+        "top_5": {
+            "2023": {
+                "model": {
+                    "average_basket_excess_return": 0.01,
+                    "beat_benchmark_rate": 0.5288,
+                    "evaluated_dates": 3,
+                },
+                "random_baseline": {
+                    "average_basket_excess_return": 0.004,
+                },
+                "momentum_baseline": {
+                    "available": True,
+                    "average_basket_excess_return": 0.008,
+                },
+                "relative_momentum_baseline": {
+                    "available": True,
+                    "average_basket_excess_return": 0.009,
+                },
+                "universe": {
+                    "average_basket_excess_return": 0.0015,
+                },
+            }
         }
     }
 
@@ -1292,6 +1394,7 @@ def test_log_xgboost_test_report_logs_top_n_summary_at_info_and_full_report_at_d
         lambda *args, **kwargs: {
             "ranked_selection": top_n_report,
             "basket_backtest": basket_report,
+            "basket_backtest_by_year": basket_by_year_report,
         },
     )
     monkeypatch.setattr(
@@ -1300,6 +1403,7 @@ def test_log_xgboost_test_report_logs_top_n_summary_at_info_and_full_report_at_d
         lambda *args, **kwargs: {
             "ranked_selection": top_n_report,
             "basket_backtest": basket_report,
+            "basket_backtest_by_year": basket_by_year_report,
         },
     )
 
@@ -1327,6 +1431,16 @@ def test_log_xgboost_test_report_logs_top_n_summary_at_info_and_full_report_at_d
     )
     assert any(
         message.startswith("XGBoost Top-N Basket Backtest Summary:")
+        for message in info_messages
+    )
+    assert any(
+        message.startswith("XGBoost Top-N Basket Backtest By-Year Summary:")
+        for message in info_messages
+    )
+    assert not any(
+        message.startswith(
+            "XGBoost Classifier-Probability Top-N Basket Backtest By-Year Summary:"
+        )
         for message in info_messages
     )
     assert any(
@@ -1382,10 +1496,15 @@ def test_log_xgboost_test_report_logs_top_n_summary_at_info_and_full_report_at_d
 
     assert "XGBoost Top-N Ranked Selection Report:" in caplog.text
     assert "XGBoost Top-N Basket Backtest Report:" in caplog.text
+    assert "XGBoost Top-N Basket Backtest By-Year Report:" in caplog.text
     assert (
         "XGBoost Classifier-Probability Top-N Ranked Selection Report:" in caplog.text
     )
     assert "XGBoost Classifier-Probability Top-N Basket Backtest Report:" in caplog.text
+    assert (
+        "XGBoost Classifier-Probability Top-N Basket Backtest By-Year Report:"
+        in caplog.text
+    )
 
 
 def test_log_xgboost_test_report_logs_basket_summary_at_info_and_full_report_at_debug(

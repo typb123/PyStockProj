@@ -242,6 +242,74 @@ def format_top_n_basket_backtest_summary(
     return "\n".join(lines)
 
 
+def format_top_n_basket_backtest_by_year_summary(
+    top_n_by_year_report,
+    title="XGBoost Top-N Basket Backtest By-Year Summary:",
+):
+    """Format by-year Top-N basket backtest diagnostics for readable INFO logs."""
+    lines = [title]
+
+    for bucket_name, bucket_report in top_n_by_year_report.items():
+        for year, year_report in bucket_report.items():
+            model = year_report.get("model", {})
+            random_baseline = year_report.get("random_baseline", {})
+            momentum_baseline = year_report.get("momentum_baseline", {})
+            relative_momentum_baseline = year_report.get(
+                "relative_momentum_baseline", {}
+            )
+            universe = year_report.get("universe", {})
+            momentum_label = momentum_baseline.get("momentum_score_column", "momentum")
+            relative_momentum_label = relative_momentum_baseline.get(
+                "relative_momentum_score_column",
+                "relative_momentum",
+            )
+
+            model_excess = model.get("average_basket_excess_return")
+            random_excess = random_baseline.get("average_basket_excess_return")
+            momentum_excess = momentum_baseline.get("average_basket_excess_return")
+            relative_momentum_excess = relative_momentum_baseline.get(
+                "average_basket_excess_return"
+            )
+            universe_excess = universe.get("average_basket_excess_return")
+            beat_rate = model.get("beat_benchmark_rate")
+            evaluated_dates = model.get("evaluated_dates")
+
+            if momentum_baseline.get("available", True):
+                momentum_text = _format_percent(momentum_excess)
+                minus_momentum_text = _format_percent_delta(
+                    model_excess,
+                    momentum_excess,
+                )
+            else:
+                momentum_text = "unavailable"
+                minus_momentum_text = "unavailable"
+            if relative_momentum_baseline.get("available", True):
+                relative_momentum_text = _format_percent(relative_momentum_excess)
+                minus_relative_momentum_text = _format_percent_delta(
+                    model_excess,
+                    relative_momentum_excess,
+                )
+            else:
+                relative_momentum_text = "unavailable"
+                minus_relative_momentum_text = "unavailable"
+
+            lines.append(
+                f"{year} {bucket_name}: "
+                f"model excess={_format_percent(model_excess)}, "
+                f"random excess={_format_percent(random_excess)}, "
+                f"{momentum_label} excess={momentum_text}, "
+                f"{relative_momentum_label} excess={relative_momentum_text}, "
+                f"universe excess={_format_percent(universe_excess)}, "
+                f"model minus random={_format_percent_delta(model_excess, random_excess)}, "
+                f"model minus momentum={minus_momentum_text}, "
+                f"model minus relative momentum={minus_relative_momentum_text}, "
+                f"beat benchmark rate={_format_percent(beat_rate)}, "
+                f"evaluated dates={_format_count(evaluated_dates)}"
+            )
+
+    return "\n".join(lines)
+
+
 def format_horizon_comparison_summary(horizon_reports):
     """Format basket backtest metrics across prediction horizons."""
     lines = ["Horizon Comparison Summary:"]
@@ -304,6 +372,13 @@ def _format_percent_delta(left, right):
     if left is None or right is None or pd.isna(left) or pd.isna(right):
         return "n/a"
     return f"{float(left) - float(right):.2%}"
+
+
+def _format_count(value):
+    """Format optional count-like report values for logs."""
+    if value is None or pd.isna(value):
+        return "n/a"
+    return str(int(value))
 
 
 def _sanitize_cache_key(value):
@@ -553,6 +628,10 @@ def log_xgboost_test_report(
     )
     top_n_ranked_selection_report = top_n_selection_reports["ranked_selection"]
     top_n_basket_backtest_report = top_n_selection_reports["basket_backtest"]
+    top_n_basket_backtest_by_year_report = top_n_selection_reports.get(
+        "basket_backtest_by_year",
+        {},
+    )
     classifier_top_n_selection_reports = build_probability_ranked_top_n_selection_reports(
         test_split_metadata,
         classifier_probability_up,
@@ -566,6 +645,9 @@ def log_xgboost_test_report(
     classifier_top_n_basket_backtest_report = classifier_top_n_selection_reports[
         "basket_backtest"
     ]
+    classifier_top_n_basket_backtest_by_year_report = (
+        classifier_top_n_selection_reports.get("basket_backtest_by_year", {})
+    )
 
     logging.info(
         f"XGBoost Beat-Benchmark Classification Report: {classification_report_data}"
@@ -594,6 +676,12 @@ def log_xgboost_test_report(
     logging.info(f"XGBoost Combined Signal Report: {combined_signal_report}")
     logging.info(format_top_n_ranked_selection_summary(top_n_ranked_selection_report))
     logging.info(format_top_n_basket_backtest_summary(top_n_basket_backtest_report))
+    if top_n_basket_backtest_by_year_report:
+        logging.info(
+            format_top_n_basket_backtest_by_year_summary(
+                top_n_basket_backtest_by_year_report
+            )
+        )
     logging.info(
         format_top_n_ranked_selection_summary(
             classifier_top_n_ranked_selection_report,
@@ -613,6 +701,10 @@ def log_xgboost_test_report(
         f"XGBoost Top-N Basket Backtest Report: {top_n_basket_backtest_report}"
     )
     logging.debug(
+        "XGBoost Top-N Basket Backtest By-Year Report: "
+        f"{top_n_basket_backtest_by_year_report}"
+    )
+    logging.debug(
         "XGBoost Classifier-Probability Top-N Ranked Selection Report: "
         f"{classifier_top_n_ranked_selection_report}"
     )
@@ -620,13 +712,21 @@ def log_xgboost_test_report(
         "XGBoost Classifier-Probability Top-N Basket Backtest Report: "
         f"{classifier_top_n_basket_backtest_report}"
     )
+    logging.debug(
+        "XGBoost Classifier-Probability Top-N Basket Backtest By-Year Report: "
+        f"{classifier_top_n_basket_backtest_by_year_report}"
+    )
     return {
         "ranked_selection": top_n_ranked_selection_report,
         "basket_backtest": top_n_basket_backtest_report,
+        "basket_backtest_by_year": top_n_basket_backtest_by_year_report,
         "classifier_probability_ranked_selection": (
             classifier_top_n_ranked_selection_report
         ),
         "classifier_probability_basket_backtest": classifier_top_n_basket_backtest_report,
+        "classifier_probability_basket_backtest_by_year": (
+            classifier_top_n_basket_backtest_by_year_report
+        ),
     }
 
 
