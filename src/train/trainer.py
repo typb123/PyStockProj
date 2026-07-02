@@ -37,10 +37,12 @@ from src.train.evaluation import (
 )
 from xgboost import XGBRegressor, XGBClassifier
 from src.config import (
+    DEFAULT_TRAINING_UNIVERSE,
     XG_PARAMS_CLASSIFIER,
     XG_PARAMS_REGRESSOR,
     MODEL_PATHS,
-    TRAINING_TICKERS,
+    TRAINING_UNIVERSES,
+    get_training_tickers,
     PREDICTION_DAYS,
     TEST_SIZE,
 )
@@ -940,12 +942,14 @@ def log_xgboost_test_report(
         "basket_backtest_by_year",
         {},
     )
-    classifier_top_n_selection_reports = build_probability_ranked_top_n_selection_reports(
-        test_split_metadata,
-        classifier_probability_up,
-        prediction_days=prediction_days,
-        random_trials=random_trials,
-        random_trial_workers=random_trial_workers,
+    classifier_top_n_selection_reports = (
+        build_probability_ranked_top_n_selection_reports(
+            test_split_metadata,
+            classifier_probability_up,
+            prediction_days=prediction_days,
+            random_trials=random_trials,
+            random_trial_workers=random_trial_workers,
+        )
     )
     classifier_top_n_ranked_selection_report = classifier_top_n_selection_reports[
         "ranked_selection"
@@ -1352,7 +1356,7 @@ def run_walk_forward_models(
     data: pd.DataFrame,
     prediction_days: int = PREDICTION_DAYS,
     random_trials: int = 100,
-    random_trial_workers: int = 4,
+    random_trial_workers: int = 8,
     min_train_years: int = DEFAULT_WALK_FORWARD_MIN_TRAIN_YEARS,
     validation_years: int = DEFAULT_WALK_FORWARD_VALIDATION_YEARS,
     test_years: int = DEFAULT_WALK_FORWARD_TEST_YEARS,
@@ -1523,9 +1527,7 @@ def _positive_int(value, argument_name="value"):
         ) from exc
 
     if parsed <= 0:
-        raise argparse.ArgumentTypeError(
-            f"{argument_name} must be a positive integer"
-        )
+        raise argparse.ArgumentTypeError(f"{argument_name} must be a positive integer")
     return parsed
 
 
@@ -1573,6 +1575,12 @@ def parse_args(argv=None):
         help='YFinance history period for raw OHLCV fetches. Defaults to "5y".',
     )
     parser.add_argument(
+        "--universe",
+        choices=sorted(TRAINING_UNIVERSES),
+        default=DEFAULT_TRAINING_UNIVERSE,
+        help=f"Training universe to fetch. Defaults to {DEFAULT_TRAINING_UNIVERSE}.",
+    )
+    parser.add_argument(
         "--no-cache",
         action="store_true",
         help=(
@@ -1592,7 +1600,7 @@ def parse_args(argv=None):
     parser.add_argument(
         "--random-trial-workers",
         type=_positive_random_trial_workers,
-        default=4,
+        default=8,
         help=(
             "Worker count for Top-N random baseline trials. Use 1 for sequential "
             "execution."
@@ -1610,9 +1618,7 @@ def parse_args(argv=None):
         "--walk-forward-min-train-years",
         type=lambda value: _positive_year_count(value, "walk_forward_min_train_years"),
         default=DEFAULT_WALK_FORWARD_MIN_TRAIN_YEARS,
-        help=(
-            "Minimum training-history window in years for walk-forward evaluation."
-        ),
+        help=("Minimum training-history window in years for walk-forward evaluation."),
     )
     parser.add_argument(
         "--walk-forward-validation-years",
@@ -1644,10 +1650,15 @@ def main(argv=None):
     """Run the end-to-end training workflow from CLI arguments."""
     args = parse_args(argv)
     use_cache = not args.no_cache
+    training_tickers = get_training_tickers(args.universe)
     logging.info(f"Selected YFinance period: {args.period}")
     logging.info(f"Raw YFinance OHLCV cache enabled: {use_cache}")
+    logging.info(
+        f"Selected training universe: {args.universe} "
+        f"({len(training_tickers)} tickers): {training_tickers}"
+    )
     data = prepare_data_parallel(
-        TRAINING_TICKERS,
+        training_tickers,
         period=args.period,
         use_cache=use_cache,
     )

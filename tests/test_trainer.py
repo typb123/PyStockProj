@@ -6,8 +6,12 @@ import numpy as np
 import pytest
 
 from src.config import (
+    DEFAULT_TRAINING_UNIVERSE,
+    LARGE_MEGA_CAP_STOCKS,
     TRAINING_TICKERS,
+    TRAINING_UNIVERSES,
     XG_PARAMS_REGRESSOR,
+    get_training_tickers,
 )
 from src.features.feature_contract import (
     ABSOLUTE_MOMENTUM_FEATURE_COLUMNS,
@@ -80,6 +84,29 @@ def test_prepare_data_parallel_summarizes_skipped_tickers(monkeypatch, caplog):
     assert "Fetched valid data for 2 of 3 requested tickers." in caplog.text
     assert "Skipped 1 tickers with no usable data: ['BAD']" in caplog.text
     assert "No data returned for BAD. Skipping..." not in caplog.text
+
+
+def test_prepare_data_parallel_fetches_spy_when_in_universe(monkeypatch):
+    calls = []
+
+    def fake_fetch_stock_data(ticker, period="5y"):
+        calls.append((ticker, period))
+        return pd.DataFrame(
+            {"Close": [100.0]},
+            index=pd.to_datetime(["2024-01-02"]),
+        )
+
+    monkeypatch.setattr(trainer, "fetch_stock_data", fake_fetch_stock_data)
+    monkeypatch.setattr(trainer, "calculate_data", lambda df: df)
+
+    result = trainer.prepare_data_parallel(
+        ["SPY", "AAPL"],
+        period="1y",
+        use_cache=False,
+    )
+
+    assert calls == [("SPY", "1y"), ("AAPL", "1y")]
+    assert set(result["Ticker"]) == {"SPY", "AAPL"}
 
 
 def test_empty_fetch_returns_without_normalizing_or_writing_cache(
@@ -783,8 +810,41 @@ def test_model_metadata_does_not_include_linear_regression_prediction():
     assert metadata["classifier_target"] == "beat_benchmark_target"
 
 
-def test_training_tickers_have_no_duplicates():
-    assert len(TRAINING_TICKERS) == len(set(TRAINING_TICKERS))
+def test_default_training_universe_is_large_mega_cap_stocks():
+    assert DEFAULT_TRAINING_UNIVERSE == "large_mega_cap_stocks"
+
+
+def test_training_tickers_match_default_large_mega_cap_universe():
+    assert TRAINING_TICKERS == LARGE_MEGA_CAP_STOCKS
+    assert TRAINING_TICKERS == get_training_tickers()
+
+
+def test_named_training_universes_have_no_duplicates():
+    for universe_name, tickers in TRAINING_UNIVERSES.items():
+        assert len(tickers) == len(set(tickers)), universe_name
+
+
+def test_named_training_universes_include_spy_benchmark():
+    for universe_name, tickers in TRAINING_UNIVERSES.items():
+        assert "SPY" in tickers, universe_name
+
+
+def test_get_training_tickers_returns_copy():
+    tickers = get_training_tickers("large_mega_cap_stocks")
+    tickers.append("SHOULD_NOT_MUTATE")
+
+    assert "SHOULD_NOT_MUTATE" not in get_training_tickers("large_mega_cap_stocks")
+    assert "SHOULD_NOT_MUTATE" not in TRAINING_UNIVERSES["large_mega_cap_stocks"]
+
+
+def test_get_training_tickers_rejects_unknown_universe_with_valid_choices():
+    with pytest.raises(ValueError) as exc_info:
+        get_training_tickers("bad_name")
+
+    message = str(exc_info.value)
+    assert "bad_name" in message
+    for universe_name in TRAINING_UNIVERSES:
+        assert universe_name in message
 
 
 def test_xgboost_regressor_candidates_include_default_baseline():
@@ -1358,9 +1418,10 @@ def test_parse_args_defaults_to_ten_prediction_days():
     assert args.horizons == [10]
     assert args.all_horizons is False
     assert args.period == "5y"
+    assert args.universe == DEFAULT_TRAINING_UNIVERSE
     assert args.no_cache is False
     assert args.random_trials == 100
-    assert args.random_trial_workers == 4
+    assert args.random_trial_workers == 8
     assert args.walk_forward is False
 
 
@@ -1368,6 +1429,12 @@ def test_parse_args_accepts_period():
     args = trainer.parse_args(["--period", "10y"])
 
     assert args.period == "10y"
+
+
+def test_parse_args_accepts_training_universe():
+    args = trainer.parse_args(["--universe", "broad_sector_etfs"])
+
+    assert args.universe == "broad_sector_etfs"
 
 
 def test_parse_args_accepts_random_trials():
@@ -1462,6 +1529,11 @@ def test_parse_args_rejects_all_horizons_with_prediction_days():
 def test_parse_args_rejects_walk_forward_with_all_horizons():
     with pytest.raises(SystemExit):
         trainer.parse_args(["--walk-forward", "--all-horizons"])
+
+
+def test_parse_args_rejects_unknown_training_universe():
+    with pytest.raises(SystemExit):
+        trainer.parse_args(["--universe", "bad_name"])
 
 
 def test_build_horizon_model_paths_uses_horizon_specific_directory():
@@ -1585,7 +1657,9 @@ def test_main_trains_all_horizons_and_logs_comparison(monkeypatch, caplog, capsy
             ]
         )
 
-    assert prepare_calls == [(trainer.TRAINING_TICKERS, "10y", True)]
+    assert prepare_calls == [
+        (get_training_tickers(DEFAULT_TRAINING_UNIVERSE), "10y", True)
+    ]
     assert trained_horizons == [5, 10, 20, 50]
     assert trained_random_trials == [20, 20, 20, 20]
     assert trained_random_trial_workers == [2, 2, 2, 2]
@@ -1597,6 +1671,61 @@ def test_main_trains_all_horizons_and_logs_comparison(monkeypatch, caplog, capsy
     assert "Horizon Comparison Summary:" in output
     assert "50d:" in output
     assert "XGBoost Beat-Benchmark Classification Report" not in output
+
+
+def test_main_passes_selected_broad_sector_etf_universe_to_prepare_data(
+    monkeypatch,
+):
+    prepare_calls = []
+    trained_horizons = []
+
+    def fake_prepare_data_parallel(tickers, period="5y", use_cache=True):
+        prepare_calls.append((list(tickers), period, use_cache))
+        return pd.DataFrame({"Close": [1.0]})
+
+    def fake_train_models(
+        data,
+        prediction_days,
+        random_trials=100,
+        random_trial_workers=4,
+    ):
+        trained_horizons.append(prediction_days)
+        return {
+            "prediction_days": prediction_days,
+            "basket_backtest": {
+                "top_5": {
+                    "model": {"average_basket_excess_return": 0.01},
+                    "random_baseline": {"average_basket_excess_return": 0.002},
+                    "momentum_baseline": {
+                        "available": False,
+                        "momentum_score_column": "momentum_10d",
+                    },
+                    "relative_momentum_baseline": {
+                        "available": False,
+                        "relative_momentum_score_column": "relative_momentum_10d",
+                    },
+                    "universe": {"average_basket_excess_return": 0.001},
+                    "benchmark": {"average_basket_raw_return": 0.003},
+                }
+            },
+        }
+
+    monkeypatch.setattr(trainer, "prepare_data_parallel", fake_prepare_data_parallel)
+    monkeypatch.setattr(trainer, "train_models", fake_train_models)
+
+    trainer.main(
+        [
+            "--prediction-days",
+            "10",
+            "--period",
+            "10y",
+            "--universe",
+            "broad_sector_etfs",
+        ]
+    )
+
+    assert prepare_calls == [(get_training_tickers("broad_sector_etfs"), "10y", True)]
+    assert trained_horizons == [10]
 
 
 def test_main_single_horizon_prints_top_n_basket_summary(monkeypatch, capsys):
@@ -1660,7 +1789,9 @@ def test_main_single_horizon_prints_top_n_basket_summary(monkeypatch, capsys):
         ]
     )
 
-    assert prepare_calls == [(trainer.TRAINING_TICKERS, "5y", False)]
+    assert prepare_calls == [
+        (get_training_tickers(DEFAULT_TRAINING_UNIVERSE), "5y", False)
+    ]
     assert trained_horizons == [10]
     assert trained_random_trials == [20]
     assert trained_random_trial_workers == [2]
@@ -1769,7 +1900,9 @@ def test_main_walk_forward_runs_walk_forward_path(monkeypatch, capsys):
         ]
     )
 
-    assert prepare_calls == [(trainer.TRAINING_TICKERS, "10y", True)]
+    assert prepare_calls == [
+        (get_training_tickers(DEFAULT_TRAINING_UNIVERSE), "10y", True)
+    ]
     assert walk_forward_calls == [
         {
             "prediction_days": 10,

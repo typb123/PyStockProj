@@ -59,8 +59,8 @@ MODEL_PATHS = {
     "model_metadata": "models/model_metadata.pkl",
 }
 
-# Default training universe used by trainer.py; not a guarantee of robustness or uniqueness.
-TRAINING_TICKERS = [
+# Original mixed training universe retained for reference/comparison.
+CURRENT_MIXED_UNIVERSE = [
     "SPY",
     "XLU",
     "XLE",
@@ -211,6 +211,52 @@ TRAINING_TICKERS = [
     "PLD",
     "EQIX",
 ]
+
+DEFAULT_TRAINING_UNIVERSE = "large_mega_cap_stocks"
+
+LARGE_MEGA_CAP_STOCKS = [
+    "SPY",  # benchmark only; candidate rows should still exclude SPY later
+    "AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "AVGO", "TSLA",
+    "BRK-B", "JPM", "V", "MA", "UNH", "LLY", "XOM", "COST",
+    "WMT", "HD", "PG", "JNJ", "ABBV", "MRK", "CVX", "KO",
+    "PEP", "BAC", "WFC", "GS", "MS", "CAT", "GE", "HON",
+    "UPS", "BA", "LMT", "RTX", "NOC", "ORCL", "CRM", "ADBE",
+    "CSCO", "AMD", "QCOM", "TXN", "INTC", "IBM", "AMGN", "PFE",
+    "ABT", "DHR", "ISRG", "SYK", "MCD", "PM", "SBUX", "CMG",
+    "NFLX", "VZ", "T", "NEE", "DUK", "AMT", "PLD", "EQIX",
+]
+
+BROAD_SECTOR_ETFS = [
+    "SPY",  # benchmark
+    "QQQ", "DIA", "IWM", "VTI",
+    "XLK", "XLF", "XLE", "XLV", "XLY", "XLP",
+    "XLI", "XLB", "XLRE", "XLC", "XLU",
+    "VUG", "VTV", "MTUM",
+]
+
+TRAINING_UNIVERSES = {
+    "large_mega_cap_stocks": LARGE_MEGA_CAP_STOCKS,
+    "broad_sector_etfs": BROAD_SECTOR_ETFS,
+    "current_mixed": CURRENT_MIXED_UNIVERSE,
+}
+
+
+def get_training_tickers(
+    universe_name: str = DEFAULT_TRAINING_UNIVERSE,
+) -> list[str]:
+    """Return a copy of the requested training universe ticker list."""
+    try:
+        tickers = TRAINING_UNIVERSES[universe_name]
+    except KeyError as exc:
+        valid_universes = ", ".join(sorted(TRAINING_UNIVERSES))
+        raise ValueError(
+            f"Unknown training universe '{universe_name}'. "
+            f"Valid universes: {valid_universes}."
+        ) from exc
+    return list(tickers)
+
+
+TRAINING_TICKERS = get_training_tickers(DEFAULT_TRAINING_UNIVERSE)
 
 # Compatibility aliases for older imports; new code should import feature columns
 # from src.features.feature_contract.
