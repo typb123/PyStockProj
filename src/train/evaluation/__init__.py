@@ -20,6 +20,9 @@ from src.train.evaluation.top_n import (
     build_top_n_ranked_selection_report,
     build_top_n_selection_reports,
 )
+from src.train.evaluation.ranking_diagnostics import (
+    build_same_date_ranking_diagnostics,
+)
 
 __all__ = [
     "build_actual_return_baseline_report",
@@ -35,6 +38,7 @@ __all__ = [
     "build_validation_selected_threshold_report",
     "build_model_only_top_n_basket_backtest_report",
     "build_probability_ranked_top_n_selection_reports",
+    "build_same_date_ranking_diagnostics",
     "build_top_n_basket_backtest_report",
     "build_top_n_ranked_selection_report",
     "build_top_n_selection_reports",

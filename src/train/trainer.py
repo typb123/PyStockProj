@@ -31,6 +31,7 @@ from src.train.evaluation import (
     build_predicted_return_quantile_report,
     build_regression_report,
     build_return_correlation_report,
+    build_same_date_ranking_diagnostics,
     build_top_n_selection_reports,
     build_trading_relevance_report,
     build_validation_selected_threshold_report,
@@ -392,11 +393,71 @@ def format_horizon_comparison_summary(horizon_reports):
     return "\n".join(lines)
 
 
+def format_same_date_ranking_diagnostics_summary(
+    ranking_diagnostics,
+    title="Same-Date Ranking Diagnostics:",
+):
+    """Format same-date ranking diagnostics for readable INFO logs."""
+    if not ranking_diagnostics.get("available", False):
+        reason = ranking_diagnostics.get("reason", "unavailable")
+        return f"{title}\n  unavailable: {reason}"
+
+    lines = [title]
+    rank_ic = ranking_diagnostics.get("rank_ic", {})
+    if rank_ic.get("available", False):
+        lines.append(
+            "  "
+            f"rank IC dates={_format_count(rank_ic.get('date_count'))}, "
+            f"mean={_format_decimal(rank_ic.get('mean_rank_ic'))}, "
+            f"median={_format_decimal(rank_ic.get('median_rank_ic'))}, "
+            f"positive rate={_format_percent(rank_ic.get('rank_ic_positive_rate'))}"
+        )
+    else:
+        lines.append(f"  rank IC unavailable: {rank_ic.get('reason', 'unavailable')}")
+
+    selected_distribution = ranking_diagnostics.get(
+        "selected_realized_rank_distribution",
+        {},
+    )
+    if selected_distribution.get("available", False):
+        for bucket_name in sorted(
+            [
+                key
+                for key in selected_distribution
+                if key.startswith("top_") and isinstance(selected_distribution[key], dict)
+            ],
+            key=lambda key: int(key.split("_", maxsplit=1)[1]),
+        ):
+            bucket_report = selected_distribution[bucket_name]
+            lines.append(
+                "  "
+                f"{bucket_name}: selected={_format_count(bucket_report.get('selected_count'))}, "
+                f"realized top20={_format_percent(bucket_report.get('top_20_realized_rate'))}, "
+                f"middle60={_format_percent(bucket_report.get('middle_60_realized_rate'))}, "
+                f"bottom20={_format_percent(bucket_report.get('bottom_20_realized_rate'))}, "
+                f"avg rank pct={_format_decimal(bucket_report.get('average_realized_rank_pct'))}"
+            )
+    else:
+        lines.append(
+            "  selected realized-rank unavailable: "
+            f"{selected_distribution.get('reason', 'unavailable')}"
+        )
+
+    return "\n".join(lines)
+
+
 def _format_percent(value):
     """Format optional numeric report values as percentages for logs."""
     if value is None or pd.isna(value):
         return "n/a"
     return f"{float(value):.2%}"
+
+
+def _format_decimal(value):
+    """Format optional numeric diagnostics values as compact decimals."""
+    if value is None or pd.isna(value):
+        return "n/a"
+    return f"{float(value):.4f}"
 
 
 def _format_percent_delta(left, right):
@@ -949,6 +1010,11 @@ def log_xgboost_test_report(
         random_trials=random_trials,
         random_trial_workers=random_trial_workers,
     )
+    ranking_diagnostics = build_same_date_ranking_diagnostics(
+        test_split_metadata,
+        regressor_predictions,
+        score_column="predicted_excess_return",
+    )
     top_n_ranked_selection_report = top_n_selection_reports["ranked_selection"]
     top_n_basket_backtest_report = top_n_selection_reports["basket_backtest"]
     top_n_basket_backtest_by_year_report = top_n_selection_reports.get(
@@ -999,6 +1065,12 @@ def log_xgboost_test_report(
         f"XGBoost Regressor Excess Return Correlation Report: {return_correlation_report}"
     )
     logging.info(f"XGBoost Combined Signal Report: {combined_signal_report}")
+    logging.info(
+        format_same_date_ranking_diagnostics_summary(
+            ranking_diagnostics,
+            title="XGBoost Regressor Same-Date Ranking Diagnostics:",
+        )
+    )
     if regressor_validation_selection_report:
         logging.info(
             format_xgboost_regressor_validation_selection_report(
@@ -1052,6 +1124,7 @@ def log_xgboost_test_report(
         "ranked_selection": top_n_ranked_selection_report,
         "basket_backtest": top_n_basket_backtest_report,
         "basket_backtest_by_year": top_n_basket_backtest_by_year_report,
+        "same_date_ranking_diagnostics": ranking_diagnostics,
         "classifier_probability_ranked_selection": (
             classifier_top_n_ranked_selection_report
         ),
@@ -1277,6 +1350,11 @@ def log_ranking_classifier_test_report(
         random_trials=random_trials,
         random_trial_workers=random_trial_workers,
     )
+    ranking_diagnostics = build_same_date_ranking_diagnostics(
+        test_split_metadata,
+        ranking_scores,
+        score_column="probability_of_top_quintile_outperformance",
+    )
     top_n_ranked_selection_report = top_n_selection_reports["ranked_selection"]
     top_n_basket_backtest_report = top_n_selection_reports["basket_backtest"]
     top_n_basket_backtest_by_year_report = top_n_selection_reports.get(
@@ -1287,6 +1365,12 @@ def log_ranking_classifier_test_report(
     logging.info(
         "XGBoost Cross-Sectional Ranking Score: "
         "probability_of_top_quintile_outperformance"
+    )
+    logging.info(
+        format_same_date_ranking_diagnostics_summary(
+            ranking_diagnostics,
+            title="XGBoost Ranking-Classifier Same-Date Ranking Diagnostics:",
+        )
     )
     logging.info(
         format_top_n_ranked_selection_summary(
@@ -1312,6 +1396,7 @@ def log_ranking_classifier_test_report(
         "ranked_selection": top_n_ranked_selection_report,
         "basket_backtest": top_n_basket_backtest_report,
         "basket_backtest_by_year": top_n_basket_backtest_by_year_report,
+        "same_date_ranking_diagnostics": ranking_diagnostics,
     }
 
 
@@ -1417,6 +1502,9 @@ def train_cross_sectional_ranking_model(
         "ranked_selection": xgboost_test_reports["ranked_selection"],
         "basket_backtest": xgboost_test_reports["basket_backtest"],
         "basket_backtest_by_year": xgboost_test_reports["basket_backtest_by_year"],
+        "same_date_ranking_diagnostics": xgboost_test_reports[
+            "same_date_ranking_diagnostics"
+        ],
     }
 
 
@@ -1645,6 +1733,9 @@ def train_models(
             {},
         ),
         "basket_backtest": xgboost_test_reports["basket_backtest"],
+        "same_date_ranking_diagnostics": xgboost_test_reports[
+            "same_date_ranking_diagnostics"
+        ],
     }
 
 

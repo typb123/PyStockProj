@@ -1102,6 +1102,7 @@ def test_train_models_uses_selected_regressor_predictions_for_final_report(
         return {
             "regressor_validation_selection": captured["selection_report"],
             "basket_backtest": {},
+            "same_date_ranking_diagnostics": {"available": True},
         }
 
     monkeypatch.setattr(trainer, "DataPreparator", FakePreparator)
@@ -1145,6 +1146,7 @@ def test_train_models_uses_selected_regressor_predictions_for_final_report(
     assert captured["selection_report"]["selected_candidate_id"] == 1
     assert report["regressor_validation_selection"]["selected_candidate_id"] == 1
     assert report["target_mode"] == "excess_return"
+    assert report["same_date_ranking_diagnostics"] == {"available": True}
     assert (
         captured["saved_model_metadata"]["regressor_validation_selection"][
             "selected_candidate_id"
@@ -1255,7 +1257,10 @@ def test_train_models_metadata_includes_momentum_features_and_excludes_targets(
     monkeypatch.setattr(
         trainer,
         "log_xgboost_test_report",
-        lambda *args, **kwargs: {"basket_backtest": {}},
+        lambda *args, **kwargs: {
+            "basket_backtest": {},
+            "same_date_ranking_diagnostics": {"available": True},
+        },
     )
     monkeypatch.setattr(
         trainer, "log_feature_importances", lambda *args, **kwargs: None
@@ -1362,6 +1367,7 @@ def test_train_models_cross_sectional_ranking_trains_on_top_bottom_and_scores_al
                             "raw_forward_return": [0.03, 0.01, -0.02, 0.04],
                             "benchmark_forward_return": [0.01] * test_rows,
                             "excess_forward_return": [0.02, 0.00, -0.03, 0.03],
+                            "excess_return_rank_pct_by_date": [0.75, 0.50, 0.00, 1.00],
                             "ranking_train_sample": [True, False, True, False],
                             "top_quintile_target": [1.0, np.nan, 0.0, np.nan],
                         }
@@ -1481,6 +1487,10 @@ def test_train_models_cross_sectional_ranking_trains_on_top_bottom_and_scores_al
     assert metadata["regressor_features"] == []
     assert report["target_mode"] == "cross_sectional_top_bottom"
     assert report["ranking_score_name"] == (
+        "probability_of_top_quintile_outperformance"
+    )
+    assert report["same_date_ranking_diagnostics"]["available"] is True
+    assert report["same_date_ranking_diagnostics"]["score_column"] == (
         "probability_of_top_quintile_outperformance"
     )
     assert report["basket_backtest"]["top_5"]["model"]["average_basket_excess_return"] == 0.02
@@ -2478,6 +2488,7 @@ def test_log_xgboost_test_report_uses_explicit_direction_labels(monkeypatch):
         "ranked_selection",
         "basket_backtest",
         "basket_backtest_by_year",
+        "same_date_ranking_diagnostics",
         "classifier_probability_ranked_selection",
         "classifier_probability_basket_backtest",
         "classifier_probability_basket_backtest_by_year",
@@ -2489,6 +2500,10 @@ def test_log_xgboost_test_report_uses_explicit_direction_labels(monkeypatch):
     assert report["classifier_probability_basket_backtest_by_year"] == {
         "top_5": {"2024": {"classifier_model": {}}}
     }
+    assert report["same_date_ranking_diagnostics"]["available"] is False
+    assert "excess_return_rank_pct_by_date" in report["same_date_ranking_diagnostics"][
+        "reason"
+    ]
     assert not np.array_equal(captured["y_true"], (y_test > 0).astype(int))
 
 

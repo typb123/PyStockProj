@@ -17,6 +17,7 @@ from src.train.evaluator import (
     build_predicted_return_quantile_report,
     build_regression_report,
     build_return_correlation_report,
+    build_same_date_ranking_diagnostics,
     build_top_n_basket_backtest_report,
     build_top_n_ranked_selection_report,
     build_top_n_selection_reports,
@@ -393,6 +394,119 @@ def make_by_year_top_n_metadata():
             "relative_momentum": [0.07, -0.01, 0.01, 0.07, 0.03, 0.00],
         }
     )
+
+
+def test_same_date_ranking_diagnostics_rank_ic_is_per_date_not_global():
+    metadata = pd.DataFrame(
+        {
+            "prediction_date": pd.to_datetime(
+                ["2024-01-01", "2024-01-01", "2024-01-02", "2024-01-02"]
+            ),
+            "excess_forward_return": [0.0, 1.0, 0.0, 1.0],
+            "excess_return_rank_pct_by_date": [0.0, 1.0, 0.0, 1.0],
+        }
+    )
+    model_scores = np.array([0.1, 0.9, 0.9, 0.1])
+
+    report = build_same_date_ranking_diagnostics(
+        metadata,
+        model_scores,
+        top_n_values=(1,),
+    )
+
+    assert report["available"] is True
+    assert report["rank_ic"]["available"] is True
+    assert report["rank_ic"]["date_count"] == 2
+    assert np.isclose(report["rank_ic"]["mean_rank_ic"], 0.0)
+    assert np.isclose(report["rank_ic"]["median_rank_ic"], 0.0)
+    assert np.isclose(report["rank_ic"]["rank_ic_positive_rate"], 0.5)
+
+
+def test_same_date_ranking_diagnostics_ignores_unusable_rank_ic_dates():
+    metadata = pd.DataFrame(
+        {
+            "prediction_date": pd.to_datetime(
+                [
+                    "2024-01-01",
+                    "2024-01-02",
+                    "2024-01-02",
+                    "2024-01-03",
+                    "2024-01-03",
+                    "2024-01-04",
+                    "2024-01-04",
+                ]
+            ),
+            "excess_forward_return": [0.1, 0.0, 1.0, 0.5, 0.5, 0.0, 1.0],
+            "excess_return_rank_pct_by_date": [1.0, 0.0, 1.0, 0.5, 0.5, 0.0, 1.0],
+        }
+    )
+    model_scores = np.array([0.8, 0.4, 0.4, 0.1, 0.9, 0.2, 0.7])
+
+    report = build_same_date_ranking_diagnostics(
+        metadata,
+        model_scores,
+        top_n_values=(1,),
+    )
+
+    assert report["rank_ic"]["available"] is True
+    assert report["rank_ic"]["date_count"] == 1
+    assert np.isclose(report["rank_ic"]["mean_rank_ic"], 1.0)
+    assert np.isclose(report["rank_ic"]["rank_ic_positive_rate"], 1.0)
+
+
+def test_same_date_ranking_diagnostics_selected_realized_rank_distribution():
+    metadata = pd.DataFrame(
+        {
+            "prediction_date": pd.to_datetime(
+                [
+                    "2024-01-01",
+                    "2024-01-01",
+                    "2024-01-01",
+                    "2024-01-02",
+                    "2024-01-02",
+                    "2024-01-02",
+                ]
+            ),
+            "excess_forward_return": [0.3, 0.1, -0.2, -0.1, 0.0, 0.2],
+            "excess_return_rank_pct_by_date": [0.9, 0.5, 0.1, 0.1, 0.5, 0.9],
+        }
+    )
+    model_scores = np.array([0.9, 0.8, 0.1, 0.8, 0.9, 0.1])
+
+    report = build_same_date_ranking_diagnostics(
+        metadata,
+        model_scores,
+        top_n_values=(1, 2),
+    )
+
+    distribution = report["selected_realized_rank_distribution"]
+    assert distribution["available"] is True
+    assert distribution["top_1"]["selected_count"] == 2
+    assert np.isclose(distribution["top_1"]["top_20_realized_rate"], 0.5)
+    assert np.isclose(distribution["top_1"]["middle_60_realized_rate"], 0.5)
+    assert np.isclose(distribution["top_1"]["bottom_20_realized_rate"], 0.0)
+    assert np.isclose(distribution["top_1"]["average_realized_rank_pct"], 0.7)
+    assert distribution["top_2"]["selected_count"] == 4
+    assert np.isclose(distribution["top_2"]["top_20_realized_rate"], 0.25)
+    assert np.isclose(distribution["top_2"]["middle_60_realized_rate"], 0.5)
+    assert np.isclose(distribution["top_2"]["bottom_20_realized_rate"], 0.25)
+    assert np.isclose(distribution["top_2"]["average_realized_rank_pct"], 0.5)
+
+
+def test_same_date_ranking_diagnostics_missing_columns_are_unavailable():
+    metadata = pd.DataFrame(
+        {
+            "prediction_date": pd.to_datetime(["2024-01-01", "2024-01-01"]),
+            "excess_forward_return": [0.1, -0.1],
+        }
+    )
+
+    report = build_same_date_ranking_diagnostics(metadata, np.array([0.8, 0.2]))
+
+    assert report["available"] is False
+    assert report["rank_ic"]["available"] is False
+    assert report["selected_realized_rank_distribution"]["available"] is False
+    assert "excess_return_rank_pct_by_date" in report["reason"]
 
 
 def make_walk_forward_yearly_frame(start_year=2015, end_year=2023):
@@ -1044,6 +1158,19 @@ def test_probability_ranked_top_n_selection_reports_are_exported():
     )
     assert "build_probability_ranked_top_n_selection_reports" in evaluation.__all__
     assert "build_probability_ranked_top_n_selection_reports" in evaluator.__all__
+
+
+def test_same_date_ranking_diagnostics_are_exported():
+    assert (
+        evaluation.build_same_date_ranking_diagnostics
+        is build_same_date_ranking_diagnostics
+    )
+    assert (
+        evaluator.build_same_date_ranking_diagnostics
+        is build_same_date_ranking_diagnostics
+    )
+    assert "build_same_date_ranking_diagnostics" in evaluation.__all__
+    assert "build_same_date_ranking_diagnostics" in evaluator.__all__
 
 
 def test_top_n_selection_reports_returns_direct_expected_values():
