@@ -76,6 +76,7 @@ def test_ranking_target_columns_are_metadata_not_model_features():
         "ranking_train_sample",
     ]
     assert set(RANKING_TARGET_COLUMNS).issubset(NON_FEATURE_COLUMNS)
+    assert set(RANKING_TARGET_COLUMNS).issubset(SPLIT_METADATA_COLUMNS)
     assert set(RANKING_TARGET_COLUMNS).isdisjoint(TARGET_COLUMNS)
     assert set(RANKING_TARGET_COLUMNS).isdisjoint(MODEL_FEATURE_COLUMNS)
 

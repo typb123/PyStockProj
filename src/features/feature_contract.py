@@ -119,6 +119,7 @@ SPLIT_METADATA_COLUMNS = [
     "excess_forward_return",
     "beat_benchmark_target",
     *FORWARD_RETURN_METADATA_COLUMNS,
+    *RANKING_TARGET_COLUMNS,
 ]
 
 

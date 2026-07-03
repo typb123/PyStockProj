@@ -205,6 +205,120 @@ def test_benchmark_relative_targets_drop_mismatched_forward_end_dates():
     assert np.isclose(kept_aaa["excess_forward_return"], 0.09)
 
 
+def test_cross_sectional_ranks_are_computed_within_prediction_date():
+    candidates = pd.DataFrame(
+        {
+            "Ticker": ["A", "B", "C", "D", "E", "F"],
+            "prediction_date": pd.to_datetime(
+                ["2024-01-01"] * 3 + ["2024-01-02"] * 3
+            ),
+            "excess_forward_return": [0.10, 0.20, 0.30, 10.0, 20.0, 30.0],
+        }
+    )
+
+    result = DataPreparator()._add_cross_sectional_ranking_labels(candidates)
+
+    assert result["excess_return_rank_pct_by_date"].tolist() == [
+        0.0,
+        0.5,
+        1.0,
+        0.0,
+        0.5,
+        1.0,
+    ]
+
+
+def test_cross_sectional_ranking_labels_top_bottom_quintiles_and_middle_rows():
+    candidates = pd.DataFrame(
+        {
+            "Ticker": ["A", "B", "C", "D", "E"],
+            "prediction_date": pd.to_datetime(["2024-01-01"] * 5),
+            "excess_forward_return": [0.00, 0.01, 0.02, 0.03, 0.04],
+        }
+    )
+
+    result = DataPreparator()._add_cross_sectional_ranking_labels(candidates)
+
+    assert result["excess_return_rank_pct_by_date"].tolist() == [
+        0.0,
+        0.25,
+        0.5,
+        0.75,
+        1.0,
+    ]
+    assert result["top_quintile_target"].isna().tolist() == [
+        False,
+        True,
+        True,
+        True,
+        False,
+    ]
+    assert result["top_quintile_target"].dropna().tolist() == [0.0, 1.0]
+    assert result["ranking_train_sample"].tolist() == [
+        True,
+        False,
+        False,
+        False,
+        True,
+    ]
+
+
+def test_cross_sectional_ranking_labels_leave_single_candidate_dates_unavailable():
+    candidates = pd.DataFrame(
+        {
+            "Ticker": ["A"],
+            "prediction_date": pd.to_datetime(["2024-01-01"]),
+            "excess_forward_return": [0.10],
+        }
+    )
+
+    result = DataPreparator()._add_cross_sectional_ranking_labels(candidates)
+
+    assert np.isnan(result.loc[0, "excess_return_rank_pct_by_date"])
+    assert np.isnan(result.loc[0, "top_quintile_target"])
+    assert not result.loc[0, "ranking_train_sample"]
+
+
+def test_cross_sectional_ranking_labels_use_average_rank_for_ties():
+    candidates = pd.DataFrame(
+        {
+            "Ticker": ["A", "B", "C"],
+            "prediction_date": pd.to_datetime(["2024-01-01"] * 3),
+            "excess_forward_return": [0.00, 0.10, 0.10],
+        }
+    )
+
+    result = DataPreparator()._add_cross_sectional_ranking_labels(candidates)
+
+    assert result["excess_return_rank_pct_by_date"].tolist() == [0.0, 0.75, 0.75]
+    assert result["top_quintile_target"].isna().tolist() == [False, True, True]
+    assert result["ranking_train_sample"].tolist() == [True, False, False]
+
+
+def test_benchmark_relative_ranking_labels_exclude_spy_candidate_rows():
+    df = pd.DataFrame(
+        {
+            "Ticker": ["AAA", "BBB", "SPY", "AAA", "BBB", "SPY"],
+            "prediction_date": pd.to_datetime(
+                ["2024-01-01"] * 3 + ["2024-01-02"] * 3
+            ),
+            "Close": [100.0, 200.0, 50.0, 110.0, 202.0, 51.0],
+        }
+    )
+
+    preparator = DataPreparator()
+    raw = preparator._create_raw_forward_returns(
+        preparator._normalize_prediction_date(df),
+        prediction_days=1,
+    )
+    benchmark_returns = preparator._build_benchmark_forward_returns(raw)
+    candidates = preparator._create_benchmark_relative_targets(raw, benchmark_returns)
+
+    assert set(candidates["Ticker"]) == {"AAA", "BBB"}
+    assert "SPY" not in set(candidates["Ticker"])
+    assert candidates["excess_return_rank_pct_by_date"].tolist() == [1.0, 0.0]
+
+
 def test_prepare_for_train_uses_global_date_split_with_embargo_and_drops_spy():
     prediction_days = 3
     df = make_panel_feature_frame(num_dates=50)
@@ -228,6 +342,9 @@ def test_prepare_for_train_uses_global_date_split_with_embargo_and_drops_spy():
                     "beat_benchmark_target",
                     "forward_end_date",
                     "benchmark_forward_end_date",
+                    "excess_return_rank_pct_by_date",
+                    "top_quintile_target",
+                    "ranking_train_sample",
                 ]
             ]
             .isna()
@@ -339,7 +456,7 @@ def test_prepare_for_train_preserves_available_momentum_columns_in_split_metadat
             assert column in split_metadata.columns
 
 
-def test_prepare_for_train_preserves_forward_end_dates_in_split_metadata():
+def test_prepare_for_train_preserves_forward_end_dates_and_ranking_labels_in_split_metadata():
     df = make_panel_feature_frame(num_dates=50)
 
     prepared = DataPreparator().prepare_for_train(
@@ -352,10 +469,16 @@ def test_prepare_for_train_preserves_forward_end_dates_in_split_metadata():
     for split_metadata in prepared["split_metadata"].values():
         assert "forward_end_date" in split_metadata.columns
         assert "benchmark_forward_end_date" in split_metadata.columns
+        assert "excess_return_rank_pct_by_date" in split_metadata.columns
+        assert "top_quintile_target" in split_metadata.columns
+        assert "ranking_train_sample" in split_metadata.columns
         assert (
             split_metadata["forward_end_date"]
             == split_metadata["benchmark_forward_end_date"]
         ).all()
+        assert set(split_metadata["excess_return_rank_pct_by_date"]) == {0.0, 1.0}
+        assert set(split_metadata["top_quintile_target"]) == {0.0, 1.0}
+        assert split_metadata["ranking_train_sample"].all()
 
 
 def test_relative_momentum_is_date_aligned_to_spy():

@@ -10,6 +10,7 @@ from src.features.feature_contract import (
     BASE_MODEL_FEATURE_COLUMNS,
     FORWARD_RETURN_METADATA_COLUMNS,
     MODEL_FEATURE_COLUMNS,
+    RANKING_TARGET_COLUMNS,
     SPLIT_METADATA_COLUMNS,
     SPY_RELATIVE_MOMENTUM_FEATURE_COLUMNS,
     TARGET_COLUMNS,
@@ -181,6 +182,35 @@ class DataPreparator:
         candidates["beat_benchmark_target"] = (
             candidates["raw_forward_return"] > candidates["benchmark_forward_return"]
         ).astype(int)
+        candidates = self._add_cross_sectional_ranking_labels(candidates)
+        return candidates
+
+    def _add_cross_sectional_ranking_labels(self, candidates: pd.DataFrame) -> pd.DataFrame:
+        """Add same-date realized excess-return rank labels for ranking experiments."""
+        candidates = candidates.copy()
+        grouped_excess_returns = candidates.groupby("prediction_date")[
+            "excess_forward_return"
+        ]
+        candidate_count_by_date = grouped_excess_returns.transform("count")
+        within_date_rank = grouped_excess_returns.rank(
+            method="average",
+            ascending=True,
+        )
+        has_rankable_peers = candidate_count_by_date >= 2
+
+        candidates["excess_return_rank_pct_by_date"] = np.nan
+        candidates.loc[has_rankable_peers, "excess_return_rank_pct_by_date"] = (
+            (within_date_rank[has_rankable_peers] - 1)
+            / (candidate_count_by_date[has_rankable_peers] - 1)
+        )
+
+        rank_pct = candidates["excess_return_rank_pct_by_date"]
+        candidates["top_quintile_target"] = np.nan
+        candidates.loc[rank_pct >= 0.80, "top_quintile_target"] = 1.0
+        candidates.loc[rank_pct <= 0.20, "top_quintile_target"] = 0.0
+        candidates["ranking_train_sample"] = candidates[
+            "top_quintile_target"
+        ].notna()
         return candidates
 
     def _drop_unusable_rows(self, df: pd.DataFrame) -> pd.DataFrame:
@@ -224,10 +254,14 @@ class DataPreparator:
 
     def _build_split_metadata(self, split_df: pd.DataFrame) -> pd.DataFrame:
         """Preserve evaluation-only columns needed by Top-N reports."""
+        optional_metadata_columns = [
+            *FORWARD_RETURN_METADATA_COLUMNS,
+            *RANKING_TARGET_COLUMNS,
+        ]
         required_metadata_columns = [
             column
             for column in SPLIT_METADATA_COLUMNS
-            if column not in FORWARD_RETURN_METADATA_COLUMNS
+            if column not in optional_metadata_columns
         ]
         optional_momentum_columns = [
             *ABSOLUTE_MOMENTUM_FEATURE_COLUMNS,
@@ -235,7 +269,7 @@ class DataPreparator:
         ]
         available_columns = required_metadata_columns + [
             column
-            for column in FORWARD_RETURN_METADATA_COLUMNS
+            for column in optional_metadata_columns
             if column in split_df.columns
         ] + [
             column
