@@ -804,10 +804,23 @@ def test_model_metadata_does_not_include_linear_regression_prediction():
     assert "LinearRegression_Prediction" not in metadata["classifier_feature_names"]
     assert "LinearRegression_Prediction" not in metadata["regressor_feature_names"]
     assert metadata["prediction_days"] == 5
+    assert metadata["target_mode"] == "excess_return"
     assert metadata["target_type"] == "spy_relative_excess_forward_return"
     assert metadata["benchmark_ticker"] == "SPY"
     assert metadata["regressor_target"] == "targetReturns"
     assert metadata["classifier_target"] == "beat_benchmark_target"
+
+
+def test_model_metadata_records_explicit_target_mode():
+    metadata = trainer.build_model_metadata(
+        linear_features=["Close"],
+        classifier_features=["Close", "Volume"],
+        regressor_features=["Close", "Volume"],
+        prediction_days=5,
+        target_mode="excess_return",
+    )
+
+    assert metadata["target_mode"] == "excess_return"
 
 
 def test_default_training_universe_is_large_mega_cap_stocks():
@@ -1131,6 +1144,7 @@ def test_train_models_uses_selected_regressor_predictions_for_final_report(
     )
     assert captured["selection_report"]["selected_candidate_id"] == 1
     assert report["regressor_validation_selection"]["selected_candidate_id"] == 1
+    assert report["target_mode"] == "excess_return"
     assert (
         captured["saved_model_metadata"]["regressor_validation_selection"][
             "selected_candidate_id"
@@ -1255,6 +1269,7 @@ def test_train_models_metadata_includes_momentum_features_and_excludes_targets(
     trainer.train_models(pd.DataFrame({"Close": [1.0]}), prediction_days=10)
 
     metadata = captured["model_metadata"]
+    assert metadata["target_mode"] == "excess_return"
     for column in (
         ABSOLUTE_MOMENTUM_FEATURE_COLUMNS + SPY_RELATIVE_MOMENTUM_FEATURE_COLUMNS
     ):
@@ -1271,6 +1286,23 @@ def test_train_models_metadata_includes_momentum_features_and_excludes_targets(
     assert target_columns.isdisjoint(captured["all_features"])
     assert target_columns.isdisjoint(metadata["classifier_features"])
     assert target_columns.isdisjoint(metadata["regressor_features"])
+
+
+def test_train_models_rejects_unimplemented_cross_sectional_target_mode(monkeypatch):
+    monkeypatch.setattr(
+        trainer,
+        "validate_input_data",
+        lambda data: pytest.fail("old regression path should not run"),
+    )
+
+    with pytest.raises(
+        NotImplementedError,
+        match="target_mode='cross_sectional_top_bottom' is not implemented yet",
+    ):
+        trainer.train_models(
+            pd.DataFrame({"Close": [1.0]}),
+            target_mode="cross_sectional_top_bottom",
+        )
 
 
 def test_run_walk_forward_models_records_selected_candidate_and_test_metrics(
@@ -1423,6 +1455,7 @@ def test_parse_args_defaults_to_ten_prediction_days():
     assert args.random_trials == 100
     assert args.random_trial_workers == 8
     assert args.walk_forward is False
+    assert args.target_mode == "excess_return"
 
 
 def test_parse_args_accepts_period():
@@ -1435,6 +1468,23 @@ def test_parse_args_accepts_training_universe():
     args = trainer.parse_args(["--universe", "broad_sector_etfs"])
 
     assert args.universe == "broad_sector_etfs"
+
+
+def test_parse_args_accepts_excess_return_target_mode():
+    args = trainer.parse_args(["--target-mode", "excess_return"])
+
+    assert args.target_mode == "excess_return"
+
+
+def test_parse_args_accepts_cross_sectional_top_bottom_target_mode():
+    args = trainer.parse_args(["--target-mode", "cross_sectional_top_bottom"])
+
+    assert args.target_mode == "cross_sectional_top_bottom"
+
+
+def test_parse_args_rejects_unknown_target_mode():
+    with pytest.raises(SystemExit):
+        trainer.parse_args(["--target-mode", "bad_mode"])
 
 
 def test_parse_args_accepts_random_trials():
@@ -1599,6 +1649,7 @@ def test_save_horizon_model_artifacts_preserves_legacy_paths_for_default_horizon
 
 def test_main_trains_all_horizons_and_logs_comparison(monkeypatch, caplog, capsys):
     trained_horizons = []
+    trained_target_modes = []
     trained_random_trials = []
     trained_random_trial_workers = []
     prepare_calls = []
@@ -1614,8 +1665,10 @@ def test_main_trains_all_horizons_and_logs_comparison(monkeypatch, caplog, capsy
         prediction_days,
         random_trials=100,
         random_trial_workers=4,
+        target_mode="excess_return",
     ):
         trained_horizons.append(prediction_days)
+        trained_target_modes.append(target_mode)
         trained_random_trials.append(random_trials)
         trained_random_trial_workers.append(random_trial_workers)
         return {
@@ -1661,9 +1714,11 @@ def test_main_trains_all_horizons_and_logs_comparison(monkeypatch, caplog, capsy
         (get_training_tickers(DEFAULT_TRAINING_UNIVERSE), "10y", True)
     ]
     assert trained_horizons == [5, 10, 20, 50]
+    assert trained_target_modes == ["excess_return"] * 4
     assert trained_random_trials == [20, 20, 20, 20]
     assert trained_random_trial_workers == [2, 2, 2, 2]
     assert "Selected YFinance period: 10y" in caplog.text
+    assert "Selected target mode: excess_return" in caplog.text
     assert "Raw YFinance OHLCV cache enabled: True" in caplog.text
     assert "Horizon Comparison Summary:" in caplog.text
     assert "50d:" in caplog.text
@@ -1678,6 +1733,7 @@ def test_main_passes_selected_broad_sector_etf_universe_to_prepare_data(
 ):
     prepare_calls = []
     trained_horizons = []
+    trained_target_modes = []
 
     def fake_prepare_data_parallel(tickers, period="5y", use_cache=True):
         prepare_calls.append((list(tickers), period, use_cache))
@@ -1688,8 +1744,10 @@ def test_main_passes_selected_broad_sector_etf_universe_to_prepare_data(
         prediction_days,
         random_trials=100,
         random_trial_workers=4,
+        target_mode="excess_return",
     ):
         trained_horizons.append(prediction_days)
+        trained_target_modes.append(target_mode)
         return {
             "prediction_days": prediction_days,
             "basket_backtest": {
@@ -1726,10 +1784,12 @@ def test_main_passes_selected_broad_sector_etf_universe_to_prepare_data(
 
     assert prepare_calls == [(get_training_tickers("broad_sector_etfs"), "10y", True)]
     assert trained_horizons == [10]
+    assert trained_target_modes == ["excess_return"]
 
 
 def test_main_single_horizon_prints_top_n_basket_summary(monkeypatch, capsys):
     trained_horizons = []
+    trained_target_modes = []
     trained_random_trials = []
     trained_random_trial_workers = []
     prepare_calls = []
@@ -1745,8 +1805,10 @@ def test_main_single_horizon_prints_top_n_basket_summary(monkeypatch, capsys):
         prediction_days,
         random_trials=100,
         random_trial_workers=4,
+        target_mode="excess_return",
     ):
         trained_horizons.append(prediction_days)
+        trained_target_modes.append(target_mode)
         trained_random_trials.append(random_trials)
         trained_random_trial_workers.append(random_trial_workers)
         return {
@@ -1793,6 +1855,7 @@ def test_main_single_horizon_prints_top_n_basket_summary(monkeypatch, capsys):
         (get_training_tickers(DEFAULT_TRAINING_UNIVERSE), "5y", False)
     ]
     assert trained_horizons == [10]
+    assert trained_target_modes == ["excess_return"]
     assert trained_random_trials == [20]
     assert trained_random_trial_workers == [2]
     output = capsys.readouterr().out
@@ -1800,6 +1863,25 @@ def test_main_single_horizon_prints_top_n_basket_summary(monkeypatch, capsys):
     assert "top_5:" in output
     assert "Horizon Comparison Summary:" not in output
     assert "XGBoost Beat-Benchmark Classification Report" not in output
+
+
+def test_main_rejects_unimplemented_target_mode_before_fetch(monkeypatch):
+    monkeypatch.setattr(
+        trainer,
+        "prepare_data_parallel",
+        lambda *args, **kwargs: pytest.fail("data fetch should not run"),
+    )
+    monkeypatch.setattr(
+        trainer,
+        "train_models",
+        lambda *args, **kwargs: pytest.fail("training should not run"),
+    )
+
+    with pytest.raises(
+        NotImplementedError,
+        match="target_mode='cross_sectional_top_bottom' is not implemented yet",
+    ):
+        trainer.main(["--target-mode", "cross_sectional_top_bottom"])
 
 
 def test_main_walk_forward_runs_walk_forward_path(monkeypatch, capsys):

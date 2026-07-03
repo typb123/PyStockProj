@@ -71,6 +71,23 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 YFINANCE_CACHE_DIR = PROJECT_ROOT / "data/cache/yfinance"
 YFINANCE_CACHE_FORMAT = "csv"
 VALIDATION_TOP_N_SELECTION_VALUES = (5, 10, 20)
+TARGET_MODE_EXCESS_RETURN = "excess_return"
+TARGET_MODE_CROSS_SECTIONAL_TOP_BOTTOM = "cross_sectional_top_bottom"
+TARGET_MODES = (TARGET_MODE_EXCESS_RETURN, TARGET_MODE_CROSS_SECTIONAL_TOP_BOTTOM)
+
+
+def validate_target_mode_is_implemented(target_mode: str) -> None:
+    """Reject target modes before they can silently use the wrong training path."""
+    if target_mode == TARGET_MODE_EXCESS_RETURN:
+        return
+    if target_mode == TARGET_MODE_CROSS_SECTIONAL_TOP_BOTTOM:
+        raise NotImplementedError(
+            "target_mode='cross_sectional_top_bottom' is not implemented yet"
+        )
+    raise ValueError(
+        f"Unsupported target_mode={target_mode!r}. "
+        f"Expected one of {', '.join(TARGET_MODES)}."
+    )
 
 
 def validate_input_data(data):
@@ -1054,6 +1071,7 @@ def build_model_metadata(
     classifier_features,
     regressor_features,
     prediction_days,
+    target_mode=TARGET_MODE_EXCESS_RETURN,
 ):
     """Build prediction-time metadata needed to align saved artifacts and features."""
     return {
@@ -1063,6 +1081,7 @@ def build_model_metadata(
         "classifier_feature_names": classifier_features,
         "regressor_feature_names": regressor_features,
         "prediction_days": prediction_days,
+        "target_mode": target_mode,
         "target_type": "spy_relative_excess_forward_return",
         "benchmark_ticker": "SPY",
         "regressor_target": "targetReturns",
@@ -1150,6 +1169,7 @@ def train_models(
     prediction_days: int = PREDICTION_DAYS,
     random_trials: int = 100,
     random_trial_workers: int = 4,
+    target_mode: str = TARGET_MODE_EXCESS_RETURN,
     classifier_params: dict | None = None,
     regressor_params: dict | None = None,
 ) -> dict:
@@ -1159,9 +1179,10 @@ def train_models(
     Validation data is used for XGBoost eval_set and threshold research; test data
     is reserved for final diagnostics.
     """
+    validate_target_mode_is_implemented(target_mode)
     logging.info(
         "Training models with explicitly defined feature arrays "
-        f"for prediction_days={prediction_days}."
+        f"for prediction_days={prediction_days}, target_mode={target_mode}."
     )
 
     # DataPreparator owns target creation, chronological splits, and shared scaling.
@@ -1316,6 +1337,7 @@ def train_models(
         classifier_features,
         regressor_features,
         prediction_days,
+        target_mode=target_mode,
     )
     model_metadata["regressor_validation_selection"] = (
         regressor_validation_selection_report
@@ -1342,6 +1364,7 @@ def train_models(
     )
     return {
         "prediction_days": prediction_days,
+        "target_mode": target_mode,
         "model_metadata": model_metadata,
         "artifact_paths": saved_paths,
         "regressor_validation_selection": xgboost_test_reports.get(
@@ -1581,6 +1604,15 @@ def parse_args(argv=None):
         help=f"Training universe to fetch. Defaults to {DEFAULT_TRAINING_UNIVERSE}.",
     )
     parser.add_argument(
+        "--target-mode",
+        choices=TARGET_MODES,
+        default=TARGET_MODE_EXCESS_RETURN,
+        help=(
+            "Training target mode. 'cross_sectional_top_bottom' is accepted for "
+            "future plumbing but is not implemented yet."
+        ),
+    )
+    parser.add_argument(
         "--no-cache",
         action="store_true",
         help=(
@@ -1649,9 +1681,11 @@ def parse_args(argv=None):
 def main(argv=None):
     """Run the end-to-end training workflow from CLI arguments."""
     args = parse_args(argv)
+    validate_target_mode_is_implemented(args.target_mode)
     use_cache = not args.no_cache
     training_tickers = get_training_tickers(args.universe)
     logging.info(f"Selected YFinance period: {args.period}")
+    logging.info(f"Selected target mode: {args.target_mode}")
     logging.info(f"Raw YFinance OHLCV cache enabled: {use_cache}")
     logging.info(
         f"Selected training universe: {args.universe} "
@@ -1688,6 +1722,7 @@ def main(argv=None):
         horizon_reports[prediction_days] = train_models(
             data.copy(),
             prediction_days=prediction_days,
+            target_mode=args.target_mode,
             random_trials=args.random_trials,
             random_trial_workers=args.random_trial_workers,
         )
