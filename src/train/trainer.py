@@ -76,14 +76,10 @@ TARGET_MODE_CROSS_SECTIONAL_TOP_BOTTOM = "cross_sectional_top_bottom"
 TARGET_MODES = (TARGET_MODE_EXCESS_RETURN, TARGET_MODE_CROSS_SECTIONAL_TOP_BOTTOM)
 
 
-def validate_target_mode_is_implemented(target_mode: str) -> None:
-    """Reject target modes before they can silently use the wrong training path."""
-    if target_mode == TARGET_MODE_EXCESS_RETURN:
+def validate_target_mode(target_mode: str) -> None:
+    """Reject unknown target modes before training begins."""
+    if target_mode in TARGET_MODES:
         return
-    if target_mode == TARGET_MODE_CROSS_SECTIONAL_TOP_BOTTOM:
-        raise NotImplementedError(
-            "target_mode='cross_sectional_top_bottom' is not implemented yet"
-        )
     raise ValueError(
         f"Unsupported target_mode={target_mode!r}. "
         f"Expected one of {', '.join(TARGET_MODES)}."
@@ -1074,7 +1070,7 @@ def build_model_metadata(
     target_mode=TARGET_MODE_EXCESS_RETURN,
 ):
     """Build prediction-time metadata needed to align saved artifacts and features."""
-    return {
+    metadata = {
         "linear_features": linear_features,
         "classifier_features": classifier_features,
         "regressor_features": regressor_features,
@@ -1087,6 +1083,23 @@ def build_model_metadata(
         "regressor_target": "targetReturns",
         "classifier_target": "beat_benchmark_target",
     }
+    if target_mode == TARGET_MODE_CROSS_SECTIONAL_TOP_BOTTOM:
+        metadata.update(
+            {
+                "target_type": "cross_sectional_top_bottom_quintile",
+                "classifier_target": "top_quintile_target",
+                "regressor_target": None,
+                "ranking_target": (
+                    "top_20_vs_bottom_20_by_excess_forward_return"
+                ),
+                "ranking_group_key": "prediction_date",
+                "ranking_training_sample": "ranking_train_sample",
+                "primary_model_score": (
+                    "probability_of_top_quintile_outperformance"
+                ),
+            }
+        )
+    return metadata
 
 
 def build_horizon_model_paths(prediction_days: int) -> dict:
@@ -1164,6 +1177,249 @@ def save_horizon_model_artifacts(
     return horizon_paths
 
 
+def save_ranking_model_artifacts(
+    prediction_days,
+    data_preparator,
+    all_features,
+    model_metadata,
+    classifier,
+):
+    """Save ranking-mode artifacts without creating a regression artifact."""
+    horizon_paths = build_horizon_model_paths(prediction_days)
+    for path_key in ("preparator", "features", "model_metadata", "classifier"):
+        Path(horizon_paths[path_key]).parent.mkdir(parents=True, exist_ok=True)
+
+    joblib.dump(data_preparator, horizon_paths["preparator"])
+    joblib.dump(all_features, horizon_paths["features"])
+    joblib.dump(model_metadata, horizon_paths["model_metadata"])
+    classifier.save_model(horizon_paths["classifier"])
+
+    if prediction_days == PREDICTION_DAYS:
+        for path_key in ("preparator", "features", "model_metadata", "classifier"):
+            Path(MODEL_PATHS[path_key]).parent.mkdir(parents=True, exist_ok=True)
+        joblib.dump(data_preparator, MODEL_PATHS["preparator"])
+        joblib.dump(all_features, MODEL_PATHS["features"])
+        joblib.dump(model_metadata, MODEL_PATHS["model_metadata"])
+        classifier.save_model(MODEL_PATHS["classifier"])
+
+    return horizon_paths
+
+
+def _require_split_metadata(split_metadata, split_name, target_mode):
+    """Return split metadata with a clear error if the split is unavailable."""
+    if split_name not in split_metadata:
+        raise ValueError(
+            f"target_mode={target_mode!r} requires "
+            f"split_metadata[{split_name!r}]."
+        )
+    return split_metadata[split_name]
+
+
+def _require_ranking_metadata(split_metadata, split_name):
+    """Return split metadata after checking ranking-label columns are present."""
+    required_columns = ["ranking_train_sample", "top_quintile_target"]
+    metadata = _require_split_metadata(
+        split_metadata,
+        split_name,
+        TARGET_MODE_CROSS_SECTIONAL_TOP_BOTTOM,
+    )
+
+    missing_columns = [
+        column for column in required_columns if column not in metadata.columns
+    ]
+    if missing_columns:
+        raise ValueError(
+            "target_mode='cross_sectional_top_bottom' requires "
+            f"split_metadata[{split_name!r}] columns: {missing_columns}"
+        )
+    return metadata
+
+
+def _ranking_labeled_rows(features, metadata):
+    """Select top/bottom ranking-label rows from a feature split."""
+    ranking_sample_mask = (
+        metadata["ranking_train_sample"].fillna(False).astype(bool).to_numpy()
+    )
+    target_values = metadata["top_quintile_target"]
+    labeled_mask = ranking_sample_mask & target_values.notna().to_numpy()
+    labels = target_values.loc[labeled_mask].astype(int).to_numpy()
+    return features.iloc[labeled_mask], labels
+
+
+def _validate_ranking_training_labels(labels):
+    """Ensure the ranking classifier has a usable binary training target."""
+    if len(labels) == 0:
+        raise ValueError(
+            "No valid ranking training rows found for "
+            "target_mode='cross_sectional_top_bottom'."
+        )
+
+    unique_labels = np.unique(labels)
+    if len(unique_labels) != 2:
+        raise ValueError(
+            "Ranking training sample must contain both classes for "
+            "target_mode='cross_sectional_top_bottom'."
+        )
+
+
+def log_ranking_classifier_test_report(
+    test_split_metadata,
+    ranking_scores,
+    prediction_days=PREDICTION_DAYS,
+    random_trials=100,
+    random_trial_workers=4,
+):
+    """Log Top-N reports that rank candidates by ranking-classifier score."""
+    top_n_selection_reports = build_top_n_selection_reports(
+        test_split_metadata,
+        ranking_scores,
+        prediction_days=prediction_days,
+        random_trials=random_trials,
+        random_trial_workers=random_trial_workers,
+    )
+    top_n_ranked_selection_report = top_n_selection_reports["ranked_selection"]
+    top_n_basket_backtest_report = top_n_selection_reports["basket_backtest"]
+    top_n_basket_backtest_by_year_report = top_n_selection_reports.get(
+        "basket_backtest_by_year",
+        {},
+    )
+
+    logging.info(
+        "XGBoost Cross-Sectional Ranking Score: "
+        "probability_of_top_quintile_outperformance"
+    )
+    logging.info(
+        format_top_n_ranked_selection_summary(
+            top_n_ranked_selection_report,
+            title="XGBoost Ranking-Classifier Top-N Ranked Selection Summary:",
+        )
+    )
+    logging.info(
+        format_top_n_basket_backtest_summary(
+            top_n_basket_backtest_report,
+            title="XGBoost Ranking-Classifier Top-N Basket Backtest Summary:",
+        )
+    )
+    if top_n_basket_backtest_by_year_report:
+        logging.info(
+            format_top_n_basket_backtest_by_year_summary(
+                top_n_basket_backtest_by_year_report,
+                title="XGBoost Ranking-Classifier Top-N Basket Backtest By-Year Summary:",
+            )
+        )
+
+    return {
+        "ranked_selection": top_n_ranked_selection_report,
+        "basket_backtest": top_n_basket_backtest_report,
+        "basket_backtest_by_year": top_n_basket_backtest_by_year_report,
+    }
+
+
+def train_cross_sectional_ranking_model(
+    data_preparator,
+    prepared_data,
+    all_features,
+    linear_features,
+    classifier_features,
+    x_train_classifier,
+    x_val_classifier,
+    x_test_classifier,
+    prediction_days,
+    random_trials,
+    random_trial_workers,
+    classifier_params=None,
+):
+    """Train ranking-mode classifier on labeled top/bottom rows and score all rows."""
+    split_metadata = prepared_data["split_metadata"]
+    train_metadata = _require_ranking_metadata(split_metadata, "train")
+    val_metadata = _require_ranking_metadata(split_metadata, "val")
+    test_metadata = _require_split_metadata(
+        split_metadata,
+        "test",
+        TARGET_MODE_CROSS_SECTIONAL_TOP_BOTTOM,
+    )
+
+    x_train_ranking, ranking_y_train = _ranking_labeled_rows(
+        x_train_classifier,
+        train_metadata,
+    )
+    _validate_ranking_training_labels(ranking_y_train)
+    x_val_labeled, ranking_y_val = _ranking_labeled_rows(
+        x_val_classifier,
+        val_metadata,
+    )
+
+    logging.info(
+        "Training XGBoost Cross-Sectional Ranking Classifier on "
+        f"{len(x_train_ranking)} top/bottom rows out of {len(x_train_classifier)} "
+        "training candidates."
+    )
+    classifier = XGBClassifier(**(classifier_params or XG_PARAMS_CLASSIFIER))
+    fit_kwargs = {"verbose": False}
+    if len(x_val_labeled) > 0:
+        fit_kwargs["eval_set"] = [(x_val_labeled, ranking_y_val)]
+    classifier.fit(x_train_ranking, ranking_y_train, **fit_kwargs)
+
+    ranking_validation_scores = classifier.predict_proba(x_val_classifier)[:, 1]
+    ranking_test_scores = classifier.predict_proba(x_test_classifier)[:, 1]
+
+    xgboost_test_reports = log_ranking_classifier_test_report(
+        test_metadata,
+        ranking_test_scores,
+        prediction_days=prediction_days,
+        random_trials=random_trials,
+        random_trial_workers=random_trial_workers,
+    )
+
+    importances_clf = classifier.feature_importances_
+    feature_importance_clf = pd.DataFrame(
+        {"feature": classifier_features, "importance": importances_clf}
+    ).sort_values(by="importance", ascending=False)
+    log_feature_importances(
+        "XGBoost Cross-Sectional Ranking Classifier",
+        feature_importance_clf,
+    )
+
+    model_metadata = build_model_metadata(
+        linear_features,
+        classifier_features,
+        regressor_features=[],
+        prediction_days=prediction_days,
+        target_mode=TARGET_MODE_CROSS_SECTIONAL_TOP_BOTTOM,
+    )
+    model_metadata["ranking_training_row_count"] = int(len(x_train_ranking))
+    model_metadata["ranking_training_candidate_count"] = int(len(x_train_classifier))
+    model_metadata["ranking_validation_scored_row_count"] = int(
+        len(ranking_validation_scores)
+    )
+    model_metadata["ranking_test_scored_row_count"] = int(len(ranking_test_scores))
+    model_metadata["model_artifact_type"] = "classifier_only"
+    model_metadata["regressor_artifact"] = None
+
+    saved_paths = save_ranking_model_artifacts(
+        prediction_days,
+        data_preparator,
+        all_features,
+        model_metadata,
+        classifier,
+    )
+    logging.info(
+        f"Ranking-mode training completed for prediction_days={prediction_days}. "
+        f"Models saved to {Path(saved_paths['model_metadata']).parent}."
+    )
+
+    return {
+        "prediction_days": prediction_days,
+        "target_mode": TARGET_MODE_CROSS_SECTIONAL_TOP_BOTTOM,
+        "ranking_score_name": "probability_of_top_quintile_outperformance",
+        "model_metadata": model_metadata,
+        "artifact_paths": saved_paths,
+        "ranked_selection": xgboost_test_reports["ranked_selection"],
+        "basket_backtest": xgboost_test_reports["basket_backtest"],
+        "basket_backtest_by_year": xgboost_test_reports["basket_backtest_by_year"],
+    }
+
+
 def train_models(
     data: pd.DataFrame,
     prediction_days: int = PREDICTION_DAYS,
@@ -1179,7 +1435,7 @@ def train_models(
     Validation data is used for XGBoost eval_set and threshold research; test data
     is reserved for final diagnostics.
     """
-    validate_target_mode_is_implemented(target_mode)
+    validate_target_mode(target_mode)
     logging.info(
         "Training models with explicitly defined feature arrays "
         f"for prediction_days={prediction_days}, target_mode={target_mode}."
@@ -1243,6 +1499,29 @@ def train_models(
     classifier_features = list(MODEL_FEATURE_COLUMNS)
     regressor_features = list(MODEL_FEATURE_COLUMNS)
 
+    classifier_feature_names = classifier_features
+    regressor_feature_names = regressor_features
+
+    x_train_classifier = x_train_full[classifier_features]
+    x_val_classifier = x_val_full[classifier_features]
+    x_test_classifier = x_test_full[classifier_features]
+
+    if target_mode == TARGET_MODE_CROSS_SECTIONAL_TOP_BOTTOM:
+        return train_cross_sectional_ranking_model(
+            data_preparator,
+            prepared_data,
+            all_features,
+            linear_features,
+            classifier_features,
+            x_train_classifier,
+            x_val_classifier,
+            x_test_classifier,
+            prediction_days,
+            random_trials,
+            random_trial_workers,
+            classifier_params=classifier_params,
+        )
+
     # Linear Regression is a separate scaled baseline, not a stacked XGBoost feature.
     scaler_lr = StandardScaler()
     x_train_lr_scaled = scaler_lr.fit_transform(x_train_full[linear_features])
@@ -1259,12 +1538,6 @@ def train_models(
     ).sort_values(by="importance", ascending=False)
     log_feature_importances("Linear Regression", feature_importance_lr)
 
-    classifier_feature_names = classifier_features
-    regressor_feature_names = regressor_features
-
-    x_train_classifier = x_train_full[classifier_features]
-    x_val_classifier = x_val_full[classifier_features]
-    x_test_classifier = x_test_full[classifier_features]
     x_train_regressor = x_train_full[regressor_features]
     x_val_regressor = x_val_full[regressor_features]
     x_test_regressor = x_test_full[regressor_features]
@@ -1681,7 +1954,7 @@ def parse_args(argv=None):
 def main(argv=None):
     """Run the end-to-end training workflow from CLI arguments."""
     args = parse_args(argv)
-    validate_target_mode_is_implemented(args.target_mode)
+    validate_target_mode(args.target_mode)
     use_cache = not args.no_cache
     training_tickers = get_training_tickers(args.universe)
     logging.info(f"Selected YFinance period: {args.period}")

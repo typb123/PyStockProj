@@ -1288,16 +1288,344 @@ def test_train_models_metadata_includes_momentum_features_and_excludes_targets(
     assert target_columns.isdisjoint(metadata["regressor_features"])
 
 
-def test_train_models_rejects_unimplemented_cross_sectional_target_mode(monkeypatch):
+def test_train_models_rejects_unknown_target_mode(monkeypatch):
     monkeypatch.setattr(
         trainer,
         "validate_input_data",
-        lambda data: pytest.fail("old regression path should not run"),
+        lambda data: pytest.fail("training path should not run"),
     )
 
     with pytest.raises(
-        NotImplementedError,
-        match="target_mode='cross_sectional_top_bottom' is not implemented yet",
+        ValueError,
+        match="Unsupported target_mode='bad_mode'",
+    ):
+        trainer.train_models(
+            pd.DataFrame({"Close": [1.0]}),
+            target_mode="bad_mode",
+        )
+
+
+def test_train_models_cross_sectional_ranking_trains_on_top_bottom_and_scores_all(
+    monkeypatch,
+):
+    feature_count = len(MODEL_FEATURE_COLUMNS)
+    captured = {}
+
+    class FakePreparator:
+        def __init__(self):
+            self.feature_columns = list(MODEL_FEATURE_COLUMNS)
+            self.scalar = None
+
+        def prepare_for_train(self, data, prediction_days, test_size):
+            train_rows = 5
+            val_rows = 3
+            test_rows = 4
+            return {
+                "x_train": np.tile(np.arange(train_rows).reshape(-1, 1), feature_count),
+                "x_val": np.ones((val_rows, feature_count)) * 2,
+                "x_test": np.ones((test_rows, feature_count)) * 3,
+                "y_train": np.array([0.01, 0.02, -0.01, 0.03, 0.04]),
+                "y_val": np.array([0.01, -0.02, 0.02]),
+                "y_test": np.array([0.02, -0.01, 0.01, 0.03]),
+                "direction_y_train": np.array([1, 1, 0, 1, 1]),
+                "direction_y_val": np.array([1, 0, 1]),
+                "direction_y_test": np.array([1, 0, 1, 1]),
+                "feature_names": list(MODEL_FEATURE_COLUMNS),
+                "split_metadata": {
+                    "train": pd.DataFrame(
+                        {
+                            "Ticker": ["AAA", "BBB", "CCC", "DDD", "EEE"],
+                            "ranking_train_sample": [
+                                True,
+                                False,
+                                True,
+                                False,
+                                True,
+                            ],
+                            "top_quintile_target": [1.0, np.nan, 0.0, np.nan, 1.0],
+                        }
+                    ),
+                    "val": pd.DataFrame(
+                        {
+                            "Ticker": ["AAA", "BBB", "CCC"],
+                            "ranking_train_sample": [True, False, True],
+                            "top_quintile_target": [1.0, np.nan, 0.0],
+                        }
+                    ),
+                    "test": pd.DataFrame(
+                        {
+                            "Ticker": ["AAA", "BBB", "CCC", "DDD"],
+                            "prediction_date": pd.date_range(
+                                "2024-01-01",
+                                periods=test_rows,
+                            ),
+                            "raw_forward_return": [0.03, 0.01, -0.02, 0.04],
+                            "benchmark_forward_return": [0.01] * test_rows,
+                            "excess_forward_return": [0.02, 0.00, -0.03, 0.03],
+                            "ranking_train_sample": [True, False, True, False],
+                            "top_quintile_target": [1.0, np.nan, 0.0, np.nan],
+                        }
+                    ),
+                },
+            }
+
+    class FakeRankingClassifier:
+        def __init__(self, **params):
+            self.params = params
+            self.feature_importances_ = np.ones(feature_count)
+
+        def fit(self, x, y, eval_set=None, verbose=False):
+            captured["fit_x_first_feature"] = x.iloc[:, 0].to_numpy()
+            captured["fit_y"] = np.asarray(y)
+            captured["eval_set_rows"] = len(eval_set[0][0])
+            captured["verbose"] = verbose
+            return self
+
+        def predict_proba(self, x):
+            captured.setdefault("predict_proba_rows", []).append(len(x))
+            if len(x) == 3:
+                scores = np.array([0.10, 0.20, 0.30])
+            else:
+                scores = np.array([0.70, 0.40, 0.90, 0.20])
+            return np.column_stack([1 - scores, scores])
+
+        def save_model(self, path):
+            captured["saved_classifier_path"] = path
+
+    def fake_top_n_reports(
+        split_metadata,
+        ranked_predictions,
+        prediction_days=None,
+        random_trials=100,
+        random_trial_workers=4,
+    ):
+        captured["top_n_split_metadata"] = split_metadata.copy()
+        captured["top_n_ranked_predictions"] = np.asarray(ranked_predictions)
+        captured["top_n_prediction_days"] = prediction_days
+        captured["top_n_random_trials"] = random_trials
+        captured["top_n_random_trial_workers"] = random_trial_workers
+        return {
+            "ranked_selection": {"top_5": {"selected_row_count": 4}},
+            "basket_backtest": {"top_5": {"model": {"average_basket_excess_return": 0.02}}},
+            "basket_backtest_by_year": {},
+        }
+
+    def fake_save_ranking_model_artifacts(
+        prediction_days,
+        data_preparator,
+        all_features,
+        model_metadata,
+        classifier,
+    ):
+        captured["saved_prediction_days"] = prediction_days
+        captured["saved_all_features"] = all_features
+        captured["saved_model_metadata"] = model_metadata
+        classifier.save_model("models/horizon_10/xgboost_classifier.json")
+        return {"model_metadata": "models/horizon_10/model_metadata.pkl"}
+
+    monkeypatch.setattr(trainer, "DataPreparator", FakePreparator)
+    monkeypatch.setattr(trainer, "XGBClassifier", FakeRankingClassifier)
+    monkeypatch.setattr(trainer, "build_top_n_selection_reports", fake_top_n_reports)
+    monkeypatch.setattr(
+        trainer,
+        "save_ranking_model_artifacts",
+        fake_save_ranking_model_artifacts,
+    )
+    monkeypatch.setattr(
+        trainer, "log_feature_importances", lambda *args, **kwargs: None
+    )
+    monkeypatch.setattr(
+        trainer,
+        "select_xgboost_regressor_by_validation_top_n",
+        lambda *args, **kwargs: pytest.fail("regression path should not run"),
+    )
+
+    report = trainer.train_models(
+        pd.DataFrame({"Close": [1.0]}),
+        prediction_days=10,
+        target_mode="cross_sectional_top_bottom",
+        random_trials=7,
+        random_trial_workers=2,
+    )
+
+    np.testing.assert_array_equal(captured["fit_x_first_feature"], [0, 2, 4])
+    np.testing.assert_array_equal(captured["fit_y"], [1, 0, 1])
+    assert captured["eval_set_rows"] == 2
+    assert captured["verbose"] is False
+    assert captured["predict_proba_rows"] == [3, 4]
+    np.testing.assert_allclose(
+        captured["top_n_ranked_predictions"],
+        [0.70, 0.40, 0.90, 0.20],
+    )
+    assert len(captured["top_n_split_metadata"]) == 4
+    assert captured["top_n_prediction_days"] == 10
+    assert captured["top_n_random_trials"] == 7
+    assert captured["top_n_random_trial_workers"] == 2
+    assert captured["saved_prediction_days"] == 10
+    assert captured["saved_all_features"] == MODEL_FEATURE_COLUMNS
+    assert captured["saved_classifier_path"] == "models/horizon_10/xgboost_classifier.json"
+
+    metadata = captured["saved_model_metadata"]
+    assert metadata["target_mode"] == "cross_sectional_top_bottom"
+    assert metadata["target_type"] == "cross_sectional_top_bottom_quintile"
+    assert metadata["classifier_target"] == "top_quintile_target"
+    assert metadata["ranking_target"] == (
+        "top_20_vs_bottom_20_by_excess_forward_return"
+    )
+    assert metadata["ranking_group_key"] == "prediction_date"
+    assert metadata["primary_model_score"] == (
+        "probability_of_top_quintile_outperformance"
+    )
+    assert metadata["model_artifact_type"] == "classifier_only"
+    assert metadata["regressor_artifact"] is None
+    assert metadata["regressor_features"] == []
+    assert report["target_mode"] == "cross_sectional_top_bottom"
+    assert report["ranking_score_name"] == (
+        "probability_of_top_quintile_outperformance"
+    )
+    assert report["basket_backtest"]["top_5"]["model"]["average_basket_excess_return"] == 0.02
+
+
+def test_train_models_cross_sectional_ranking_requires_ranking_metadata(monkeypatch):
+    feature_count = len(MODEL_FEATURE_COLUMNS)
+
+    class FakePreparator:
+        def __init__(self):
+            self.feature_columns = list(MODEL_FEATURE_COLUMNS)
+
+        def prepare_for_train(self, data, prediction_days, test_size):
+            return {
+                "x_train": np.ones((2, feature_count)),
+                "x_val": np.ones((2, feature_count)),
+                "x_test": np.ones((2, feature_count)),
+                "y_train": np.array([0.01, 0.02]),
+                "y_val": np.array([0.01, -0.02]),
+                "y_test": np.array([0.02, -0.01]),
+                "direction_y_train": np.array([1, 1]),
+                "direction_y_val": np.array([1, 0]),
+                "direction_y_test": np.array([1, 0]),
+                "feature_names": list(MODEL_FEATURE_COLUMNS),
+                "split_metadata": {
+                    "train": pd.DataFrame({"Ticker": ["AAA", "BBB"]}),
+                    "val": pd.DataFrame(
+                        {
+                            "ranking_train_sample": [True, True],
+                            "top_quintile_target": [1.0, 0.0],
+                        }
+                    ),
+                    "test": pd.DataFrame({"Ticker": ["AAA", "BBB"]}),
+                },
+            }
+
+    monkeypatch.setattr(trainer, "DataPreparator", FakePreparator)
+    monkeypatch.setattr(
+        trainer,
+        "XGBClassifier",
+        lambda *args, **kwargs: pytest.fail("classifier should not train"),
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=r"requires split_metadata\['train'\] columns",
+    ):
+        trainer.train_models(
+            pd.DataFrame({"Close": [1.0]}),
+            target_mode="cross_sectional_top_bottom",
+        )
+
+
+def test_train_models_cross_sectional_ranking_requires_test_split_metadata(
+    monkeypatch,
+):
+    feature_count = len(MODEL_FEATURE_COLUMNS)
+
+    class FakePreparator:
+        def __init__(self):
+            self.feature_columns = list(MODEL_FEATURE_COLUMNS)
+
+        def prepare_for_train(self, data, prediction_days, test_size):
+            ranking_metadata = pd.DataFrame(
+                {
+                    "ranking_train_sample": [True, True],
+                    "top_quintile_target": [1.0, 0.0],
+                }
+            )
+            return {
+                "x_train": np.ones((2, feature_count)),
+                "x_val": np.ones((2, feature_count)),
+                "x_test": np.ones((2, feature_count)),
+                "y_train": np.array([0.01, 0.02]),
+                "y_val": np.array([0.01, -0.02]),
+                "y_test": np.array([0.02, -0.01]),
+                "direction_y_train": np.array([1, 1]),
+                "direction_y_val": np.array([1, 0]),
+                "direction_y_test": np.array([1, 0]),
+                "feature_names": list(MODEL_FEATURE_COLUMNS),
+                "split_metadata": {
+                    "train": ranking_metadata,
+                    "val": ranking_metadata.copy(),
+                },
+            }
+
+    monkeypatch.setattr(trainer, "DataPreparator", FakePreparator)
+    monkeypatch.setattr(
+        trainer,
+        "XGBClassifier",
+        lambda *args, **kwargs: pytest.fail("classifier should not train"),
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=r"target_mode='cross_sectional_top_bottom' requires split_metadata\['test'\]",
+    ):
+        trainer.train_models(
+            pd.DataFrame({"Close": [1.0]}),
+            target_mode="cross_sectional_top_bottom",
+        )
+
+
+def test_train_models_cross_sectional_ranking_requires_both_classes(monkeypatch):
+    feature_count = len(MODEL_FEATURE_COLUMNS)
+
+    class FakePreparator:
+        def __init__(self):
+            self.feature_columns = list(MODEL_FEATURE_COLUMNS)
+
+        def prepare_for_train(self, data, prediction_days, test_size):
+            ranking_metadata = pd.DataFrame(
+                {
+                    "ranking_train_sample": [True, True],
+                    "top_quintile_target": [1.0, 1.0],
+                }
+            )
+            return {
+                "x_train": np.ones((2, feature_count)),
+                "x_val": np.ones((2, feature_count)),
+                "x_test": np.ones((2, feature_count)),
+                "y_train": np.array([0.01, 0.02]),
+                "y_val": np.array([0.01, -0.02]),
+                "y_test": np.array([0.02, -0.01]),
+                "direction_y_train": np.array([1, 1]),
+                "direction_y_val": np.array([1, 0]),
+                "direction_y_test": np.array([1, 0]),
+                "feature_names": list(MODEL_FEATURE_COLUMNS),
+                "split_metadata": {
+                    "train": ranking_metadata,
+                    "val": ranking_metadata.copy(),
+                    "test": pd.DataFrame({"Ticker": ["AAA", "BBB"]}),
+                },
+            }
+
+    monkeypatch.setattr(trainer, "DataPreparator", FakePreparator)
+    monkeypatch.setattr(
+        trainer,
+        "XGBClassifier",
+        lambda *args, **kwargs: pytest.fail("classifier should not train"),
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="Ranking training sample must contain both classes",
     ):
         trainer.train_models(
             pd.DataFrame({"Close": [1.0]}),
@@ -1865,23 +2193,53 @@ def test_main_single_horizon_prints_top_n_basket_summary(monkeypatch, capsys):
     assert "XGBoost Beat-Benchmark Classification Report" not in output
 
 
-def test_main_rejects_unimplemented_target_mode_before_fetch(monkeypatch):
+def test_main_passes_cross_sectional_target_mode_to_train_models(monkeypatch):
+    trained_target_modes = []
+
     monkeypatch.setattr(
         trainer,
         "prepare_data_parallel",
-        lambda *args, **kwargs: pytest.fail("data fetch should not run"),
-    )
-    monkeypatch.setattr(
-        trainer,
-        "train_models",
-        lambda *args, **kwargs: pytest.fail("training should not run"),
+        lambda *args, **kwargs: pd.DataFrame({"Close": [1.0]}),
     )
 
-    with pytest.raises(
-        NotImplementedError,
-        match="target_mode='cross_sectional_top_bottom' is not implemented yet",
+    def fake_train_models(
+        data,
+        prediction_days,
+        random_trials=100,
+        random_trial_workers=4,
+        target_mode="excess_return",
     ):
-        trainer.main(["--target-mode", "cross_sectional_top_bottom"])
+        trained_target_modes.append(target_mode)
+        return {
+            "prediction_days": prediction_days,
+            "target_mode": target_mode,
+            "basket_backtest": {
+                "top_5": {
+                    "model": {
+                        "average_basket_raw_return": 0.02,
+                        "average_basket_excess_return": 0.01,
+                        "beat_benchmark_rate": 0.55,
+                    },
+                    "random_baseline": {"average_basket_excess_return": 0.002},
+                    "momentum_baseline": {
+                        "available": False,
+                        "momentum_score_column": "momentum_10d",
+                    },
+                    "relative_momentum_baseline": {
+                        "available": False,
+                        "relative_momentum_score_column": "relative_momentum_10d",
+                    },
+                    "universe": {"average_basket_excess_return": 0.001},
+                    "benchmark": {"average_basket_raw_return": 0.003},
+                }
+            },
+        }
+
+    monkeypatch.setattr(trainer, "train_models", fake_train_models)
+
+    trainer.main(["--target-mode", "cross_sectional_top_bottom"])
+
+    assert trained_target_modes == ["cross_sectional_top_bottom"]
 
 
 def test_main_walk_forward_runs_walk_forward_path(monkeypatch, capsys):
