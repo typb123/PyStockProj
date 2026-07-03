@@ -1502,7 +1502,7 @@ def test_top_n_ranked_selection_includes_relative_momentum_baseline_when_availab
     )
 
 
-def test_top_n_ranked_selection_falls_back_to_daily_return_when_horizon_momentum_missing():
+def test_top_n_ranked_selection_marks_horizon_momentum_unavailable_when_missing():
     metadata = make_ranked_selection_metadata()
     predicted_excess_returns = np.array([0.90, 0.80, 0.70, 0.10, 0.20, 0.30])
 
@@ -1514,12 +1514,10 @@ def test_top_n_ranked_selection_falls_back_to_daily_return_when_horizon_momentum
     )
 
     momentum_baseline = report["top_1"]["momentum_baseline"]
-    assert momentum_baseline["available"] is True
-    assert momentum_baseline["momentum_score_column"] == "dailyReturn"
-    assert np.isclose(
-        momentum_baseline["average_selected_raw_forward_return"],
-        (0.02 + -0.04) / 2,
-    )
+    assert momentum_baseline["available"] is False
+    assert momentum_baseline["momentum_score_column"] == "momentum_10d"
+    assert "not present" in momentum_baseline["reason"]
+    assert np.isnan(momentum_baseline["average_selected_raw_forward_return"])
 
 
 def test_top_n_ranked_selection_relative_momentum_unavailable_when_horizon_column_missing():
@@ -1724,7 +1722,7 @@ def test_top_n_basket_backtest_includes_relative_momentum_baseline_when_availabl
     )
 
 
-def test_top_n_basket_backtest_falls_back_to_daily_return_when_horizon_momentum_missing():
+def test_top_n_basket_backtest_marks_horizon_momentum_unavailable_when_missing():
     metadata = make_ranked_selection_metadata()
     ranked_predictions = np.array([0.90, 0.80, 0.70, 0.10, 0.20, 0.30])
 
@@ -1736,9 +1734,10 @@ def test_top_n_basket_backtest_falls_back_to_daily_return_when_horizon_momentum_
     )
 
     momentum = report["top_1"]["momentum_baseline"]
-    assert momentum["available"] is True
-    assert momentum["momentum_score_column"] == "dailyReturn"
-    assert np.isclose(momentum["average_basket_raw_return"], (0.02 + -0.04) / 2)
+    assert momentum["available"] is False
+    assert momentum["momentum_score_column"] == "momentum_20d"
+    assert "not present" in momentum["reason"]
+    assert np.isnan(momentum["average_basket_raw_return"])
 
 
 def test_top_n_basket_backtest_relative_momentum_unavailable_when_horizon_column_missing():

@@ -291,9 +291,7 @@ def _resolve_momentum_score_column(metadata, momentum_score_column, prediction_d
         return momentum_score_column
 
     if prediction_days is not None:
-        horizon_column = f"momentum_{int(prediction_days)}d"
-        if horizon_column in metadata.columns:
-            return horizon_column
+        return f"momentum_{int(prediction_days)}d"
 
     return "dailyReturn"
 
