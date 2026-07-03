@@ -8,6 +8,7 @@ from src.config import PREDICTION_DAYS
 from src.features.feature_contract import (
     ABSOLUTE_MOMENTUM_FEATURE_COLUMNS,
     BASE_MODEL_FEATURE_COLUMNS,
+    FORWARD_RETURN_METADATA_COLUMNS,
     MODEL_FEATURE_COLUMNS,
     SPLIT_METADATA_COLUMNS,
     SPY_RELATIVE_MOMENTUM_FEATURE_COLUMNS,
@@ -81,7 +82,11 @@ class DataPreparator:
     ) -> pd.DataFrame:
         """Add ticker-aware raw forward returns for the prediction horizon."""
         df = df.sort_values(["Ticker", "prediction_date"]).copy()
-        future_close = df.groupby("Ticker", sort=False)["Close"].shift(-prediction_days)
+        ticker_groups = df.groupby("Ticker", sort=False)
+        future_close = ticker_groups["Close"].shift(-prediction_days)
+        df["forward_end_date"] = ticker_groups["prediction_date"].shift(
+            -prediction_days
+        )
         df["raw_forward_return"] = (future_close - df["Close"]) / df["Close"]
         return df
 
@@ -92,14 +97,17 @@ class DataPreparator:
             raise ValueError(f"Benchmark ticker {self.benchmark_ticker} is missing.")
 
         benchmark_returns = benchmark_rows[
-            ["prediction_date", "raw_forward_return"]
-        ].dropna(subset=["raw_forward_return"])
+            ["prediction_date", "raw_forward_return", "forward_end_date"]
+        ].dropna(subset=["raw_forward_return", "forward_end_date"])
         benchmark_returns = benchmark_returns.drop_duplicates(
             subset=["prediction_date"],
             keep="first",
         )
         return benchmark_returns.rename(
-            columns={"raw_forward_return": "benchmark_forward_return"}
+            columns={
+                "raw_forward_return": "benchmark_forward_return",
+                "forward_end_date": "benchmark_forward_end_date",
+            }
         )
 
     def _add_benchmark_relative_momentum(self, df: pd.DataFrame) -> pd.DataFrame:
@@ -155,6 +163,17 @@ class DataPreparator:
             on="prediction_date",
             how="left",
         )
+        aligned_forward_end_dates = (
+            candidates["raw_forward_return"].notna()
+            & candidates["benchmark_forward_return"].notna()
+            & candidates["forward_end_date"].notna()
+            & candidates["benchmark_forward_end_date"].notna()
+            & (
+                candidates["forward_end_date"]
+                == candidates["benchmark_forward_end_date"]
+            )
+        )
+        candidates = candidates.loc[aligned_forward_end_dates].copy()
         candidates["excess_forward_return"] = (
             candidates["raw_forward_return"] - candidates["benchmark_forward_return"]
         )
@@ -205,11 +224,20 @@ class DataPreparator:
 
     def _build_split_metadata(self, split_df: pd.DataFrame) -> pd.DataFrame:
         """Preserve evaluation-only columns needed by Top-N reports."""
+        required_metadata_columns = [
+            column
+            for column in SPLIT_METADATA_COLUMNS
+            if column not in FORWARD_RETURN_METADATA_COLUMNS
+        ]
         optional_momentum_columns = [
             *ABSOLUTE_MOMENTUM_FEATURE_COLUMNS,
             *SPY_RELATIVE_MOMENTUM_FEATURE_COLUMNS,
         ]
-        available_columns = SPLIT_METADATA_COLUMNS + [
+        available_columns = required_metadata_columns + [
+            column
+            for column in FORWARD_RETURN_METADATA_COLUMNS
+            if column in split_df.columns
+        ] + [
             column
             for column in optional_momentum_columns
             if column in split_df.columns

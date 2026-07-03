@@ -66,6 +66,12 @@ def test_create_target_sorts_and_shifts_within_each_ticker():
     assert result["Close"].tolist() == [10.0, 20.0, 100.0, 200.0]
     np.testing.assert_allclose(result["raw_forward_return"], [1.0, 1.0, 1.0, 1.0])
     np.testing.assert_allclose(result["targetReturns"], [1.0, 1.0, 1.0, 1.0])
+    assert result["forward_end_date"].tolist() == [
+        pd.Timestamp("2024-01-02"),
+        pd.Timestamp("2024-01-03"),
+        pd.Timestamp("2024-01-02"),
+        pd.Timestamp("2024-01-03"),
+    ]
 
 
 def test_data_preparator_defaults_to_ten_prediction_days():
@@ -153,6 +159,50 @@ def test_prepare_for_train_aligns_benchmark_forward_returns_by_prediction_date()
     assert np.isclose(first_aaa["excess_forward_return"], 0.09)
     assert np.isclose(first_aaa["targetReturns"], 0.09)
     assert first_aaa["beat_benchmark_target"] == 1
+    assert first_aaa["forward_end_date"] == dates[1]
+    assert first_aaa["benchmark_forward_end_date"] == dates[1]
+
+
+def test_benchmark_relative_targets_drop_mismatched_forward_end_dates():
+    df = pd.DataFrame(
+        {
+            "Ticker": ["AAA", "AAA", "AAA", "SPY", "SPY", "SPY", "SPY"],
+            "prediction_date": pd.to_datetime(
+                [
+                    "2024-01-01",
+                    "2024-01-03",
+                    "2024-01-04",
+                    "2024-01-01",
+                    "2024-01-02",
+                    "2024-01-03",
+                    "2024-01-04",
+                ]
+            ),
+            "Close": [100.0, 110.0, 121.0, 200.0, 202.0, 204.02, 206.0602],
+        }
+    )
+
+    preparator = DataPreparator()
+    raw = preparator._create_raw_forward_returns(
+        preparator._normalize_prediction_date(df),
+        prediction_days=1,
+    )
+    benchmark_returns = preparator._build_benchmark_forward_returns(raw)
+    candidates = preparator._create_benchmark_relative_targets(raw, benchmark_returns)
+
+    assert not (
+        (candidates["Ticker"] == "AAA")
+        & (candidates["prediction_date"] == pd.Timestamp("2024-01-01"))
+    ).any()
+    kept_aaa = candidates[
+        (candidates["Ticker"] == "AAA")
+        & (candidates["prediction_date"] == pd.Timestamp("2024-01-03"))
+    ].iloc[0]
+    assert kept_aaa["forward_end_date"] == pd.Timestamp("2024-01-04")
+    assert kept_aaa["benchmark_forward_end_date"] == pd.Timestamp("2024-01-04")
+    assert np.isclose(kept_aaa["raw_forward_return"], 0.10)
+    assert np.isclose(kept_aaa["benchmark_forward_return"], 0.01)
+    assert np.isclose(kept_aaa["excess_forward_return"], 0.09)
 
 
 def test_prepare_for_train_uses_global_date_split_with_embargo_and_drops_spy():
@@ -176,6 +226,8 @@ def test_prepare_for_train_uses_global_date_split_with_embargo_and_drops_spy():
                     "benchmark_forward_return",
                     "excess_forward_return",
                     "beat_benchmark_target",
+                    "forward_end_date",
+                    "benchmark_forward_end_date",
                 ]
             ]
             .isna()
@@ -285,6 +337,25 @@ def test_prepare_for_train_preserves_available_momentum_columns_in_split_metadat
     for split_metadata in prepared["split_metadata"].values():
         for column in ["momentum_5d", "momentum_10d", "momentum_20d", "momentum_50d"]:
             assert column in split_metadata.columns
+
+
+def test_prepare_for_train_preserves_forward_end_dates_in_split_metadata():
+    df = make_panel_feature_frame(num_dates=50)
+
+    prepared = DataPreparator().prepare_for_train(
+        df,
+        prediction_days=1,
+        val_size=0.2,
+        test_size=0.2,
+    )
+
+    for split_metadata in prepared["split_metadata"].values():
+        assert "forward_end_date" in split_metadata.columns
+        assert "benchmark_forward_end_date" in split_metadata.columns
+        assert (
+            split_metadata["forward_end_date"]
+            == split_metadata["benchmark_forward_end_date"]
+        ).all()
 
 
 def test_relative_momentum_is_date_aligned_to_spy():

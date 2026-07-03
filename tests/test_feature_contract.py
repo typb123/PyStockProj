@@ -3,10 +3,12 @@
 import pytest
 
 from src.features.feature_contract import (
+    FORWARD_RETURN_METADATA_COLUMNS,
     MODEL_FEATURE_COLUMNS,
     MODEL_FEATURE_GROUPS,
     NON_FEATURE_COLUMNS,
     RANKING_TARGET_COLUMNS,
+    SPLIT_METADATA_COLUMNS,
     SPY_RELATIVE_MOMENTUM_FEATURE_COLUMNS,
     TARGET_COLUMNS,
     validate_feature_contract,
@@ -78,6 +80,17 @@ def test_ranking_target_columns_are_metadata_not_model_features():
     assert set(RANKING_TARGET_COLUMNS).isdisjoint(MODEL_FEATURE_COLUMNS)
 
 
+def test_forward_return_endpoint_columns_are_metadata_not_model_features():
+    assert FORWARD_RETURN_METADATA_COLUMNS == [
+        "forward_end_date",
+        "benchmark_forward_end_date",
+    ]
+    assert set(FORWARD_RETURN_METADATA_COLUMNS).issubset(TARGET_COLUMNS)
+    assert set(FORWARD_RETURN_METADATA_COLUMNS).issubset(NON_FEATURE_COLUMNS)
+    assert set(FORWARD_RETURN_METADATA_COLUMNS).issubset(SPLIT_METADATA_COLUMNS)
+    assert set(FORWARD_RETURN_METADATA_COLUMNS).isdisjoint(MODEL_FEATURE_COLUMNS)
+
+
 def test_spy_relative_momentum_features_are_present():
     assert SPY_RELATIVE_MOMENTUM_FEATURE_COLUMNS == [
         "relative_momentum_5d",
@@ -109,6 +122,15 @@ def test_feature_contract_validation_rejects_target_overlap():
 def test_feature_contract_validation_rejects_ranking_target_overlap(ranking_column):
     feature_groups = dict(MODEL_FEATURE_GROUPS)
     feature_groups["bad_ranking_target_feature"] = [ranking_column]
+
+    with pytest.raises(ValueError, match="Target columns must not overlap"):
+        validate_feature_contract(feature_groups=feature_groups)
+
+
+@pytest.mark.parametrize("endpoint_column", FORWARD_RETURN_METADATA_COLUMNS)
+def test_feature_contract_validation_rejects_endpoint_metadata_overlap(endpoint_column):
+    feature_groups = dict(MODEL_FEATURE_GROUPS)
+    feature_groups["bad_endpoint_metadata_feature"] = [endpoint_column]
 
     with pytest.raises(ValueError, match="Target columns must not overlap"):
         validate_feature_contract(feature_groups=feature_groups)

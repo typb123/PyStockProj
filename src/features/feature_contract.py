@@ -94,6 +94,13 @@ TARGET_COLUMNS = [
     "beat_benchmark_target",
 ]
 
+FORWARD_RETURN_METADATA_COLUMNS = [
+    "forward_end_date",
+    "benchmark_forward_end_date",
+]
+
+TARGET_COLUMNS = TARGET_COLUMNS + FORWARD_RETURN_METADATA_COLUMNS
+
 RANKING_TARGET_COLUMNS = [
     "excess_return_rank_pct_by_date",
     "top_quintile_target",
@@ -111,6 +118,7 @@ SPLIT_METADATA_COLUMNS = [
     "benchmark_forward_return",
     "excess_forward_return",
     "beat_benchmark_target",
+    *FORWARD_RETURN_METADATA_COLUMNS,
 ]
 
 
