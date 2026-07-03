@@ -94,6 +94,14 @@ TARGET_COLUMNS = [
     "beat_benchmark_target",
 ]
 
+RANKING_TARGET_COLUMNS = [
+    "excess_return_rank_pct_by_date",
+    "top_quintile_target",
+    "ranking_train_sample",
+]
+
+NON_FEATURE_COLUMNS = TARGET_COLUMNS + RANKING_TARGET_COLUMNS
+
 SPLIT_METADATA_COLUMNS = [
     "_source_index",
     "Ticker",
@@ -128,7 +136,7 @@ BASE_MODEL_FEATURE_COLUMNS = flatten_feature_groups(
 
 def validate_feature_contract(
     feature_groups: dict[str, list[str]] = MODEL_FEATURE_GROUPS,
-    target_columns: list[str] = TARGET_COLUMNS,
+    target_columns: list[str] = NON_FEATURE_COLUMNS,
 ) -> None:
     """Fail fast if feature groups are empty, duplicated, or overlap targets."""
     empty_groups = [

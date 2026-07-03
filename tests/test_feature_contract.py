@@ -5,6 +5,8 @@ import pytest
 from src.features.feature_contract import (
     MODEL_FEATURE_COLUMNS,
     MODEL_FEATURE_GROUPS,
+    NON_FEATURE_COLUMNS,
+    RANKING_TARGET_COLUMNS,
     SPY_RELATIVE_MOMENTUM_FEATURE_COLUMNS,
     TARGET_COLUMNS,
     validate_feature_contract,
@@ -62,6 +64,18 @@ def test_model_feature_contract_has_no_duplicates_or_target_overlap():
     validate_feature_contract()
     assert len(MODEL_FEATURE_COLUMNS) == len(set(MODEL_FEATURE_COLUMNS))
     assert set(MODEL_FEATURE_COLUMNS).isdisjoint(TARGET_COLUMNS)
+    assert set(TARGET_COLUMNS).issubset(NON_FEATURE_COLUMNS)
+
+
+def test_ranking_target_columns_are_metadata_not_model_features():
+    assert RANKING_TARGET_COLUMNS == [
+        "excess_return_rank_pct_by_date",
+        "top_quintile_target",
+        "ranking_train_sample",
+    ]
+    assert set(RANKING_TARGET_COLUMNS).issubset(NON_FEATURE_COLUMNS)
+    assert set(RANKING_TARGET_COLUMNS).isdisjoint(TARGET_COLUMNS)
+    assert set(RANKING_TARGET_COLUMNS).isdisjoint(MODEL_FEATURE_COLUMNS)
 
 
 def test_spy_relative_momentum_features_are_present():
@@ -86,6 +100,15 @@ def test_feature_contract_validation_rejects_duplicate_features():
 def test_feature_contract_validation_rejects_target_overlap():
     feature_groups = dict(MODEL_FEATURE_GROUPS)
     feature_groups["bad_target_feature"] = ["targetReturns"]
+
+    with pytest.raises(ValueError, match="Target columns must not overlap"):
+        validate_feature_contract(feature_groups=feature_groups)
+
+
+@pytest.mark.parametrize("ranking_column", RANKING_TARGET_COLUMNS)
+def test_feature_contract_validation_rejects_ranking_target_overlap(ranking_column):
+    feature_groups = dict(MODEL_FEATURE_GROUPS)
+    feature_groups["bad_ranking_target_feature"] = [ranking_column]
 
     with pytest.raises(ValueError, match="Target columns must not overlap"):
         validate_feature_contract(feature_groups=feature_groups)
