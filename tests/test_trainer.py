@@ -1659,6 +1659,347 @@ def test_train_models_cross_sectional_ranking_requires_both_classes(monkeypatch)
         )
 
 
+def test_rank_ndcg_training_data_filters_labels_groups_and_sorts_by_date():
+    features = pd.DataFrame({"feature": [0, 1, 2, 3, 4, 5]})
+    metadata = pd.DataFrame(
+        {
+            "prediction_date": pd.to_datetime(
+                [
+                    "2024-01-02",
+                    "2024-01-01",
+                    "2024-01-02",
+                    "2024-01-01",
+                    "2024-01-03",
+                    "2024-01-02",
+                ]
+            ),
+            "excess_return_rank_pct_by_date": [0.90, 0.10, 0.30, 0.70, 0.80, np.nan],
+        }
+    )
+
+    ranked_features, labels, qid, grouped_metadata = trainer._rank_ndcg_training_data(
+        features,
+        metadata,
+    )
+
+    np.testing.assert_array_equal(ranked_features["feature"].to_numpy(), [1, 3, 0, 2])
+    np.testing.assert_array_equal(labels, [0, 3, 4, 1])
+    np.testing.assert_array_equal(qid, [0, 0, 1, 1])
+    assert grouped_metadata["prediction_date"].tolist() == [
+        pd.Timestamp("2024-01-01"),
+        pd.Timestamp("2024-01-01"),
+        pd.Timestamp("2024-01-02"),
+        pd.Timestamp("2024-01-02"),
+    ]
+
+
+def test_rank_percentile_to_ndcg_relevance_uses_expected_boundaries():
+    labels = trainer._rank_percentile_to_ndcg_relevance(
+        pd.Series([0.20, 0.21, 0.40, 0.41, 0.60, 0.61, 0.79, 0.80, 1.00])
+    )
+
+    np.testing.assert_array_equal(labels.to_numpy(), [0, 1, 1, 2, 2, 3, 3, 4, 4])
+
+
+def test_train_models_cross_sectional_rank_ndcg_trains_grouped_ranker_and_scores_all(
+    monkeypatch,
+):
+    captured = {}
+    feature_count = len(MODEL_FEATURE_COLUMNS)
+    train_rows = 6
+    val_rows = 3
+    test_rows = 4
+
+    class FakePreparator:
+        def __init__(self):
+            self.feature_columns = list(MODEL_FEATURE_COLUMNS)
+
+        def prepare_for_train(self, data, prediction_days, test_size):
+            return {
+                "x_train": np.tile(np.arange(train_rows).reshape(-1, 1), feature_count),
+                "x_val": np.tile(
+                    np.arange(10, 10 + val_rows).reshape(-1, 1),
+                    feature_count,
+                ),
+                "x_test": np.tile(
+                    np.arange(20, 20 + test_rows).reshape(-1, 1),
+                    feature_count,
+                ),
+                "y_train": np.zeros(train_rows),
+                "y_val": np.zeros(val_rows),
+                "y_test": np.zeros(test_rows),
+                "direction_y_train": np.zeros(train_rows),
+                "direction_y_val": np.zeros(val_rows),
+                "direction_y_test": np.zeros(test_rows),
+                "feature_names": list(MODEL_FEATURE_COLUMNS),
+                "split_metadata": {
+                    "train": pd.DataFrame(
+                        {
+                            "Ticker": ["AAA", "BBB", "CCC", "DDD", "EEE", "FFF"],
+                            "prediction_date": pd.to_datetime(
+                                [
+                                    "2024-01-02",
+                                    "2024-01-01",
+                                    "2024-01-02",
+                                    "2024-01-01",
+                                    "2024-01-03",
+                                    "2024-01-02",
+                                ]
+                            ),
+                            "excess_return_rank_pct_by_date": [
+                                0.90,
+                                0.10,
+                                0.30,
+                                0.70,
+                                0.80,
+                                np.nan,
+                            ],
+                        }
+                    ),
+                    "val": pd.DataFrame(
+                        {
+                            "Ticker": ["AAA", "BBB", "CCC"],
+                            "prediction_date": pd.to_datetime(
+                                ["2024-01-04", "2024-01-04", "2024-01-05"]
+                            ),
+                            "excess_return_rank_pct_by_date": [0.20, 0.90, 0.50],
+                        }
+                    ),
+                    "test": pd.DataFrame(
+                        {
+                            "Ticker": ["AAA", "BBB", "CCC", "DDD"],
+                            "prediction_date": pd.to_datetime(
+                                [
+                                    "2024-01-06",
+                                    "2024-01-06",
+                                    "2024-01-07",
+                                    "2024-01-07",
+                                ]
+                            ),
+                            "raw_forward_return": [0.03, 0.01, -0.02, 0.04],
+                            "benchmark_forward_return": [0.01] * test_rows,
+                            "excess_forward_return": [0.02, 0.00, -0.03, 0.03],
+                            "excess_return_rank_pct_by_date": [0.75, 0.50, 0.00, 1.00],
+                            "momentum_10d": [0.03, 0.02, -0.01, 0.04],
+                            "relative_momentum_10d": [0.02, 0.01, -0.02, 0.03],
+                        }
+                    ),
+                },
+            }
+
+    class FakeRanker:
+        def __init__(self, **params):
+            captured["ranker_params"] = params
+            self.feature_importances_ = np.ones(feature_count)
+
+        def fit(self, x, y, *, qid=None, eval_set=None, eval_qid=None, verbose=True):
+            captured["fit_first_feature"] = x.iloc[:, 0].to_numpy()
+            captured["fit_y"] = np.asarray(y)
+            captured["fit_qid"] = np.asarray(qid)
+            captured["eval_first_feature"] = eval_set[0][0].iloc[:, 0].to_numpy()
+            captured["eval_y"] = np.asarray(eval_set[0][1])
+            captured["eval_qid"] = np.asarray(eval_qid[0])
+            captured["fit_verbose"] = verbose
+            return self
+
+        def predict(self, x):
+            captured.setdefault("predict_lengths", []).append(len(x))
+            if len(x) == val_rows:
+                return np.array([0.10, 0.20, 0.30])
+            return np.array([0.70, 0.40, 0.90, 0.20])
+
+    def fake_top_n_reports(
+        split_metadata,
+        ranked_predictions,
+        prediction_days=None,
+        random_trials=100,
+        random_trial_workers=4,
+    ):
+        captured["top_n_split_metadata"] = split_metadata.copy()
+        captured["top_n_ranked_predictions"] = np.asarray(ranked_predictions)
+        captured["top_n_prediction_days"] = prediction_days
+        captured["top_n_random_trials"] = random_trials
+        captured["top_n_random_trial_workers"] = random_trial_workers
+        return {
+            "ranked_selection": {"top_5": {"selected_row_count": 4}},
+            "basket_backtest": {"top_5": {"model": {"average_basket_excess_return": 0.02}}},
+            "basket_backtest_by_year": {},
+        }
+
+    def fake_save_rank_ndcg_model_artifacts(
+        prediction_days,
+        data_preparator,
+        all_features,
+        model_metadata,
+        ranker,
+    ):
+        captured["saved_prediction_days"] = prediction_days
+        captured["saved_all_features"] = all_features
+        captured["saved_model_metadata"] = model_metadata
+        return {"model_metadata": "models/horizon_10/model_metadata.pkl"}
+
+    monkeypatch.setattr(trainer, "DataPreparator", FakePreparator)
+    monkeypatch.setattr(trainer, "XGBRanker", FakeRanker)
+    monkeypatch.setattr(trainer, "build_top_n_selection_reports", fake_top_n_reports)
+    monkeypatch.setattr(
+        trainer,
+        "save_rank_ndcg_model_artifacts",
+        fake_save_rank_ndcg_model_artifacts,
+    )
+    monkeypatch.setattr(
+        trainer, "log_feature_importances", lambda *args, **kwargs: None
+    )
+    monkeypatch.setattr(
+        trainer,
+        "select_xgboost_regressor_by_validation_top_n",
+        lambda *args, **kwargs: pytest.fail("regression path should not run"),
+    )
+
+    report = trainer.train_models(
+        pd.DataFrame({"Close": [1.0]}),
+        prediction_days=10,
+        target_mode="cross_sectional_rank_ndcg",
+        random_trials=7,
+        random_trial_workers=2,
+        ranker_params={"objective": "rank:ndcg", "random_state": 42},
+    )
+
+    np.testing.assert_array_equal(captured["fit_first_feature"], [1, 3, 0, 2])
+    np.testing.assert_array_equal(captured["fit_y"], [0, 3, 4, 1])
+    np.testing.assert_array_equal(captured["fit_qid"], [0, 0, 1, 1])
+    np.testing.assert_array_equal(captured["eval_first_feature"], [10, 11])
+    np.testing.assert_array_equal(captured["eval_y"], [0, 4])
+    np.testing.assert_array_equal(captured["eval_qid"], [0, 0])
+    assert captured["fit_verbose"] is False
+    assert captured["predict_lengths"] == [val_rows, test_rows]
+    np.testing.assert_allclose(
+        captured["top_n_ranked_predictions"],
+        [0.70, 0.40, 0.90, 0.20],
+    )
+    assert len(captured["top_n_split_metadata"]) == test_rows
+    assert captured["top_n_prediction_days"] == 10
+    assert captured["top_n_random_trials"] == 7
+    assert captured["top_n_random_trial_workers"] == 2
+    assert captured["saved_prediction_days"] == 10
+    assert captured["saved_all_features"] == MODEL_FEATURE_COLUMNS
+
+    metadata = captured["saved_model_metadata"]
+    assert metadata["target_mode"] == "cross_sectional_rank_ndcg"
+    assert metadata["target_type"] == "grouped_learning_to_rank_ndcg"
+    assert metadata["ranking_group_key"] == "prediction_date"
+    assert metadata["ranking_label_source"] == "excess_return_rank_pct_by_date"
+    assert metadata["ranking_label_type"] == "graded_0_to_4_from_rank_percentile"
+    assert metadata["primary_model_score"] == "xgboost_rank_ndcg_score"
+    assert metadata["model_artifact_type"] == "ranker"
+    assert metadata["classifier_artifact"] is None
+    assert metadata["regressor_artifact"] is None
+    assert metadata["ranker_training_row_count"] == 4
+    assert metadata["ranker_training_candidate_count"] == train_rows
+    assert metadata["ranker_training_group_count"] == 2
+    assert metadata["ranker_training_dropped_row_count"] == 2
+    assert metadata["ranker_validation_scored_row_count"] == val_rows
+    assert metadata["ranker_test_scored_row_count"] == test_rows
+    assert report["target_mode"] == "cross_sectional_rank_ndcg"
+    assert report["ranking_score_name"] == "xgboost_rank_ndcg_score"
+    assert report["same_date_ranking_diagnostics"]["model"]["score_column"] == (
+        "xgboost_rank_ndcg_score"
+    )
+    assert report["same_date_ranking_diagnostics"]["momentum"]["score_column"] == (
+        "momentum_10d"
+    )
+    assert report["same_date_ranking_diagnostics"]["relative_momentum"][
+        "score_column"
+    ] == "relative_momentum_10d"
+    assert report["basket_backtest"]["top_5"]["model"]["average_basket_excess_return"] == 0.02
+
+
+@pytest.mark.parametrize(
+    "missing_column, expected_message",
+    [
+        ("prediction_date", "prediction_date"),
+        ("excess_return_rank_pct_by_date", "excess_return_rank_pct_by_date"),
+    ],
+)
+def test_train_models_cross_sectional_rank_ndcg_requires_rank_metadata(
+    monkeypatch,
+    missing_column,
+    expected_message,
+):
+    feature_count = len(MODEL_FEATURE_COLUMNS)
+
+    class FakePreparator:
+        def __init__(self):
+            self.feature_columns = list(MODEL_FEATURE_COLUMNS)
+
+        def prepare_for_train(self, data, prediction_days, test_size):
+            rank_metadata = pd.DataFrame(
+                {
+                    "prediction_date": pd.to_datetime(
+                        ["2024-01-01", "2024-01-01", "2024-01-02", "2024-01-02"]
+                    ),
+                    "excess_return_rank_pct_by_date": [0.1, 0.9, 0.2, 0.8],
+                }
+            ).drop(columns=[missing_column])
+            return {
+                "x_train": np.ones((4, feature_count)),
+                "x_val": np.ones((2, feature_count)),
+                "x_test": np.ones((2, feature_count)),
+                "y_train": np.zeros(4),
+                "y_val": np.zeros(2),
+                "y_test": np.zeros(2),
+                "direction_y_train": np.zeros(4),
+                "direction_y_val": np.zeros(2),
+                "direction_y_test": np.zeros(2),
+                "feature_names": list(MODEL_FEATURE_COLUMNS),
+                "split_metadata": {
+                    "train": rank_metadata,
+                    "val": rank_metadata.copy(),
+                    "test": rank_metadata.copy(),
+                },
+            }
+
+    monkeypatch.setattr(trainer, "DataPreparator", FakePreparator)
+    monkeypatch.setattr(
+        trainer,
+        "XGBRanker",
+        lambda *args, **kwargs: pytest.fail("ranker should not train"),
+    )
+
+    with pytest.raises(ValueError, match=expected_message):
+        trainer.train_models(
+            pd.DataFrame({"Close": [1.0]}),
+            target_mode="cross_sectional_rank_ndcg",
+        )
+
+
+def test_rank_ndcg_training_data_rejects_no_usable_rows():
+    features = pd.DataFrame({"feature": [0, 1]})
+    metadata = pd.DataFrame(
+        {
+            "prediction_date": pd.to_datetime(["2024-01-01", "2024-01-01"]),
+            "excess_return_rank_pct_by_date": [np.nan, np.nan],
+        }
+    )
+
+    with pytest.raises(ValueError, match="No usable ranker training rows"):
+        trainer._rank_ndcg_training_data(features, metadata)
+
+
+def test_rank_ndcg_training_data_requires_two_usable_groups():
+    features = pd.DataFrame({"feature": [0, 1, 2]})
+    metadata = pd.DataFrame(
+        {
+            "prediction_date": pd.to_datetime(
+                ["2024-01-01", "2024-01-01", "2024-01-02"]
+            ),
+            "excess_return_rank_pct_by_date": [0.10, 0.90, 0.50],
+        }
+    )
+
+    with pytest.raises(ValueError, match="at least 2 usable prediction_date groups"):
+        trainer._rank_ndcg_training_data(features, metadata)
+
+
 def test_run_walk_forward_models_records_selected_candidate_and_test_metrics(
     monkeypatch,
 ):
@@ -1836,6 +2177,12 @@ def test_parse_args_accepts_cross_sectional_top_bottom_target_mode():
     assert args.target_mode == "cross_sectional_top_bottom"
 
 
+def test_parse_args_accepts_cross_sectional_rank_ndcg_target_mode():
+    args = trainer.parse_args(["--target-mode", "cross_sectional_rank_ndcg"])
+
+    assert args.target_mode == "cross_sectional_rank_ndcg"
+
+
 def test_parse_args_rejects_unknown_target_mode():
     with pytest.raises(SystemExit):
         trainer.parse_args(["--target-mode", "bad_mode"])
@@ -1948,6 +2295,17 @@ def test_build_horizon_model_paths_uses_horizon_specific_directory():
     assert paths["regressor"] == "models/horizon_20/xgboost_regressor.json"
 
 
+def test_build_rank_ndcg_model_paths_uses_separate_ranker_artifact():
+    paths = trainer.build_rank_ndcg_model_paths(20)
+
+    assert paths == {
+        "ranker": "models/horizon_20/xgboost_ranker.json",
+        "preparator": "models/horizon_20/data_preparator.pkl",
+        "features": "models/horizon_20/feature_names.pkl",
+        "model_metadata": "models/horizon_20/model_metadata.pkl",
+    }
+
+
 def test_save_horizon_model_artifacts_writes_horizon_specific_paths(
     tmp_path, monkeypatch
 ):
@@ -1999,6 +2357,32 @@ def test_save_horizon_model_artifacts_preserves_legacy_paths_for_default_horizon
 
     assert (tmp_path / "models/horizon_10/model_metadata.pkl").exists()
     assert (tmp_path / "models/model_metadata.pkl").exists()
+
+
+def test_save_rank_ndcg_model_artifacts_writes_only_ranker_model_path(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.chdir(tmp_path)
+
+    class FakeRanker:
+        def save_model(self, path):
+            with open(path, "w", encoding="utf-8") as model_file:
+                model_file.write("ranker")
+
+    saved_paths = trainer.save_rank_ndcg_model_artifacts(
+        5,
+        data_preparator={"preparator": True},
+        all_features=["Close"],
+        model_metadata={"prediction_days": 5},
+        ranker=FakeRanker(),
+    )
+
+    assert set(saved_paths) == {"ranker", "preparator", "features", "model_metadata"}
+    assert saved_paths["ranker"] == "models/horizon_5/xgboost_ranker.json"
+    assert (tmp_path / "models/horizon_5/xgboost_ranker.json").exists()
+    assert not (tmp_path / "models/horizon_5/xgboost_classifier.json").exists()
+    assert not (tmp_path / "models/horizon_5/xgboost_regressor.json").exists()
 
 
 def test_main_trains_all_horizons_and_logs_comparison(monkeypatch, caplog, capsys):

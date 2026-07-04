@@ -36,7 +36,7 @@ from src.train.evaluation import (
     build_trading_relevance_report,
     build_validation_selected_threshold_report,
 )
-from xgboost import XGBRegressor, XGBClassifier
+from xgboost import XGBRegressor, XGBClassifier, XGBRanker
 from src.config import (
     DEFAULT_TRAINING_UNIVERSE,
     XG_PARAMS_CLASSIFIER,
@@ -74,7 +74,31 @@ YFINANCE_CACHE_FORMAT = "csv"
 VALIDATION_TOP_N_SELECTION_VALUES = (5, 10, 20)
 TARGET_MODE_EXCESS_RETURN = "excess_return"
 TARGET_MODE_CROSS_SECTIONAL_TOP_BOTTOM = "cross_sectional_top_bottom"
-TARGET_MODES = (TARGET_MODE_EXCESS_RETURN, TARGET_MODE_CROSS_SECTIONAL_TOP_BOTTOM)
+TARGET_MODE_CROSS_SECTIONAL_RANK_NDCG = "cross_sectional_rank_ndcg"
+TARGET_MODES = (
+    TARGET_MODE_EXCESS_RETURN,
+    TARGET_MODE_CROSS_SECTIONAL_TOP_BOTTOM,
+    TARGET_MODE_CROSS_SECTIONAL_RANK_NDCG,
+)
+XG_PARAMS_RANKER = {
+    "objective": "rank:ndcg",
+    "eval_metric": ["ndcg@5", "ndcg@10"],
+    "n_estimators": 1000,
+    "max_depth": 5,
+    "learning_rate": 0.03,
+    "tree_method": "hist",
+    "device": "cpu",
+    "n_jobs": -1,
+    "verbosity": 0,
+    "early_stopping_rounds": 20,
+    "subsample": 0.8,
+    "colsample_bytree": 0.8,
+    "min_child_weight": 5,
+    "gamma": 0.05,
+    "reg_alpha": 0.1,
+    "reg_lambda": 5.0,
+    "random_state": 42,
+}
 
 
 def validate_target_mode(target_mode: str) -> None:
@@ -1187,6 +1211,19 @@ def build_model_metadata(
                 ),
             }
         )
+    if target_mode == TARGET_MODE_CROSS_SECTIONAL_RANK_NDCG:
+        metadata.update(
+            {
+                "target_type": "grouped_learning_to_rank_ndcg",
+                "classifier_target": None,
+                "regressor_target": None,
+                "ranking_group_key": "prediction_date",
+                "ranking_label_source": "excess_return_rank_pct_by_date",
+                "ranking_label_type": "graded_0_to_4_from_rank_percentile",
+                "primary_model_score": "xgboost_rank_ndcg_score",
+                "model_artifact_type": "ranker",
+            }
+        )
     return metadata
 
 
@@ -1201,6 +1238,18 @@ def build_horizon_model_paths(prediction_days: int) -> dict:
         "preparator": str(horizon_dir / "data_preparator.pkl"),
         "features": str(horizon_dir / "feature_names.pkl"),
         "model_metadata": str(horizon_dir / "model_metadata.pkl"),
+    }
+
+
+def build_rank_ndcg_model_paths(prediction_days: int) -> dict:
+    """Return artifact paths for a grouped learning-to-rank horizon."""
+    horizon_paths = build_horizon_model_paths(prediction_days)
+    horizon_dir = Path("models") / f"horizon_{prediction_days}"
+    return {
+        "ranker": str(horizon_dir / "xgboost_ranker.json"),
+        "preparator": horizon_paths["preparator"],
+        "features": horizon_paths["features"],
+        "model_metadata": horizon_paths["model_metadata"],
     }
 
 
@@ -1293,6 +1342,40 @@ def save_ranking_model_artifacts(
     return horizon_paths
 
 
+def save_rank_ndcg_model_artifacts(
+    prediction_days,
+    data_preparator,
+    all_features,
+    model_metadata,
+    ranker,
+):
+    """Save grouped ranker artifacts without classifier or regressor artifacts."""
+    horizon_paths = build_rank_ndcg_model_paths(prediction_days)
+    for path_key in ("preparator", "features", "model_metadata", "ranker"):
+        Path(horizon_paths[path_key]).parent.mkdir(parents=True, exist_ok=True)
+
+    joblib.dump(data_preparator, horizon_paths["preparator"])
+    joblib.dump(all_features, horizon_paths["features"])
+    joblib.dump(model_metadata, horizon_paths["model_metadata"])
+    ranker.save_model(horizon_paths["ranker"])
+
+    if prediction_days == PREDICTION_DAYS:
+        legacy_ranker_path = "models/xgboost_ranker.json"
+        for path in (
+            MODEL_PATHS["preparator"],
+            MODEL_PATHS["features"],
+            MODEL_PATHS["model_metadata"],
+            legacy_ranker_path,
+        ):
+            Path(path).parent.mkdir(parents=True, exist_ok=True)
+        joblib.dump(data_preparator, MODEL_PATHS["preparator"])
+        joblib.dump(all_features, MODEL_PATHS["features"])
+        joblib.dump(model_metadata, MODEL_PATHS["model_metadata"])
+        ranker.save_model(legacy_ranker_path)
+
+    return horizon_paths
+
+
 def _require_split_metadata(split_metadata, split_name, target_mode):
     """Return split metadata with a clear error if the split is unavailable."""
     if split_name not in split_metadata:
@@ -1348,6 +1431,176 @@ def _validate_ranking_training_labels(labels):
             "Ranking training sample must contain both classes for "
             "target_mode='cross_sectional_top_bottom'."
         )
+
+
+def _require_rank_ndcg_metadata(split_metadata, split_name):
+    """Return split metadata after checking rank-NDCG metadata columns."""
+    required_columns = ["prediction_date", "excess_return_rank_pct_by_date"]
+    metadata = _require_split_metadata(
+        split_metadata,
+        split_name,
+        TARGET_MODE_CROSS_SECTIONAL_RANK_NDCG,
+    )
+
+    missing_columns = [
+        column for column in required_columns if column not in metadata.columns
+    ]
+    if missing_columns:
+        raise ValueError(
+            "target_mode='cross_sectional_rank_ndcg' requires "
+            f"split_metadata[{split_name!r}] columns: {missing_columns}"
+        )
+    return metadata
+
+
+def _rank_percentile_to_ndcg_relevance(rank_pct):
+    """Convert same-date realized rank percentile into graded relevance 0..4."""
+    rank_pct = pd.Series(rank_pct, dtype=float)
+    relevance = np.select(
+        [
+            rank_pct <= 0.20,
+            rank_pct <= 0.40,
+            rank_pct <= 0.60,
+            rank_pct < 0.80,
+            rank_pct >= 0.80,
+        ],
+        [0, 1, 2, 3, 4],
+        default=np.nan,
+    )
+    return pd.Series(relevance, index=rank_pct.index).astype(int)
+
+
+def _rank_ndcg_training_data(features, metadata, min_group_count=2):
+    """Return date-sorted features, relevance labels, and qid for XGBRanker."""
+    if len(features) != len(metadata):
+        raise ValueError(
+            "Rank-NDCG feature rows must align with split metadata rows: "
+            f"features={len(features)}, metadata={len(metadata)}."
+        )
+
+    working_metadata = metadata.reset_index(drop=True).copy()
+    working_metadata["_row_position"] = np.arange(len(working_metadata))
+    rank_pct = working_metadata["excess_return_rank_pct_by_date"].replace(
+        [np.inf, -np.inf],
+        np.nan,
+    )
+    usable_mask = rank_pct.notna() & working_metadata["prediction_date"].notna()
+    usable_metadata = working_metadata.loc[usable_mask].copy()
+    if usable_metadata.empty:
+        raise ValueError(
+            "No usable ranker training rows found for "
+            "target_mode='cross_sectional_rank_ndcg'."
+        )
+
+    usable_metadata["rank_ndcg_relevance"] = _rank_percentile_to_ndcg_relevance(
+        usable_metadata["excess_return_rank_pct_by_date"]
+    ).to_numpy()
+    group_sizes = usable_metadata.groupby("prediction_date", sort=False).size()
+    eligible_dates = group_sizes[group_sizes >= 2].index
+    usable_metadata = usable_metadata[
+        usable_metadata["prediction_date"].isin(eligible_dates)
+    ].copy()
+    if usable_metadata.empty:
+        raise ValueError(
+            "No usable ranker training rows remain after dropping prediction_date "
+            "groups with fewer than 2 rows for target_mode='cross_sectional_rank_ndcg'."
+        )
+
+    usable_group_count = int(usable_metadata["prediction_date"].nunique())
+    if usable_group_count < min_group_count:
+        raise ValueError(
+            f"Rank-NDCG training requires at least {min_group_count} usable "
+            "prediction_date groups "
+            "after filtering."
+        )
+
+    usable_metadata = usable_metadata.sort_values(
+        ["prediction_date", "_row_position"],
+        kind="mergesort",
+    )
+    ranked_features = features.iloc[
+        usable_metadata["_row_position"].to_numpy()
+    ].reset_index(drop=True)
+    labels = usable_metadata["rank_ndcg_relevance"].astype(int).to_numpy()
+    qid = pd.factorize(usable_metadata["prediction_date"], sort=False)[0]
+    return ranked_features, labels, qid, usable_metadata.drop(columns=["_row_position"])
+
+
+def log_rank_ndcg_test_report(
+    test_split_metadata,
+    ranking_scores,
+    prediction_days=PREDICTION_DAYS,
+    random_trials=100,
+    random_trial_workers=4,
+):
+    """Log Top-N reports that rank candidates by grouped Rank-NDCG score."""
+    top_n_selection_reports = build_top_n_selection_reports(
+        test_split_metadata,
+        ranking_scores,
+        prediction_days=prediction_days,
+        random_trials=random_trials,
+        random_trial_workers=random_trial_workers,
+    )
+    ranking_diagnostics = build_same_date_ranking_diagnostics_with_baselines(
+        test_split_metadata,
+        ranking_scores,
+        model_score_column="xgboost_rank_ndcg_score",
+        prediction_days=prediction_days,
+    )
+    top_n_ranked_selection_report = top_n_selection_reports["ranked_selection"]
+    top_n_basket_backtest_report = top_n_selection_reports["basket_backtest"]
+    top_n_basket_backtest_by_year_report = top_n_selection_reports.get(
+        "basket_backtest_by_year",
+        {},
+    )
+
+    logging.info("XGBoost Rank-NDCG Score: xgboost_rank_ndcg_score")
+    logging.info(
+        format_same_date_ranking_diagnostics_summary(
+            ranking_diagnostics,
+            title="XGBoost Rank-NDCG Same-Date Ranking Diagnostics:",
+        )
+    )
+    logging.info(
+        format_same_date_ranking_diagnostics_summary(
+            ranking_diagnostics["momentum"],
+            title="XGBoost Rank-NDCG Momentum Same-Date Ranking Diagnostics:",
+        )
+    )
+    logging.info(
+        format_same_date_ranking_diagnostics_summary(
+            ranking_diagnostics["relative_momentum"],
+            title=(
+                "XGBoost Rank-NDCG Relative Momentum Same-Date Ranking Diagnostics:"
+            ),
+        )
+    )
+    logging.info(
+        format_top_n_ranked_selection_summary(
+            top_n_ranked_selection_report,
+            title="XGBoost Rank-NDCG Top-N Ranked Selection Summary:",
+        )
+    )
+    logging.info(
+        format_top_n_basket_backtest_summary(
+            top_n_basket_backtest_report,
+            title="XGBoost Rank-NDCG Top-N Basket Backtest Summary:",
+        )
+    )
+    if top_n_basket_backtest_by_year_report:
+        logging.info(
+            format_top_n_basket_backtest_by_year_summary(
+                top_n_basket_backtest_by_year_report,
+                title="XGBoost Rank-NDCG Top-N Basket Backtest By-Year Summary:",
+            )
+        )
+
+    return {
+        "ranked_selection": top_n_ranked_selection_report,
+        "basket_backtest": top_n_basket_backtest_report,
+        "basket_backtest_by_year": top_n_basket_backtest_by_year_report,
+        "same_date_ranking_diagnostics": ranking_diagnostics,
+    }
 
 
 def log_ranking_classifier_test_report(
@@ -1431,6 +1684,122 @@ def log_ranking_classifier_test_report(
         "basket_backtest": top_n_basket_backtest_report,
         "basket_backtest_by_year": top_n_basket_backtest_by_year_report,
         "same_date_ranking_diagnostics": ranking_diagnostics,
+    }
+
+
+def train_cross_sectional_rank_ndcg_model(
+    data_preparator,
+    prepared_data,
+    all_features,
+    linear_features,
+    classifier_features,
+    x_train_ranker,
+    x_val_ranker,
+    x_test_ranker,
+    prediction_days,
+    random_trials,
+    random_trial_workers,
+    ranker_params=None,
+):
+    """Train grouped learning-to-rank model on same-date rank percentile labels."""
+    split_metadata = prepared_data["split_metadata"]
+    train_metadata = _require_rank_ndcg_metadata(split_metadata, "train")
+    val_metadata = _require_rank_ndcg_metadata(split_metadata, "val")
+    test_metadata = _require_rank_ndcg_metadata(split_metadata, "test")
+
+    x_train_grouped, y_train_ranker, train_qid, train_grouped_metadata = (
+        _rank_ndcg_training_data(x_train_ranker, train_metadata)
+    )
+    fit_kwargs = {"qid": train_qid, "verbose": False}
+    try:
+        x_val_grouped, y_val_ranker, val_qid, _ = _rank_ndcg_training_data(
+            x_val_ranker,
+            val_metadata,
+            min_group_count=1,
+        )
+        fit_kwargs["eval_set"] = [(x_val_grouped, y_val_ranker)]
+        fit_kwargs["eval_qid"] = [val_qid]
+    except ValueError as error:
+        logging.info(f"Rank-NDCG validation eval_set unavailable: {error}")
+
+    logging.info(
+        "Training XGBoost Cross-Sectional Rank-NDCG model on "
+        f"{len(x_train_grouped)} rows across {len(np.unique(train_qid))} "
+        f"prediction_date groups out of {len(x_train_ranker)} training candidates."
+    )
+    ranker_fit_params = dict(ranker_params or XG_PARAMS_RANKER)
+    if "eval_set" not in fit_kwargs:
+        ranker_fit_params.pop("early_stopping_rounds", None)
+    ranker = XGBRanker(**ranker_fit_params)
+    ranker.fit(x_train_grouped, y_train_ranker, **fit_kwargs)
+
+    ranking_validation_scores = ranker.predict(x_val_ranker)
+    ranking_test_scores = ranker.predict(x_test_ranker)
+
+    xgboost_test_reports = log_rank_ndcg_test_report(
+        test_metadata,
+        ranking_test_scores,
+        prediction_days=prediction_days,
+        random_trials=random_trials,
+        random_trial_workers=random_trial_workers,
+    )
+
+    importances_ranker = ranker.feature_importances_
+    feature_importance_ranker = pd.DataFrame(
+        {"feature": classifier_features, "importance": importances_ranker}
+    ).sort_values(by="importance", ascending=False)
+    log_feature_importances(
+        "XGBoost Cross-Sectional Rank-NDCG",
+        feature_importance_ranker,
+    )
+
+    model_metadata = build_model_metadata(
+        linear_features,
+        classifier_features,
+        regressor_features=[],
+        prediction_days=prediction_days,
+        target_mode=TARGET_MODE_CROSS_SECTIONAL_RANK_NDCG,
+    )
+    model_metadata["ranker_training_row_count"] = int(len(x_train_grouped))
+    model_metadata["ranker_training_candidate_count"] = int(len(x_train_ranker))
+    model_metadata["ranker_training_group_count"] = int(len(np.unique(train_qid)))
+    model_metadata["ranker_training_dropped_row_count"] = int(
+        len(x_train_ranker) - len(x_train_grouped)
+    )
+    model_metadata["ranker_validation_scored_row_count"] = int(
+        len(ranking_validation_scores)
+    )
+    model_metadata["ranker_test_scored_row_count"] = int(len(ranking_test_scores))
+    model_metadata["ranker_training_prediction_dates"] = int(
+        train_grouped_metadata["prediction_date"].nunique()
+    )
+    model_metadata["classifier_artifact"] = None
+    model_metadata["regressor_artifact"] = None
+
+    saved_paths = save_rank_ndcg_model_artifacts(
+        prediction_days,
+        data_preparator,
+        all_features,
+        model_metadata,
+        ranker,
+    )
+    logging.info(
+        f"Rank-NDCG training completed for prediction_days={prediction_days}. "
+        f"Models saved to {Path(saved_paths['model_metadata']).parent}."
+    )
+
+    return {
+        "prediction_days": prediction_days,
+        "target_mode": TARGET_MODE_CROSS_SECTIONAL_RANK_NDCG,
+        "ranking_score_name": "xgboost_rank_ndcg_score",
+        "model_metadata": model_metadata,
+        "artifact_paths": saved_paths,
+        "ranked_selection": xgboost_test_reports["ranked_selection"],
+        "basket_backtest": xgboost_test_reports["basket_backtest"],
+        "basket_backtest_by_year": xgboost_test_reports["basket_backtest_by_year"],
+        "same_date_ranking_diagnostics": xgboost_test_reports[
+            "same_date_ranking_diagnostics"
+        ],
     }
 
 
@@ -1550,6 +1919,7 @@ def train_models(
     target_mode: str = TARGET_MODE_EXCESS_RETURN,
     classifier_params: dict | None = None,
     regressor_params: dict | None = None,
+    ranker_params: dict | None = None,
 ) -> dict:
     """
     Train the linear baseline, beat-benchmark classifier, and excess-return regressor.
@@ -1627,6 +1997,22 @@ def train_models(
     x_train_classifier = x_train_full[classifier_features]
     x_val_classifier = x_val_full[classifier_features]
     x_test_classifier = x_test_full[classifier_features]
+
+    if target_mode == TARGET_MODE_CROSS_SECTIONAL_RANK_NDCG:
+        return train_cross_sectional_rank_ndcg_model(
+            data_preparator,
+            prepared_data,
+            all_features,
+            linear_features,
+            classifier_features,
+            x_train_classifier,
+            x_val_classifier,
+            x_test_classifier,
+            prediction_days,
+            random_trials,
+            random_trial_workers,
+            ranker_params=ranker_params,
+        )
 
     if target_mode == TARGET_MODE_CROSS_SECTIONAL_TOP_BOTTOM:
         return train_cross_sectional_ranking_model(
@@ -2006,8 +2392,8 @@ def parse_args(argv=None):
         choices=TARGET_MODES,
         default=TARGET_MODE_EXCESS_RETURN,
         help=(
-            "Training target mode. 'cross_sectional_top_bottom' is accepted for "
-            "future plumbing but is not implemented yet."
+            "Training target mode. Cross-sectional modes are accepted for "
+            "experimental ranking research."
         ),
     )
     parser.add_argument(
