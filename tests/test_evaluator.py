@@ -18,6 +18,7 @@ from src.train.evaluator import (
     build_regression_report,
     build_return_correlation_report,
     build_same_date_ranking_diagnostics,
+    build_same_date_ranking_diagnostics_with_baselines,
     build_top_n_basket_backtest_report,
     build_top_n_ranked_selection_report,
     build_top_n_selection_reports,
@@ -507,6 +508,80 @@ def test_same_date_ranking_diagnostics_missing_columns_are_unavailable():
     assert report["rank_ic"]["available"] is False
     assert report["selected_realized_rank_distribution"]["available"] is False
     assert "excess_return_rank_pct_by_date" in report["reason"]
+
+
+def make_same_date_ranking_baseline_metadata():
+    return pd.DataFrame(
+        {
+            "Ticker": ["AAA", "BBB", "AAA", "BBB"],
+            "prediction_date": pd.to_datetime(
+                ["2024-01-01", "2024-01-01", "2024-01-02", "2024-01-02"]
+            ),
+            "excess_forward_return": [0.10, 0.00, 0.00, 0.10],
+            "excess_return_rank_pct_by_date": [1.0, 0.0, 0.0, 1.0],
+            "momentum_10d": [0.9, 0.1, 0.1, 0.9],
+            "relative_momentum_10d": [0.8, 0.2, 0.2, 0.8],
+        }
+    )
+
+
+def test_same_date_ranking_diagnostics_with_baselines_computes_horizon_momentum():
+    metadata = make_same_date_ranking_baseline_metadata()
+    model_scores = np.array([0.9, 0.1, 0.9, 0.1])
+
+    report = build_same_date_ranking_diagnostics_with_baselines(
+        metadata,
+        model_scores,
+        model_score_column="predicted_excess_return",
+        prediction_days=10,
+        top_n_values=(1,),
+    )
+
+    assert report["available"] is True
+    assert report["score_column"] == "predicted_excess_return"
+    assert report["model"]["score_column"] == "predicted_excess_return"
+    assert report["momentum"]["available"] is True
+    assert report["momentum"]["score_column"] == "momentum_10d"
+    assert report["relative_momentum"]["available"] is True
+    assert report["relative_momentum"]["score_column"] == "relative_momentum_10d"
+    assert np.isclose(report["momentum"]["rank_ic"]["mean_rank_ic"], 1.0)
+    assert np.isclose(report["relative_momentum"]["rank_ic"]["mean_rank_ic"], 1.0)
+
+
+def test_same_date_ranking_diagnostics_with_baselines_missing_momentum_unavailable():
+    metadata = make_same_date_ranking_baseline_metadata().drop(columns=["momentum_10d"])
+
+    report = build_same_date_ranking_diagnostics_with_baselines(
+        metadata,
+        np.array([0.9, 0.1, 0.9, 0.1]),
+        prediction_days=10,
+        top_n_values=(1,),
+    )
+
+    assert report["model"]["available"] is True
+    assert report["momentum"]["available"] is False
+    assert report["momentum"]["score_column"] == "momentum_10d"
+    assert "momentum_10d" in report["momentum"]["reason"]
+    assert report["relative_momentum"]["available"] is True
+
+
+def test_same_date_ranking_diagnostics_with_baselines_missing_relative_momentum_unavailable():
+    metadata = make_same_date_ranking_baseline_metadata().drop(
+        columns=["relative_momentum_10d"]
+    )
+
+    report = build_same_date_ranking_diagnostics_with_baselines(
+        metadata,
+        np.array([0.9, 0.1, 0.9, 0.1]),
+        prediction_days=10,
+        top_n_values=(1,),
+    )
+
+    assert report["model"]["available"] is True
+    assert report["momentum"]["available"] is True
+    assert report["relative_momentum"]["available"] is False
+    assert report["relative_momentum"]["score_column"] == "relative_momentum_10d"
+    assert "relative_momentum_10d" in report["relative_momentum"]["reason"]
 
 
 def make_walk_forward_yearly_frame(start_year=2015, end_year=2023):
@@ -1171,6 +1246,16 @@ def test_same_date_ranking_diagnostics_are_exported():
     )
     assert "build_same_date_ranking_diagnostics" in evaluation.__all__
     assert "build_same_date_ranking_diagnostics" in evaluator.__all__
+    assert (
+        evaluation.build_same_date_ranking_diagnostics_with_baselines
+        is build_same_date_ranking_diagnostics_with_baselines
+    )
+    assert (
+        evaluator.build_same_date_ranking_diagnostics_with_baselines
+        is build_same_date_ranking_diagnostics_with_baselines
+    )
+    assert "build_same_date_ranking_diagnostics_with_baselines" in evaluation.__all__
+    assert "build_same_date_ranking_diagnostics_with_baselines" in evaluator.__all__
 
 
 def test_top_n_selection_reports_returns_direct_expected_values():

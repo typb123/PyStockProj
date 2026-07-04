@@ -1368,6 +1368,8 @@ def test_train_models_cross_sectional_ranking_trains_on_top_bottom_and_scores_al
                             "benchmark_forward_return": [0.01] * test_rows,
                             "excess_forward_return": [0.02, 0.00, -0.03, 0.03],
                             "excess_return_rank_pct_by_date": [0.75, 0.50, 0.00, 1.00],
+                            "momentum_10d": [0.03, 0.02, -0.01, 0.04],
+                            "relative_momentum_10d": [0.02, 0.01, -0.02, 0.03],
                             "ranking_train_sample": [True, False, True, False],
                             "top_quintile_target": [1.0, np.nan, 0.0, np.nan],
                         }
@@ -1493,6 +1495,20 @@ def test_train_models_cross_sectional_ranking_trains_on_top_bottom_and_scores_al
     assert report["same_date_ranking_diagnostics"]["score_column"] == (
         "probability_of_top_quintile_outperformance"
     )
+    assert report["same_date_ranking_diagnostics"]["model"]["score_column"] == (
+        "probability_of_top_quintile_outperformance"
+    )
+    assert report["same_date_ranking_diagnostics"]["momentum"]["available"] is True
+    assert report["same_date_ranking_diagnostics"]["momentum"]["score_column"] == (
+        "momentum_10d"
+    )
+    assert (
+        report["same_date_ranking_diagnostics"]["relative_momentum"]["available"]
+        is True
+    )
+    assert report["same_date_ranking_diagnostics"]["relative_momentum"][
+        "score_column"
+    ] == "relative_momentum_10d"
     assert report["basket_backtest"]["top_5"]["model"]["average_basket_excess_return"] == 0.02
 
 
@@ -2442,7 +2458,10 @@ def test_log_xgboost_test_report_uses_explicit_direction_labels(monkeypatch):
             "raw_forward_return": [0.11, -0.18, 0.28],
             "benchmark_forward_return": [0.01, 0.02, -0.02],
             "excess_forward_return": y_test,
+            "excess_return_rank_pct_by_date": [0.5, 0.0, 1.0],
             "beat_benchmark_target": direction_y_test,
+            "momentum_10d": [0.05, -0.10, 0.20],
+            "relative_momentum_10d": [0.04, -0.12, 0.18],
         }
     )
     regressor_predictions = np.array([0.08, -0.15, 0.20])
@@ -2500,10 +2519,21 @@ def test_log_xgboost_test_report_uses_explicit_direction_labels(monkeypatch):
     assert report["classifier_probability_basket_backtest_by_year"] == {
         "top_5": {"2024": {"classifier_model": {}}}
     }
-    assert report["same_date_ranking_diagnostics"]["available"] is False
-    assert "excess_return_rank_pct_by_date" in report["same_date_ranking_diagnostics"][
-        "reason"
-    ]
+    assert report["same_date_ranking_diagnostics"]["available"] is True
+    assert report["same_date_ranking_diagnostics"]["model"]["score_column"] == (
+        "predicted_excess_return"
+    )
+    assert report["same_date_ranking_diagnostics"]["momentum"]["available"] is True
+    assert report["same_date_ranking_diagnostics"]["momentum"]["score_column"] == (
+        "momentum_10d"
+    )
+    assert (
+        report["same_date_ranking_diagnostics"]["relative_momentum"]["available"]
+        is True
+    )
+    assert report["same_date_ranking_diagnostics"]["relative_momentum"][
+        "score_column"
+    ] == "relative_momentum_10d"
     assert not np.array_equal(captured["y_true"], (y_test > 0).astype(int))
 
 

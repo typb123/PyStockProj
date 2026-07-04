@@ -31,7 +31,7 @@ from src.train.evaluation import (
     build_predicted_return_quantile_report,
     build_regression_report,
     build_return_correlation_report,
-    build_same_date_ranking_diagnostics,
+    build_same_date_ranking_diagnostics_with_baselines,
     build_top_n_selection_reports,
     build_trading_relevance_report,
     build_validation_selected_threshold_report,
@@ -1010,10 +1010,11 @@ def log_xgboost_test_report(
         random_trials=random_trials,
         random_trial_workers=random_trial_workers,
     )
-    ranking_diagnostics = build_same_date_ranking_diagnostics(
+    ranking_diagnostics = build_same_date_ranking_diagnostics_with_baselines(
         test_split_metadata,
         regressor_predictions,
-        score_column="predicted_excess_return",
+        model_score_column="predicted_excess_return",
+        prediction_days=prediction_days,
     )
     top_n_ranked_selection_report = top_n_selection_reports["ranked_selection"]
     top_n_basket_backtest_report = top_n_selection_reports["basket_backtest"]
@@ -1068,7 +1069,21 @@ def log_xgboost_test_report(
     logging.info(
         format_same_date_ranking_diagnostics_summary(
             ranking_diagnostics,
-            title="XGBoost Regressor Same-Date Ranking Diagnostics:",
+            title="XGBoost Regressor Model Score Same-Date Ranking Diagnostics:",
+        )
+    )
+    logging.info(
+        format_same_date_ranking_diagnostics_summary(
+            ranking_diagnostics["momentum"],
+            title="XGBoost Regressor Momentum Same-Date Ranking Diagnostics:",
+        )
+    )
+    logging.info(
+        format_same_date_ranking_diagnostics_summary(
+            ranking_diagnostics["relative_momentum"],
+            title=(
+                "XGBoost Regressor Relative Momentum Same-Date Ranking Diagnostics:"
+            ),
         )
     )
     if regressor_validation_selection_report:
@@ -1350,10 +1365,11 @@ def log_ranking_classifier_test_report(
         random_trials=random_trials,
         random_trial_workers=random_trial_workers,
     )
-    ranking_diagnostics = build_same_date_ranking_diagnostics(
+    ranking_diagnostics = build_same_date_ranking_diagnostics_with_baselines(
         test_split_metadata,
         ranking_scores,
-        score_column="probability_of_top_quintile_outperformance",
+        model_score_column="probability_of_top_quintile_outperformance",
+        prediction_days=prediction_days,
     )
     top_n_ranked_selection_report = top_n_selection_reports["ranked_selection"]
     top_n_basket_backtest_report = top_n_selection_reports["basket_backtest"]
@@ -1369,7 +1385,25 @@ def log_ranking_classifier_test_report(
     logging.info(
         format_same_date_ranking_diagnostics_summary(
             ranking_diagnostics,
-            title="XGBoost Ranking-Classifier Same-Date Ranking Diagnostics:",
+            title=(
+                "XGBoost Ranking-Classifier Model Score Same-Date Ranking "
+                "Diagnostics:"
+            ),
+        )
+    )
+    logging.info(
+        format_same_date_ranking_diagnostics_summary(
+            ranking_diagnostics["momentum"],
+            title="XGBoost Ranking-Classifier Momentum Same-Date Ranking Diagnostics:",
+        )
+    )
+    logging.info(
+        format_same_date_ranking_diagnostics_summary(
+            ranking_diagnostics["relative_momentum"],
+            title=(
+                "XGBoost Ranking-Classifier Relative Momentum Same-Date Ranking "
+                "Diagnostics:"
+            ),
         )
     )
     logging.info(

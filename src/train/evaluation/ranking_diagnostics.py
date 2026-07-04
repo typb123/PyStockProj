@@ -57,6 +57,76 @@ def build_same_date_ranking_diagnostics(
     }
 
 
+def build_same_date_ranking_diagnostics_with_baselines(
+    split_metadata,
+    model_scores,
+    model_score_column="model_score",
+    prediction_days=None,
+    top_n_values=(5, 10, 20),
+):
+    """Build model and strict horizon-matched momentum ranking diagnostics."""
+    model_diagnostics = build_same_date_ranking_diagnostics(
+        split_metadata,
+        model_scores,
+        score_column=model_score_column,
+        top_n_values=top_n_values,
+    )
+    combined_diagnostics = dict(model_diagnostics)
+    if prediction_days is None:
+        reason = "prediction_days is required for horizon-matched baseline diagnostics."
+        combined_diagnostics["model"] = model_diagnostics
+        combined_diagnostics["momentum"] = _unavailable_ranking_diagnostics(
+            "momentum_<prediction_days>d",
+            top_n_values,
+            reason,
+        )
+        combined_diagnostics["relative_momentum"] = _unavailable_ranking_diagnostics(
+            "relative_momentum_<prediction_days>d",
+            top_n_values,
+            reason,
+        )
+        return combined_diagnostics
+
+    momentum_column = f"momentum_{int(prediction_days)}d"
+    relative_momentum_column = f"relative_momentum_{int(prediction_days)}d"
+
+    combined_diagnostics["model"] = model_diagnostics
+    combined_diagnostics["momentum"] = _build_baseline_ranking_diagnostics(
+        split_metadata,
+        momentum_column,
+        top_n_values,
+        baseline_label="Momentum",
+    )
+    combined_diagnostics["relative_momentum"] = _build_baseline_ranking_diagnostics(
+        split_metadata,
+        relative_momentum_column,
+        top_n_values,
+        baseline_label="Relative momentum",
+    )
+    return combined_diagnostics
+
+
+def _build_baseline_ranking_diagnostics(
+    split_metadata,
+    score_column,
+    top_n_values,
+    baseline_label,
+):
+    if score_column not in split_metadata.columns:
+        reason = (
+            f"{baseline_label} score column '{score_column}' is not present in "
+            "split_metadata."
+        )
+        return _unavailable_ranking_diagnostics(score_column, top_n_values, reason)
+
+    return build_same_date_ranking_diagnostics(
+        split_metadata,
+        split_metadata[score_column].to_numpy(),
+        score_column=score_column,
+        top_n_values=top_n_values,
+    )
+
+
 def _unavailable_ranking_diagnostics(score_column, top_n_values, reason):
     return {
         "available": False,
