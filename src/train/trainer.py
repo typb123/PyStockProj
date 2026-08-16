@@ -80,6 +80,10 @@ TARGET_MODES = (
     TARGET_MODE_CROSS_SECTIONAL_TOP_BOTTOM,
     TARGET_MODE_CROSS_SECTIONAL_RANK_NDCG,
 )
+WALK_FORWARD_TARGET_MODES = (
+    TARGET_MODE_EXCESS_RETURN,
+    TARGET_MODE_CROSS_SECTIONAL_RANK_NDCG,
+)
 XG_PARAMS_RANKER = {
     "objective": "rank:ndcg",
     "eval_metric": ["ndcg@5", "ndcg@10"],
@@ -108,6 +112,16 @@ def validate_target_mode(target_mode: str) -> None:
     raise ValueError(
         f"Unsupported target_mode={target_mode!r}. "
         f"Expected one of {', '.join(TARGET_MODES)}."
+    )
+
+
+def validate_walk_forward_target_mode(target_mode: str) -> None:
+    """Reject target modes that do not have walk-forward evaluation support."""
+    if target_mode in WALK_FORWARD_TARGET_MODES:
+        return
+    raise ValueError(
+        f"Unsupported walk-forward target_mode={target_mode!r}. "
+        f"Expected one of {', '.join(WALK_FORWARD_TARGET_MODES)}."
     )
 
 
@@ -2204,11 +2218,14 @@ def run_walk_forward_models(
     validation_years: int = DEFAULT_WALK_FORWARD_VALIDATION_YEARS,
     test_years: int = DEFAULT_WALK_FORWARD_TEST_YEARS,
     regressor_params: dict | None = None,
+    target_mode: str = TARGET_MODE_EXCESS_RETURN,
 ) -> dict:
     """Run expanding-window walk-forward Top-N diagnostics for one horizon."""
+    validate_walk_forward_target_mode(target_mode)
     logging.info(
         "Running walk-forward evaluation "
         f"for prediction_days={prediction_days}, "
+        f"target_mode={target_mode}, "
         f"min_train_years={min_train_years}, validation_years={validation_years}, "
         f"test_years={test_years}."
     )
@@ -2230,8 +2247,12 @@ def run_walk_forward_models(
         )
 
     fold_reports = []
-    regressor_candidate_configs = build_xgboost_regressor_candidate_configs(
-        regressor_params or XG_PARAMS_REGRESSOR
+    regressor_candidate_configs = (
+        build_xgboost_regressor_candidate_configs(
+            regressor_params or XG_PARAMS_REGRESSOR
+        )
+        if target_mode == TARGET_MODE_EXCESS_RETURN
+        else None
     )
     for fold in folds:
         logging.info(
@@ -2246,45 +2267,30 @@ def run_walk_forward_models(
             feature_columns,
             prediction_days=prediction_days,
         )
-        x_train = pd.DataFrame(split["x_train"], columns=feature_columns)
-        x_val = pd.DataFrame(split["x_val"], columns=feature_columns)
-        x_test = pd.DataFrame(split["x_test"], columns=feature_columns)
-        selected_regressor, selection_report = (
-            select_xgboost_regressor_by_validation_top_n(
-                x_train,
-                split["y_train"],
-                x_val,
-                split["y_val"],
-                split["split_metadata"]["val"],
-                candidate_configs=regressor_candidate_configs,
+        if target_mode == TARGET_MODE_CROSS_SECTIONAL_RANK_NDCG:
+            selection_report, basket_backtest_report = _run_rank_ndcg_walk_forward_fold(
+                split,
+                feature_columns,
+                prediction_days=prediction_days,
+                random_trials=random_trials,
+                random_trial_workers=random_trial_workers,
             )
-        )
-        test_predictions = selected_regressor.predict(x_test)
-        top_n_reports = build_top_n_selection_reports(
-            split["split_metadata"]["test"],
-            test_predictions,
-            prediction_days=prediction_days,
-            random_trials=random_trials,
-            random_trial_workers=random_trial_workers,
-        )
-        report_fold = dict(fold)
-        split_date_ranges = split.get("split_date_ranges", {})
-        report_fold["train_date_range"] = split_date_ranges.get(
-            "train",
-            fold["train_date_range"],
-        )
-        report_fold["validation_date_range"] = split_date_ranges.get(
-            "validation",
-            fold["validation_date_range"],
-        )
-        report_fold["test_date_range"] = split_date_ranges.get(
-            "test",
-            fold["test_date_range"],
-        )
-        fold_report = build_walk_forward_fold_report(
-            report_fold,
+        else:
+            selection_report, basket_backtest_report = (
+                _run_excess_return_walk_forward_fold(
+                    split,
+                    feature_columns,
+                    regressor_candidate_configs,
+                    prediction_days=prediction_days,
+                    random_trials=random_trials,
+                    random_trial_workers=random_trial_workers,
+                )
+            )
+        fold_report = _build_walk_forward_report_for_split(
+            fold,
+            split,
             selection_report,
-            top_n_reports["basket_backtest"],
+            basket_backtest_report,
         )
         fold_reports.append(fold_report)
         logging.info(format_walk_forward_fold_summary(fold_report))
@@ -2292,9 +2298,121 @@ def run_walk_forward_models(
     aggregate_summary = build_walk_forward_aggregate_summary(fold_reports)
     return {
         "prediction_days": int(prediction_days),
+        "target_mode": target_mode,
         "folds": fold_reports,
         "aggregate": aggregate_summary,
     }
+
+
+def _run_excess_return_walk_forward_fold(
+    split,
+    feature_columns,
+    regressor_candidate_configs,
+    prediction_days=PREDICTION_DAYS,
+    random_trials=100,
+    random_trial_workers=8,
+):
+    """Train and evaluate the existing excess-return regressor walk-forward fold."""
+    x_train = pd.DataFrame(split["x_train"], columns=feature_columns)
+    x_val = pd.DataFrame(split["x_val"], columns=feature_columns)
+    x_test = pd.DataFrame(split["x_test"], columns=feature_columns)
+    selected_regressor, selection_report = select_xgboost_regressor_by_validation_top_n(
+        x_train,
+        split["y_train"],
+        x_val,
+        split["y_val"],
+        split["split_metadata"]["val"],
+        candidate_configs=regressor_candidate_configs,
+    )
+    test_predictions = selected_regressor.predict(x_test)
+    top_n_reports = build_top_n_selection_reports(
+        split["split_metadata"]["test"],
+        test_predictions,
+        prediction_days=prediction_days,
+        random_trials=random_trials,
+        random_trial_workers=random_trial_workers,
+    )
+    return selection_report, top_n_reports["basket_backtest"]
+
+
+def _run_rank_ndcg_walk_forward_fold(
+    split,
+    feature_columns,
+    prediction_days=PREDICTION_DAYS,
+    random_trials=100,
+    random_trial_workers=8,
+):
+    """Train and evaluate one grouped Rank-NDCG walk-forward fold."""
+    train_metadata = _require_rank_ndcg_metadata(split["split_metadata"], "train")
+    val_metadata = _require_rank_ndcg_metadata(split["split_metadata"], "val")
+    test_metadata = _require_rank_ndcg_metadata(split["split_metadata"], "test")
+    x_train = pd.DataFrame(split["x_train"], columns=feature_columns)
+    x_val = pd.DataFrame(split["x_val"], columns=feature_columns)
+    x_test = pd.DataFrame(split["x_test"], columns=feature_columns)
+
+    x_train_grouped, y_train_ranker, train_qid, _ = _rank_ndcg_training_data(
+        x_train,
+        train_metadata,
+    )
+    fit_kwargs = {"qid": train_qid, "verbose": False}
+    try:
+        x_val_grouped, y_val_ranker, val_qid, _ = _rank_ndcg_training_data(
+            x_val,
+            val_metadata,
+            min_group_count=1,
+        )
+        fit_kwargs["eval_set"] = [(x_val_grouped, y_val_ranker)]
+        fit_kwargs["eval_qid"] = [val_qid]
+    except ValueError as error:
+        logging.info(f"Rank-NDCG validation eval_set unavailable: {error}")
+
+    ranker_params = dict(XG_PARAMS_RANKER)
+    if "eval_set" not in fit_kwargs:
+        ranker_params.pop("early_stopping_rounds", None)
+    ranker = XGBRanker(**ranker_params)
+    ranker.fit(x_train_grouped, y_train_ranker, **fit_kwargs)
+    ranking_test_scores = ranker.predict(x_test)
+    rank_ndcg_reports = log_rank_ndcg_test_report(
+        test_metadata,
+        ranking_test_scores,
+        prediction_days=prediction_days,
+        random_trials=random_trials,
+        random_trial_workers=random_trial_workers,
+    )
+    selection_report = {
+        "selected_candidate_id": None,
+        "selected_candidate_name": "rank_ndcg",
+        "selected_validation_top_n_mean_excess_return": None,
+    }
+    return selection_report, rank_ndcg_reports["basket_backtest"]
+
+
+def _build_walk_forward_report_for_split(
+    fold,
+    split,
+    selection_report,
+    basket_backtest_report,
+):
+    """Apply split date ranges to a fold before building its compact report."""
+    report_fold = dict(fold)
+    split_date_ranges = split.get("split_date_ranges", {})
+    report_fold["train_date_range"] = split_date_ranges.get(
+        "train",
+        fold["train_date_range"],
+    )
+    report_fold["validation_date_range"] = split_date_ranges.get(
+        "validation",
+        fold["validation_date_range"],
+    )
+    report_fold["test_date_range"] = split_date_ranges.get(
+        "test",
+        fold["test_date_range"],
+    )
+    return build_walk_forward_fold_report(
+        report_fold,
+        selection_report,
+        basket_backtest_report,
+    )
 
 
 def format_walk_forward_fold_summary(fold_report):
@@ -2488,6 +2606,11 @@ def parse_args(argv=None):
     args = parser.parse_args(argv)
     if args.walk_forward and args.all_horizons:
         parser.error("--walk-forward supports one prediction horizon at a time.")
+    if args.walk_forward and args.target_mode not in WALK_FORWARD_TARGET_MODES:
+        parser.error(
+            "--walk-forward supports target modes: "
+            f"{', '.join(WALK_FORWARD_TARGET_MODES)}."
+        )
 
     if args.all_horizons:
         args.horizons = list(ALL_HORIZONS)
@@ -2530,6 +2653,7 @@ def main(argv=None):
             min_train_years=args.walk_forward_min_train_years,
             validation_years=args.walk_forward_validation_years,
             test_years=args.walk_forward_test_years,
+            target_mode=args.target_mode,
         )
         summary = format_walk_forward_summary(walk_forward_report)
         logging.info(summary)
