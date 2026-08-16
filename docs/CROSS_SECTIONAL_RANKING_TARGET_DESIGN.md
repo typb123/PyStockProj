@@ -24,6 +24,14 @@ This document proposes a near-term experiment: add a cross-sectional ranking/cla
 
 This is not a final decision to remove regression. The first goal is to test whether a ranking-aligned target improves Top-N watchlist performance.
 
+## Prediction Timing Assumption
+
+Current model features include same-day OHLCV-derived values such as `High`,
+`Low`, `Close`, and `Volume`. Ranking experiments therefore assume predictions
+are made after the market close for the `prediction_date`. A pre-close workflow
+would need a separate feature contract that excludes not-yet-known same-day
+fields.
+
 ## Research Question
 
 Primary question:

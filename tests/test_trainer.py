@@ -18,6 +18,12 @@ from src.features.feature_contract import (
     MODEL_FEATURE_COLUMNS,
     SPY_RELATIVE_MOMENTUM_FEATURE_COLUMNS,
 )
+from src.train.rank_ndcg_feature_ablations import (
+    FeatureAblationSpec,
+    build_rank_ndcg_feature_ablation_specs,
+    extract_ablation_result_row,
+    format_ablation_table,
+)
 import src.train.trainer as trainer
 
 
@@ -1701,6 +1707,116 @@ def test_rank_percentile_to_ndcg_relevance_uses_expected_boundaries():
     np.testing.assert_array_equal(labels.to_numpy(), [0, 1, 1, 2, 2, 3, 3, 4, 4])
 
 
+def test_rank_ndcg_feature_ablation_specs_include_expected_subsets():
+    specs = {
+        spec.name: spec
+        for spec in build_rank_ndcg_feature_ablation_specs()
+    }
+
+    assert list(specs) == [
+        "all_features",
+        "drop_raw_ohlc",
+        "drop_price_level_trend",
+        "drop_volume_scale",
+        "drop_ichimoku",
+        "drop_relative_momentum",
+        "drop_macd_redundant",
+        "minimal_momentum_risk_oscillator",
+        "momentum_only",
+        "momentum_plus_volatility",
+    ]
+    assert specs["all_features"].feature_columns == MODEL_FEATURE_COLUMNS
+    assert set(["Open", "High", "Low", "Close"]).isdisjoint(
+        specs["drop_raw_ohlc"].feature_columns
+    )
+    assert "Volume" in specs["drop_raw_ohlc"].feature_columns
+    assert set(["BB_Middle", "BB_Upper", "BB_Lower"]).isdisjoint(
+        specs["drop_price_level_trend"].feature_columns
+    )
+    assert "BB_Std" in specs["drop_price_level_trend"].feature_columns
+    assert specs["momentum_only"].feature_columns == ABSOLUTE_MOMENTUM_FEATURE_COLUMNS
+    minimal = specs["minimal_momentum_risk_oscillator"].feature_columns
+    assert "macdHistogram" in minimal
+    assert "macd" not in minimal
+    assert "signalLine" not in minimal
+
+
+def test_rank_ndcg_ablation_result_extraction_handles_missing_metrics():
+    spec = FeatureAblationSpec(
+        name="tiny",
+        feature_columns=["momentum_10d"],
+        included_groups="absolute_momentum",
+    )
+    report = {
+        "basket_backtest": {
+            "top_5": {
+                "model": {"average_basket_excess_return": 0.03},
+            },
+        },
+        "same_date_ranking_diagnostics": {
+            "model": {
+                "rank_ic": {"mean_rank_ic": 0.12},
+                "selected_realized_rank_distribution": {
+                    "top_5": {
+                        "top_20_realized_rate": 0.4,
+                    },
+                },
+            },
+        },
+    }
+
+    row = extract_ablation_result_row(
+        report,
+        spec,
+        prediction_days=10,
+        period="10y",
+        universe="large_mega_cap_stocks",
+    )
+
+    assert row["ablation_name"] == "tiny"
+    assert row["feature_count"] == 1
+    assert row["top_5_model_excess"] == 0.03
+    assert np.isnan(row["top_5_model_minus_momentum"])
+    assert np.isnan(row["top_10_model_excess"])
+    assert row["model_mean_rank_ic"] == 0.12
+    assert np.isnan(row["momentum_mean_rank_ic"])
+    assert row["top_5_realized_top20_rate"] == 0.4
+    assert np.isnan(row["top_5_realized_bottom20_rate"])
+
+
+def test_rank_ndcg_ablation_table_includes_required_stdout_columns():
+    row = {
+        "ablation_name": "all_features",
+        "feature_count": 39,
+        "top_5_model_excess": 0.01,
+        "top_10_model_excess": 0.02,
+        "top_20_model_excess": 0.03,
+        "top_5_model_minus_momentum": 0.001,
+        "top_10_model_minus_momentum": 0.002,
+        "top_20_model_minus_momentum": 0.003,
+        "model_mean_rank_ic": 0.12,
+        "momentum_mean_rank_ic": 0.08,
+        "top_5_realized_top20_rate": 0.40,
+        "top_5_realized_bottom20_rate": 0.10,
+    }
+
+    table = format_ablation_table([row])
+
+    for column in [
+        "top_5_model_excess",
+        "top_10_model_excess",
+        "top_20_model_excess",
+        "top_5_model_minus_momentum",
+        "top_10_model_minus_momentum",
+        "top_20_model_minus_momentum",
+        "model_mean_rank_ic",
+        "momentum_mean_rank_ic",
+        "top_5_realized_top20_rate",
+        "top_5_realized_bottom20_rate",
+    ]:
+        assert column in table
+
+
 def test_train_models_cross_sectional_rank_ndcg_trains_grouped_ranker_and_scores_all(
     monkeypatch,
 ):
@@ -1911,6 +2027,95 @@ def test_train_models_cross_sectional_rank_ndcg_trains_grouped_ranker_and_scores
         "score_column"
     ] == "relative_momentum_10d"
     assert report["basket_backtest"]["top_5"]["model"]["average_basket_excess_return"] == 0.02
+
+
+def test_train_models_rejects_unknown_feature_columns_override(monkeypatch):
+    monkeypatch.setattr(
+        trainer,
+        "DataPreparator",
+        lambda *args, **kwargs: pytest.fail("data prep should not run"),
+    )
+
+    with pytest.raises(ValueError, match="feature_columns_override"):
+        trainer.train_models(
+            pd.DataFrame({"Close": [1.0]}),
+            target_mode="cross_sectional_rank_ndcg",
+            feature_columns_override=["momentum_10d", "targetReturns"],
+        )
+
+
+def test_train_models_feature_columns_override_reaches_rank_ndcg_branch(monkeypatch):
+    captured = []
+    feature_count = len(MODEL_FEATURE_COLUMNS)
+    override_features = ["momentum_10d", "volatility"]
+
+    class FakePreparator:
+        def prepare_for_train(self, data, prediction_days, test_size):
+            rows = 2
+            return {
+                "x_train": np.ones((rows, feature_count)),
+                "x_val": np.ones((rows, feature_count)) * 2,
+                "x_test": np.ones((rows, feature_count)) * 3,
+                "y_train": np.zeros(rows),
+                "y_val": np.zeros(rows),
+                "y_test": np.zeros(rows),
+                "direction_y_train": np.zeros(rows),
+                "direction_y_val": np.zeros(rows),
+                "direction_y_test": np.zeros(rows),
+                "feature_names": list(MODEL_FEATURE_COLUMNS),
+                "split_metadata": {},
+            }
+
+    def fake_train_cross_sectional_rank_ndcg_model(
+        data_preparator,
+        prepared_data,
+        all_features,
+        linear_features,
+        classifier_features,
+        x_train_ranker,
+        x_val_ranker,
+        x_test_ranker,
+        prediction_days,
+        random_trials,
+        random_trial_workers,
+        ranker_params=None,
+    ):
+        captured.append(
+            {
+                "all_features": all_features,
+                "classifier_features": classifier_features,
+                "x_train_columns": list(x_train_ranker.columns),
+                "x_val_columns": list(x_val_ranker.columns),
+                "x_test_columns": list(x_test_ranker.columns),
+            }
+        )
+        return {"target_mode": "cross_sectional_rank_ndcg"}
+
+    monkeypatch.setattr(trainer, "DataPreparator", FakePreparator)
+    monkeypatch.setattr(
+        trainer,
+        "train_cross_sectional_rank_ndcg_model",
+        fake_train_cross_sectional_rank_ndcg_model,
+    )
+
+    trainer.train_models(
+        pd.DataFrame({"Close": [1.0]}),
+        target_mode="cross_sectional_rank_ndcg",
+    )
+    trainer.train_models(
+        pd.DataFrame({"Close": [1.0]}),
+        target_mode="cross_sectional_rank_ndcg",
+        feature_columns_override=override_features,
+    )
+
+    assert captured[0]["all_features"] == MODEL_FEATURE_COLUMNS
+    assert captured[0]["classifier_features"] == MODEL_FEATURE_COLUMNS
+    assert captured[0]["x_train_columns"] == MODEL_FEATURE_COLUMNS
+    assert captured[1]["all_features"] == MODEL_FEATURE_COLUMNS
+    assert captured[1]["classifier_features"] == override_features
+    assert captured[1]["x_train_columns"] == override_features
+    assert captured[1]["x_val_columns"] == override_features
+    assert captured[1]["x_test_columns"] == override_features
 
 
 @pytest.mark.parametrize(

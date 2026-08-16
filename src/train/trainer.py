@@ -111,6 +111,40 @@ def validate_target_mode(target_mode: str) -> None:
     )
 
 
+def resolve_model_feature_columns(feature_columns_override=None) -> list[str]:
+    """Return validated model feature columns, preserving defaults when omitted."""
+    if feature_columns_override is None:
+        return list(MODEL_FEATURE_COLUMNS)
+
+    feature_columns = list(feature_columns_override)
+    if not feature_columns:
+        raise ValueError("feature_columns_override must contain at least one feature.")
+
+    allowed_features = set(MODEL_FEATURE_COLUMNS)
+    unknown_features = [
+        feature for feature in feature_columns if feature not in allowed_features
+    ]
+    if unknown_features:
+        raise ValueError(
+            "feature_columns_override may only include MODEL_FEATURE_COLUMNS. "
+            f"Invalid entries: {unknown_features}"
+        )
+
+    duplicate_features = sorted(
+        {
+            feature
+            for feature in feature_columns
+            if feature_columns.count(feature) > 1
+        }
+    )
+    if duplicate_features:
+        raise ValueError(
+            f"feature_columns_override contains duplicate features: {duplicate_features}"
+        )
+
+    return feature_columns
+
+
 def validate_input_data(data):
     """
     Validate the input data structure before feature/target preparation.
@@ -1920,6 +1954,7 @@ def train_models(
     classifier_params: dict | None = None,
     regressor_params: dict | None = None,
     ranker_params: dict | None = None,
+    feature_columns_override: list[str] | None = None,
 ) -> dict:
     """
     Train the linear baseline, beat-benchmark classifier, and excess-return regressor.
@@ -1928,6 +1963,7 @@ def train_models(
     is reserved for final diagnostics.
     """
     validate_target_mode(target_mode)
+    model_feature_columns = resolve_model_feature_columns(feature_columns_override)
     logging.info(
         "Training models with explicitly defined feature arrays "
         f"for prediction_days={prediction_days}, target_mode={target_mode}."
@@ -1988,8 +2024,8 @@ def train_models(
         "vma_10",
         "5_day_avg",
     ]
-    classifier_features = list(MODEL_FEATURE_COLUMNS)
-    regressor_features = list(MODEL_FEATURE_COLUMNS)
+    classifier_features = list(model_feature_columns)
+    regressor_features = list(model_feature_columns)
 
     classifier_feature_names = classifier_features
     regressor_feature_names = regressor_features
