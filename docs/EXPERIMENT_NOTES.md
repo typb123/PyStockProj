@@ -233,3 +233,84 @@ Implementation note:
 * Initial 10d / 10y run produced 5 folds. The model beat the universe baseline in 80% of folds, but did not reliably beat momentum.
 * Aggregate model-minus-momentum was negative across Top-N buckets: top-5 -0.47%, top-10 -0.15%, top-20 -0.15%.
 * Current read: the model has stock-selection signal versus the universe, but not enough evidence of independent edge versus momentum.
+
+### Cross-sectional Rank-NDCG walk-forward result
+
+* Added grouped `cross_sectional_rank_ndcg` as an experimental target mode using `XGBRanker` with stocks grouped by `prediction_date`.
+* Rank-NDCG trains on graded same-date realized excess-return rank relevance rather than predicting exact future excess returns.
+* Extended the existing expanding-window walk-forward framework to support Rank-NDCG without changing the feature set, Rank-NDCG parameters, folds, embargo logic, training universe, or Top-N metric definitions.
+* Evaluation used the `large_mega_cap_stocks` universe, 10 years of history, 5-year minimum training history, 1 validation year, 1 test year, and 5 walk-forward folds.
+* The existing excess-return regressor remains the comparison model.
+
+#### 10d Rank-NDCG walk-forward
+
+Aggregate results:
+
+* top-5:
+  * model excess: 0.81%
+  * model minus momentum: +0.19%
+  * model minus universe: +0.74%
+  * fold win rate vs momentum: 60%
+  * fold win rate vs universe: 80%
+* top-10:
+  * model excess: 0.60%
+  * model minus momentum: +0.03%
+  * model minus universe: +0.52%
+  * fold win rate vs momentum: 60%
+  * fold win rate vs universe: 80%
+* top-20:
+  * model excess: 0.38%
+  * model minus momentum: +0.02%
+  * model minus universe: +0.30%
+  * fold win rate vs momentum: 60%
+  * fold win rate vs universe: 80%
+
+Compared with the prior 10d regressor walk-forward run:
+
+* regressor top-5 model minus momentum: -0.32%
+* Rank-NDCG top-5 model minus momentum: +0.19%
+* regressor top-10 model minus momentum: -0.39%
+* Rank-NDCG top-10 model minus momentum: +0.03%
+
+Rank-NDCG therefore materially improved the primary model-minus-momentum comparison at 10d, although performance remains regime-dependent and the partial 2026 fold strongly favored momentum.
+
+#### 20d Rank-NDCG walk-forward
+
+Aggregate results:
+
+* top-5:
+  * model excess: 1.83%
+  * model minus momentum: -0.11%
+  * model minus universe: +1.68%
+  * fold win rate vs momentum: 40%
+  * fold win rate vs universe: 80%
+* top-10:
+  * model excess: 1.47%
+  * model minus momentum: +0.33%
+  * model minus universe: +1.32%
+  * fold win rate vs momentum: 60%
+  * fold win rate vs universe: 80%
+* top-20:
+  * model excess: 0.72%
+  * model minus momentum: +0.18%
+  * model minus universe: +0.57%
+  * fold win rate vs momentum: 60%
+  * fold win rate vs universe: 80%
+
+Compared with the prior 20d regressor walk-forward run:
+
+* regressor top-5 model minus momentum: -0.74%
+* Rank-NDCG top-5 model minus momentum: -0.11%
+* regressor top-10 model minus momentum: -0.24%
+* Rank-NDCG top-10 model minus momentum: +0.33%
+
+Rank-NDCG again materially improved model-minus-momentum performance. Top-10 became positive overall, while Top-5 improved substantially but remained slightly below momentum.
+
+#### Current interpretation
+
+* Rank-NDCG is now the leading target/model formulation for the project's Top-N stock-selection objective.
+* The result supports the hypothesis that directly optimizing cross-sectional ranking is better aligned with the intended watchlist task than predicting exact SPY-relative forward returns.
+* The predefined adoption rule is met narrowly through Top-10: Rank-NDCG improved model-minus-momentum performance in both the 10d and 20d walk-forward tests.
+* The evidence does not establish durable trading alpha. Only five walk-forward folds are available, results vary meaningfully by year, and momentum remains especially difficult to beat in the partial 2026 fold.
+* Do not tune against the existing single holdout based on these results.
+* Next research step: make Rank-NDCG feature-group ablation use the walk-forward evaluation framework before running the existing ablation grid.
