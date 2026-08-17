@@ -28,6 +28,7 @@ from src.train.rank_ndcg_feature_ablations import (
     format_ablation_table,
 )
 import src.data.training_data as training_data
+import src.train.artifacts as artifacts
 import src.train.training_contract as training_contract
 import src.train.reporting as reporting
 import src.train.trainer as trainer
@@ -101,36 +102,19 @@ def test_trainer_reexports_reporting_public_api():
         assert getattr(trainer, name) is getattr(reporting, name)
 
 
-def test_model_metadata_does_not_include_linear_regression_prediction():
-    metadata = trainer.build_model_metadata(
-        linear_features=["Close"],
-        classifier_features=["Close", "Volume"],
-        regressor_features=["Close", "Volume"],
-        prediction_days=5,
+def test_trainer_reexports_artifact_public_api():
+    public_names = (
+        "build_model_metadata",
+        "build_horizon_model_paths",
+        "build_rank_ndcg_model_paths",
+        "save_model_artifacts",
+        "save_horizon_model_artifacts",
+        "save_ranking_model_artifacts",
+        "save_rank_ndcg_model_artifacts",
     )
 
-    assert "LinearRegression_Prediction" not in metadata["classifier_features"]
-    assert "LinearRegression_Prediction" not in metadata["regressor_features"]
-    assert "LinearRegression_Prediction" not in metadata["classifier_feature_names"]
-    assert "LinearRegression_Prediction" not in metadata["regressor_feature_names"]
-    assert metadata["prediction_days"] == 5
-    assert metadata["target_mode"] == "excess_return"
-    assert metadata["target_type"] == "spy_relative_excess_forward_return"
-    assert metadata["benchmark_ticker"] == "SPY"
-    assert metadata["regressor_target"] == "targetReturns"
-    assert metadata["classifier_target"] == "beat_benchmark_target"
-
-
-def test_model_metadata_records_explicit_target_mode():
-    metadata = trainer.build_model_metadata(
-        linear_features=["Close"],
-        classifier_features=["Close", "Volume"],
-        regressor_features=["Close", "Volume"],
-        prediction_days=5,
-        target_mode="excess_return",
-    )
-
-    assert metadata["target_mode"] == "excess_return"
+    for name in public_names:
+        assert getattr(trainer, name) is getattr(artifacts, name)
 
 
 def test_default_training_universe_is_large_mega_cap_stocks():
@@ -2274,104 +2258,6 @@ def test_parse_args_rejects_walk_forward_cross_sectional_top_bottom():
 def test_parse_args_rejects_unknown_training_universe():
     with pytest.raises(SystemExit):
         trainer.parse_args(["--universe", "bad_name"])
-
-
-def test_build_horizon_model_paths_uses_horizon_specific_directory():
-    paths = trainer.build_horizon_model_paths(20)
-
-    assert paths["model_metadata"] == "models/horizon_20/model_metadata.pkl"
-    assert paths["classifier"] == "models/horizon_20/xgboost_classifier.json"
-    assert paths["regressor"] == "models/horizon_20/xgboost_regressor.json"
-
-
-def test_build_rank_ndcg_model_paths_uses_separate_ranker_artifact():
-    paths = trainer.build_rank_ndcg_model_paths(20)
-
-    assert paths == {
-        "ranker": "models/horizon_20/xgboost_ranker.json",
-        "preparator": "models/horizon_20/data_preparator.pkl",
-        "features": "models/horizon_20/feature_names.pkl",
-        "model_metadata": "models/horizon_20/model_metadata.pkl",
-    }
-
-
-def test_save_horizon_model_artifacts_writes_horizon_specific_paths(
-    tmp_path, monkeypatch
-):
-    monkeypatch.chdir(tmp_path)
-
-    class FakeXgbModel:
-        def save_model(self, path):
-            with open(path, "w", encoding="utf-8") as model_file:
-                model_file.write("model")
-
-    saved_paths = trainer.save_horizon_model_artifacts(
-        5,
-        linear_model={"linear": True},
-        scaler_lr={"scaler": True},
-        data_preparator={"preparator": True},
-        all_features=["Close"],
-        model_metadata={"prediction_days": 5},
-        classifier=FakeXgbModel(),
-        regressor=FakeXgbModel(),
-    )
-
-    assert saved_paths["model_metadata"] == "models/horizon_5/model_metadata.pkl"
-    assert (tmp_path / "models/horizon_5/model_metadata.pkl").exists()
-    assert (tmp_path / "models/horizon_5/xgboost_classifier.json").exists()
-    assert not (tmp_path / "models/model_metadata.pkl").exists()
-
-
-def test_save_horizon_model_artifacts_preserves_legacy_paths_for_default_horizon(
-    tmp_path,
-    monkeypatch,
-):
-    monkeypatch.chdir(tmp_path)
-
-    class FakeXgbModel:
-        def save_model(self, path):
-            with open(path, "w", encoding="utf-8") as model_file:
-                model_file.write("model")
-
-    trainer.save_horizon_model_artifacts(
-        10,
-        linear_model={"linear": True},
-        scaler_lr={"scaler": True},
-        data_preparator={"preparator": True},
-        all_features=["Close"],
-        model_metadata={"prediction_days": 10},
-        classifier=FakeXgbModel(),
-        regressor=FakeXgbModel(),
-    )
-
-    assert (tmp_path / "models/horizon_10/model_metadata.pkl").exists()
-    assert (tmp_path / "models/model_metadata.pkl").exists()
-
-
-def test_save_rank_ndcg_model_artifacts_writes_only_ranker_model_path(
-    tmp_path,
-    monkeypatch,
-):
-    monkeypatch.chdir(tmp_path)
-
-    class FakeRanker:
-        def save_model(self, path):
-            with open(path, "w", encoding="utf-8") as model_file:
-                model_file.write("ranker")
-
-    saved_paths = trainer.save_rank_ndcg_model_artifacts(
-        5,
-        data_preparator={"preparator": True},
-        all_features=["Close"],
-        model_metadata={"prediction_days": 5},
-        ranker=FakeRanker(),
-    )
-
-    assert set(saved_paths) == {"ranker", "preparator", "features", "model_metadata"}
-    assert saved_paths["ranker"] == "models/horizon_5/xgboost_ranker.json"
-    assert (tmp_path / "models/horizon_5/xgboost_ranker.json").exists()
-    assert not (tmp_path / "models/horizon_5/xgboost_classifier.json").exists()
-    assert not (tmp_path / "models/horizon_5/xgboost_regressor.json").exists()
 
 
 def test_main_trains_all_horizons_and_logs_comparison(monkeypatch, caplog, capsys):
