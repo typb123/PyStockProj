@@ -12,7 +12,7 @@ from src.config import (
     TRAINING_UNIVERSES,
     get_training_tickers,
 )
-from src.train.trainer import PROJECT_ROOT, fetch_raw_ticker_data
+from src.data.training_data import PROJECT_ROOT, fetch_raw_ticker_data
 
 
 REPORT_DIR = PROJECT_ROOT / "reports" / "data_audit"
