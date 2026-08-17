@@ -369,3 +369,142 @@ At 20d, removing Ichimoku was worse than the full feature set, while removing `m
 * Keep the existing 39-feature model contract for the current Rank-NDCG research model.
 * Freeze the feature set before the next robustness checks.
 
+
+### Rank-NDCG max-history walk-forward robustness check
+
+After freezing the Rank-NDCG target/model formulation and retaining the full 39-feature contract, the primary `large_mega_cap_stocks` universe was evaluated using `period=max`.
+
+Before running the model, the raw Yahoo histories were audited against SPY trading sessions.
+
+Data-coverage audit:
+
+* 65 of 65 requested tickers fetched successfully.
+* Maximum missing SPY-aligned trading days across all tickers: 0.
+* Maximum internal missing-session gap: 0 trading days.
+* Maximum stale ending versus SPY: 0 trading days.
+* Historical candidate coverage increases gradually as newer companies begin trading:
+  * 1993: 44 of 64 candidates (68.8%)
+  * 2000: 53 of 64 (82.8%)
+  * 2006: 58 of 64 (90.6%)
+  * 2010: 62 of 64 (96.9%)
+  * 2013 onward: 64 of 64 (100%)
+
+The historical raw data therefore does not show evidence of missing-session or stale-history problems. The major remaining limitation is survivorship/selection bias because the universe consists of modern large/mega-cap companies projected backward through time rather than point-in-time historical constituents.
+
+#### 10d max-history Rank-NDCG
+
+28 walk-forward folds, with test years from 1999 through partial 2026.
+
+Aggregate results:
+
+* Top-5:
+  * model excess: 1.19%
+  * model minus momentum: +0.67%
+  * model minus universe: +0.89%
+  * fold win rate vs momentum: 75.00%
+  * fold win rate vs universe: 75.00%
+* Top-10:
+  * model excess: 0.90%
+  * model minus momentum: +0.53%
+  * model minus universe: +0.60%
+  * fold win rate vs momentum: 85.71%
+  * fold win rate vs universe: 78.57%
+* Top-20:
+  * model excess: 0.64%
+  * model minus momentum: +0.34%
+  * model minus universe: +0.34%
+  * fold win rate vs momentum: 85.71%
+  * fold win rate vs universe: 89.29%
+
+The result is materially stronger than the earlier 10-year / 5-fold Rank-NDCG test and remains positive across many different market regimes. Weak individual periods remain, including 2004, 2012, 2021-2022, and partial 2026.
+
+#### 20d max-history Rank-NDCG
+
+28 walk-forward folds, again covering test years from 1999 through partial 2026.
+
+Aggregate results:
+
+* Top-5:
+  * model excess: 2.28%
+  * model minus momentum: +0.80%
+  * model minus universe: +1.68%
+  * fold win rate vs momentum: 71.43%
+  * fold win rate vs universe: 82.14%
+* Top-10:
+  * model excess: 1.72%
+  * model minus momentum: +0.70%
+  * model minus universe: +1.12%
+  * fold win rate vs momentum: 78.57%
+  * fold win rate vs universe: 78.57%
+* Top-20:
+  * model excess: 1.23%
+  * model minus momentum: +0.53%
+  * model minus universe: +0.63%
+  * fold win rate vs momentum: 82.14%
+  * fold win rate vs universe: 85.71%
+
+The 20d result also strengthened materially relative to the earlier 10-year / 5-fold test. Performance remains regime-dependent, with notably weak periods including 2004, 2011-2012, 2020, 2022, and partial 2026.
+
+#### Current interpretation
+
+* Rank-NDCG remains the leading model formulation after substantially expanding the walk-forward test history.
+* Both 10d and 20d results beat the horizon-matched momentum baseline on average across 28 folds.
+* The advantage is not driven by a single favorable year; fold win rates versus momentum are above 70% for Top-5 and substantially higher for Top-10/Top-20 in several comparisons.
+* The raw max-history data passed the new SPY-session coverage audit, reducing concern that missing or stale Yahoo histories explain the result.
+* These results strengthen the evidence that the Rank-NDCG formulation captures a cross-sectional ranking signal across multiple market regimes.
+* They do not establish a historically tradable alpha estimate because the modern large/mega-cap universe is projected backward through time and therefore contains survivorship/selection bias.
+* Do not tune features or Rank-NDCG parameters against these robustness results.
+
+### Rank-NDCG alternate-universe robustness check
+
+After freezing the Rank-NDCG formulation and 39-feature contract, the model was evaluated on the `broad_sector_etfs` universe as a preselected alternate-universe robustness check.
+
+This universe contains 18 ranked ETF candidates after excluding SPY, so Top-5 is the most meaningful comparison. Top-10 represents more than half of the universe, and Top-20 is effectively the full universe and is therefore not useful for judging ranking quality.
+
+#### 10d broad-sector ETF walk-forward
+
+5 walk-forward folds.
+
+Aggregate results:
+
+* Top-5:
+  * model excess: -0.12%
+  * model minus momentum: -0.28%
+  * model minus universe: -0.08%
+  * fold win rate vs momentum: 40%
+  * fold win rate vs universe: 40%
+* Top-10:
+  * model excess: -0.11%
+  * model minus momentum: -0.12%
+  * model minus universe: -0.08%
+  * fold win rate vs momentum: 20%
+  * fold win rate vs universe: 0%
+
+#### 20d broad-sector ETF walk-forward
+
+5 walk-forward folds.
+
+Aggregate results:
+
+* Top-5:
+  * model excess: -0.11%
+  * model minus momentum: -0.34%
+  * model minus universe: approximately 0.00%
+  * fold win rate vs momentum: 60%
+  * fold win rate vs universe: 60%
+* Top-10:
+  * model excess: -0.21%
+  * model minus momentum: -0.28%
+  * model minus universe: -0.10%
+  * fold win rate vs momentum: 40%
+  * fold win rate vs universe: 40%
+
+#### Current interpretation
+
+* The Rank-NDCG advantage observed in the `large_mega_cap_stocks` universe does not transfer cleanly to the `broad_sector_etfs` universe.
+* Both 10d and 20d ETF aggregate model-minus-momentum results are negative.
+* The 20d Top-5 fold win rate is 60%, but performance is unstable and the average result remains negative.
+* The ETF experiment is not directly comparable to the stock-ranking task because the candidate universe is much smaller and the assets represent diversified sector/style baskets rather than individual companies.
+* This negative result does not invalidate the large/mega-cap stock results. It instead suggests that the current model's useful domain may be specifically cross-sectional ranking among individual large/mega-cap stocks rather than arbitrary tradable assets.
+* Do not tune the model to improve ETF performance based on these results.
+* The planned robustness stage is now complete. Next step: structural refactor without changing research behavior.
