@@ -314,3 +314,58 @@ Rank-NDCG again materially improved model-minus-momentum performance. Top-10 bec
 * The evidence does not establish durable trading alpha. Only five walk-forward folds are available, results vary meaningfully by year, and momentum remains especially difficult to beat in the partial 2026 fold.
 * Do not tune against the existing single holdout based on these results.
 * Next research step: make Rank-NDCG feature-group ablation use the walk-forward evaluation framework before running the existing ablation grid.
+
+### Rank-NDCG walk-forward feature ablation
+
+After moving the Rank-NDCG feature-ablation runner from the single holdout to the expanding walk-forward framework, the existing 10 feature subsets were evaluated on the `large_mega_cap_stocks` universe using 10 years of history and 5 walk-forward folds.
+
+The feature subset was the only experimental variable. Fold construction, embargo logic, Rank-NDCG parameters, target design, baselines, and Top-N evaluation remained unchanged.
+
+#### 10d feature ablation
+
+Selected results:
+
+| Feature set | Features | Top-5 model minus momentum | Top-10 model minus momentum | Top-5 win rate vs momentum | Top-10 win rate vs momentum |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| all_features | 39 | +0.19% | +0.03% | 60% | 60% |
+| drop_raw_ohlc | 35 | -0.02% | -0.04% | 60% | 60% |
+| drop_price_level_trend | 24 | -0.26% | -0.12% | 40% | 40% |
+| drop_volume_scale | 35 | -0.07% | -0.22% | 60% | 40% |
+| drop_ichimoku | 32 | +0.45% | +0.08% | 60% | 60% |
+| drop_relative_momentum | 35 | +0.16% | -0.05% | 60% | 60% |
+| drop_macd_redundant | 37 | -0.07% | -0.08% | 60% | 60% |
+| minimal_momentum_risk_oscillator | 16 | -0.13% | -0.01% | 40% | 60% |
+| momentum_only | 4 | +0.04% | -0.10% | 60% | 60% |
+| momentum_plus_volatility | 12 | -0.10% | -0.08% | 40% | 60% |
+
+At 10d, removing the Ichimoku feature group produced the strongest result, improving both Top-5 and Top-10 model-minus-momentum performance versus the full feature set.
+
+#### 20d feature ablation
+
+Selected results:
+
+| Feature set | Features | Top-5 model minus momentum | Top-10 model minus momentum | Top-5 win rate vs momentum | Top-10 win rate vs momentum |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| all_features | 39 | -0.11% | +0.33% | 40% | 60% |
+| drop_raw_ohlc | 35 | -0.58% | -0.08% | 40% | 40% |
+| drop_price_level_trend | 24 | -0.58% | -0.35% | 20% | 20% |
+| drop_volume_scale | 35 | -0.87% | -0.28% | 60% | 60% |
+| drop_ichimoku | 32 | -0.29% | -0.03% | 60% | 40% |
+| drop_relative_momentum | 35 | +0.05% | +0.21% | 60% | 40% |
+| drop_macd_redundant | 37 | +0.40% | +0.39% | 60% | 60% |
+| minimal_momentum_risk_oscillator | 16 | -1.19% | -0.29% | 60% | 60% |
+| momentum_only | 4 | -0.82% | -0.01% | 60% | 60% |
+| momentum_plus_volatility | 12 | -0.84% | -0.11% | 60% | 60% |
+
+At 20d, removing Ichimoku was worse than the full feature set, while removing `macd` and `signalLine` produced the strongest result. That MACD removal was worse at 10d.
+
+#### Current interpretation
+
+* No tested feature-group removal improved the model consistently across both the 10d and 20d horizons.
+* The aggressively reduced 4-, 12-, and 16-feature subsets generally underperformed the full model.
+* Removing raw OHLC, price/trend, or volume-scale information generally degraded performance.
+* Ichimoku and MACD-related features appear to have horizon-dependent value rather than being consistently harmful.
+* Do not combine individually favorable ablations into additional feature subsets based on these same folds; that would increase the risk of tuning feature decisions to the walk-forward sample.
+* Keep the existing 39-feature model contract for the current Rank-NDCG research model.
+* Freeze the feature set before the next robustness checks.
+
