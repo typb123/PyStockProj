@@ -28,6 +28,7 @@ from src.train.rank_ndcg_feature_ablations import (
     format_ablation_table,
 )
 import src.data.training_data as training_data
+import src.train.training_contract as training_contract
 import src.train.trainer as trainer
 
 
@@ -60,6 +61,22 @@ def test_trainer_reexports_training_data_public_api():
 
     for name in public_names:
         assert getattr(trainer, name) is getattr(training_data, name)
+
+
+def test_trainer_reexports_training_contract_public_api():
+    public_names = (
+        "TARGET_MODE_EXCESS_RETURN",
+        "TARGET_MODE_CROSS_SECTIONAL_TOP_BOTTOM",
+        "TARGET_MODE_CROSS_SECTIONAL_RANK_NDCG",
+        "TARGET_MODES",
+        "WALK_FORWARD_TARGET_MODES",
+        "validate_target_mode",
+        "validate_walk_forward_target_mode",
+        "resolve_model_feature_columns",
+    )
+
+    for name in public_names:
+        assert getattr(trainer, name) is getattr(training_contract, name)
 
 
 def test_log_feature_importances_summarizes_info_and_keeps_full_debug(caplog):
@@ -1565,7 +1582,8 @@ def test_rank_ndcg_ablation_runner_uses_walk_forward_for_every_feature_spec(
         spec.feature_columns for spec in specs
     ]
     assert all(
-        call["target_mode"] == trainer.TARGET_MODE_CROSS_SECTIONAL_RANK_NDCG
+        call["target_mode"]
+        == training_contract.TARGET_MODE_CROSS_SECTIONAL_RANK_NDCG
         for call in calls
     )
     assert all(call["random_trial_workers"] == 8 for call in calls)

@@ -14,6 +14,7 @@ from src.config import (
     get_training_tickers,
 )
 from src.data.training_data import prepare_data_parallel
+from src.train.training_contract import TARGET_MODE_CROSS_SECTIONAL_RANK_NDCG
 from src.train.rank_ndcg_feature_ablations import (
     build_output_path,
     build_rank_ndcg_feature_ablation_specs,
@@ -21,7 +22,6 @@ from src.train.rank_ndcg_feature_ablations import (
     format_ablation_table,
 )
 from src.train.trainer import (
-    TARGET_MODE_CROSS_SECTIONAL_RANK_NDCG,
     run_walk_forward_models,
 )
 
