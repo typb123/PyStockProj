@@ -22,7 +22,7 @@ from src.train.rank_ndcg_feature_ablations import (
 from src.train.trainer import (
     TARGET_MODE_CROSS_SECTIONAL_RANK_NDCG,
     prepare_data_parallel,
-    train_models,
+    run_walk_forward_models,
 )
 
 
@@ -56,7 +56,7 @@ def parse_args(argv=None):
     parser.add_argument(
         "--random-trial-workers",
         type=int,
-        default=4,
+        default=8,
         help="Worker count for Top-N random baseline trials.",
     )
     parser.add_argument(
@@ -92,7 +92,7 @@ def main(argv=None) -> list[dict]:
             f"Running {spec.name} "
             f"({len(spec.feature_columns)} features)..."
         )
-        report = train_models(
+        report = run_walk_forward_models(
             data.copy(),
             prediction_days=args.prediction_days,
             random_trials=args.random_trials,

@@ -2219,9 +2219,15 @@ def run_walk_forward_models(
     test_years: int = DEFAULT_WALK_FORWARD_TEST_YEARS,
     regressor_params: dict | None = None,
     target_mode: str = TARGET_MODE_EXCESS_RETURN,
+    feature_columns_override: list[str] | None = None,
 ) -> dict:
     """Run expanding-window walk-forward Top-N diagnostics for one horizon."""
     validate_walk_forward_target_mode(target_mode)
+    requested_feature_columns = (
+        resolve_model_feature_columns(feature_columns_override)
+        if feature_columns_override is not None
+        else None
+    )
     logging.info(
         "Running walk-forward evaluation "
         f"for prediction_days={prediction_days}, "
@@ -2230,9 +2236,14 @@ def run_walk_forward_models(
         f"test_years={test_years}."
     )
     data = validate_input_data(data)
-    prepared_frame, feature_columns = prepare_walk_forward_model_frame(
+    prepared_frame, prepared_feature_columns = prepare_walk_forward_model_frame(
         data,
         prediction_days=prediction_days,
+    )
+    feature_columns = (
+        requested_feature_columns
+        if requested_feature_columns is not None
+        else prepared_feature_columns
     )
     folds = build_expanding_yearly_walk_forward_folds(
         prepared_frame,

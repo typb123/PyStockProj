@@ -136,15 +136,6 @@ def build_rank_ndcg_feature_ablation_specs() -> list[FeatureAblationSpec]:
     ]
 
 
-def _nested(report: dict, path: tuple[str, ...], default=np.nan):
-    current = report
-    for key in path:
-        if not isinstance(current, dict) or key not in current:
-            return default
-        current = current[key]
-    return current
-
-
 def _numeric(value):
     if value is None:
         return np.nan
@@ -154,14 +145,6 @@ def _numeric(value):
         return np.nan
 
 
-def _difference(left, right):
-    left = _numeric(left)
-    right = _numeric(right)
-    if math.isnan(left) or math.isnan(right):
-        return np.nan
-    return left - right
-
-
 def extract_ablation_result_row(
     report: dict,
     spec: FeatureAblationSpec,
@@ -169,11 +152,14 @@ def extract_ablation_result_row(
     period: str,
     universe: str,
 ) -> dict:
-    """Extract a flat CSV-ready metrics row from one train_models report."""
-    basket_backtest = report.get("basket_backtest", {})
-    diagnostics = report.get("same_date_ranking_diagnostics", {})
-    model_diagnostics = diagnostics.get("model", diagnostics)
-    momentum_diagnostics = diagnostics.get("momentum", {})
+    """Extract a flat CSV-ready row from one walk-forward aggregate report."""
+    aggregate = report.get("aggregate", {})
+    top_n_summary = aggregate.get("top_n", {})
+    fold_count = aggregate.get("fold_count", 0)
+    try:
+        evaluated_fold_count = int(fold_count)
+    except (TypeError, ValueError):
+        evaluated_fold_count = 0
 
     row = {
         "ablation_name": spec.name,
@@ -183,47 +169,21 @@ def extract_ablation_result_row(
         "feature_count": len(spec.feature_columns),
         "removed_groups": spec.removed_groups,
         "included_groups": spec.included_groups,
-        "model_mean_rank_ic": _numeric(
-            _nested(model_diagnostics, ("rank_ic", "mean_rank_ic"))
-        ),
-        "momentum_mean_rank_ic": _numeric(
-            _nested(momentum_diagnostics, ("rank_ic", "mean_rank_ic"))
-        ),
-        "top_5_realized_top20_rate": _numeric(
-            _nested(
-                model_diagnostics,
-                (
-                    "selected_realized_rank_distribution",
-                    "top_5",
-                    "top_20_realized_rate",
-                ),
-            )
-        ),
-        "top_5_realized_bottom20_rate": _numeric(
-            _nested(
-                model_diagnostics,
-                (
-                    "selected_realized_rank_distribution",
-                    "top_5",
-                    "bottom_20_realized_rate",
-                ),
-            )
-        ),
+        "evaluated_fold_count": evaluated_fold_count,
     }
 
     for top_n in (5, 10, 20):
-        bucket = basket_backtest.get(f"top_{top_n}", {})
-        model_excess = _numeric(
-            _nested(bucket, ("model", "average_basket_excess_return"))
-        )
-        momentum_excess = _numeric(
-            _nested(bucket, ("momentum_baseline", "average_basket_excess_return"))
-        )
-        row[f"top_{top_n}_model_excess"] = model_excess
-        row[f"top_{top_n}_model_minus_momentum"] = _difference(
-            model_excess,
-            momentum_excess,
-        )
+        bucket = top_n_summary.get(f"top_{top_n}", {})
+        for metric_name in (
+            "average_model_excess",
+            "average_model_minus_momentum",
+            "fold_win_rate_vs_momentum",
+            "average_model_minus_universe",
+            "fold_win_rate_vs_universe",
+        ):
+            row[f"top_{top_n}_{metric_name}"] = _numeric(
+                bucket.get(metric_name)
+            )
 
     return row
 
@@ -240,38 +200,21 @@ def format_ablation_table(results: list[dict]) -> str:
     if not results:
         return "No ablation results."
 
-    columns = [
-        "ablation_name",
-        "feature_count",
-        "top_5_model_excess",
-        "top_10_model_excess",
-        "top_20_model_excess",
-        "top_5_model_minus_momentum",
-        "top_10_model_minus_momentum",
-        "top_20_model_minus_momentum",
-        "model_mean_rank_ic",
-        "momentum_mean_rank_ic",
-        "top_5_realized_top20_rate",
-        "top_5_realized_bottom20_rate",
-    ]
-    table = pd.DataFrame(results)[columns].copy()
-    for column in [
-        "top_5_model_excess",
-        "top_10_model_excess",
-        "top_20_model_excess",
-        "top_5_model_minus_momentum",
-        "top_10_model_minus_momentum",
-        "top_20_model_minus_momentum",
-        "top_5_realized_top20_rate",
-        "top_5_realized_bottom20_rate",
-    ]:
+    display_columns = {
+        "ablation_name": "ablation",
+        "feature_count": "features",
+        "top_5_average_model_excess": "top5_avg_excess",
+        "top_10_average_model_excess": "top10_avg_excess",
+        "top_5_average_model_minus_momentum": "top5_avg_minus_mom",
+        "top_10_average_model_minus_momentum": "top10_avg_minus_mom",
+        "top_5_fold_win_rate_vs_momentum": "top5_win_vs_mom",
+        "top_10_fold_win_rate_vs_momentum": "top10_win_vs_mom",
+    }
+    table = pd.DataFrame(results).reindex(columns=display_columns).copy()
+    for column in list(display_columns)[2:]:
         table[column] = table[column].map(_format_percent)
-    for column in ["model_mean_rank_ic", "momentum_mean_rank_ic"]:
-        table[column] = table[column].map(
-            lambda value: "n/a" if math.isnan(_numeric(value)) else f"{float(value):.4f}"
-        )
 
-    return table.to_string(index=False)
+    return table.rename(columns=display_columns).to_string(index=False)
 
 
 def _safe_filename_part(value: str) -> str:
@@ -281,7 +224,7 @@ def _safe_filename_part(value: str) -> str:
 def build_output_path(prediction_days: int, period: str, universe: str) -> Path:
     """Return the default CSV path for one ablation run."""
     filename = (
-        "rank_ndcg_feature_ablations_"
+        "rank_ndcg_walk_forward_feature_ablations_"
         f"{prediction_days}d_{_safe_filename_part(period)}_"
         f"{_safe_filename_part(universe)}.csv"
     )

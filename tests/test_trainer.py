@@ -1,6 +1,9 @@
 """Trainer tests for caching, metadata, CLI validation, and report plumbing."""
 
+import importlib.util
 import logging
+from pathlib import Path
+
 import pandas as pd
 import numpy as np
 import pytest
@@ -25,6 +28,18 @@ from src.train.rank_ndcg_feature_ablations import (
     format_ablation_table,
 )
 import src.train.trainer as trainer
+
+
+ABLATION_SCRIPT_PATH = (
+    Path(__file__).resolve().parents[1]
+    / "scripts/run_rank_ndcg_feature_ablations.py"
+)
+ABLATION_SCRIPT_SPEC = importlib.util.spec_from_file_location(
+    "run_rank_ndcg_feature_ablations",
+    ABLATION_SCRIPT_PATH,
+)
+ablation_script = importlib.util.module_from_spec(ABLATION_SCRIPT_SPEC)
+ABLATION_SCRIPT_SPEC.loader.exec_module(ablation_script)
 
 
 def test_prepare_data_parallel_passes_period_to_fetch_stock_data(monkeypatch):
@@ -1748,19 +1763,16 @@ def test_rank_ndcg_ablation_result_extraction_handles_missing_metrics():
         included_groups="absolute_momentum",
     )
     report = {
-        "basket_backtest": {
-            "top_5": {
-                "model": {"average_basket_excess_return": 0.03},
-            },
-        },
-        "same_date_ranking_diagnostics": {
-            "model": {
-                "rank_ic": {"mean_rank_ic": 0.12},
-                "selected_realized_rank_distribution": {
-                    "top_5": {
-                        "top_20_realized_rate": 0.4,
-                    },
-                },
+        "aggregate": {
+            "fold_count": 5,
+            "top_n": {
+                "top_5": {
+                    "average_model_excess": 0.03,
+                    "average_model_minus_momentum": 0.01,
+                    "fold_win_rate_vs_momentum": 0.6,
+                    "average_model_minus_universe": 0.02,
+                    "fold_win_rate_vs_universe": 0.8,
+                }
             },
         },
     }
@@ -1775,46 +1787,117 @@ def test_rank_ndcg_ablation_result_extraction_handles_missing_metrics():
 
     assert row["ablation_name"] == "tiny"
     assert row["feature_count"] == 1
-    assert row["top_5_model_excess"] == 0.03
-    assert np.isnan(row["top_5_model_minus_momentum"])
-    assert np.isnan(row["top_10_model_excess"])
-    assert row["model_mean_rank_ic"] == 0.12
-    assert np.isnan(row["momentum_mean_rank_ic"])
-    assert row["top_5_realized_top20_rate"] == 0.4
-    assert np.isnan(row["top_5_realized_bottom20_rate"])
+    assert row["evaluated_fold_count"] == 5
+    assert row["top_5_average_model_excess"] == 0.03
+    assert row["top_5_average_model_minus_momentum"] == 0.01
+    assert row["top_5_fold_win_rate_vs_momentum"] == 0.6
+    assert row["top_5_average_model_minus_universe"] == 0.02
+    assert row["top_5_fold_win_rate_vs_universe"] == 0.8
+    assert np.isnan(row["top_10_average_model_excess"])
+    assert np.isnan(row["top_20_fold_win_rate_vs_universe"])
+
+    missing_row = extract_ablation_result_row(
+        {},
+        spec,
+        prediction_days=10,
+        period="10y",
+        universe="large_mega_cap_stocks",
+    )
+    assert missing_row["evaluated_fold_count"] == 0
+    assert np.isnan(missing_row["top_5_average_model_excess"])
 
 
 def test_rank_ndcg_ablation_table_includes_required_stdout_columns():
     row = {
         "ablation_name": "all_features",
         "feature_count": 39,
-        "top_5_model_excess": 0.01,
-        "top_10_model_excess": 0.02,
-        "top_20_model_excess": 0.03,
-        "top_5_model_minus_momentum": 0.001,
-        "top_10_model_minus_momentum": 0.002,
-        "top_20_model_minus_momentum": 0.003,
-        "model_mean_rank_ic": 0.12,
-        "momentum_mean_rank_ic": 0.08,
-        "top_5_realized_top20_rate": 0.40,
-        "top_5_realized_bottom20_rate": 0.10,
+        "top_5_average_model_excess": 0.01,
+        "top_10_average_model_excess": 0.02,
+        "top_5_average_model_minus_momentum": 0.001,
+        "top_10_average_model_minus_momentum": 0.002,
+        "top_5_fold_win_rate_vs_momentum": 0.60,
+        "top_10_fold_win_rate_vs_momentum": 0.40,
     }
 
     table = format_ablation_table([row])
 
     for column in [
-        "top_5_model_excess",
-        "top_10_model_excess",
-        "top_20_model_excess",
-        "top_5_model_minus_momentum",
-        "top_10_model_minus_momentum",
-        "top_20_model_minus_momentum",
-        "model_mean_rank_ic",
-        "momentum_mean_rank_ic",
-        "top_5_realized_top20_rate",
-        "top_5_realized_bottom20_rate",
+        "features",
+        "top5_avg_excess",
+        "top10_avg_excess",
+        "top5_avg_minus_mom",
+        "top10_avg_minus_mom",
+        "top5_win_vs_mom",
+        "top10_win_vs_mom",
     ]:
         assert column in table
+
+
+def test_rank_ndcg_ablation_runner_uses_walk_forward_for_every_feature_spec(
+    monkeypatch,
+    tmp_path,
+):
+    calls = []
+    specs = build_rank_ndcg_feature_ablation_specs()
+
+    monkeypatch.setattr(
+        ablation_script,
+        "prepare_data_parallel",
+        lambda *args, **kwargs: pd.DataFrame({"Close": [1.0]}),
+    )
+
+    def fake_run_walk_forward_models(data, **kwargs):
+        calls.append(kwargs)
+        return {
+            "aggregate": {
+                "fold_count": 5,
+                "top_n": {
+                    f"top_{top_n}": {
+                        "average_model_excess": top_n / 1000,
+                        "average_model_minus_momentum": top_n / 10000,
+                        "fold_win_rate_vs_momentum": 0.6,
+                        "average_model_minus_universe": top_n / 2000,
+                        "fold_win_rate_vs_universe": 0.8,
+                    }
+                    for top_n in (5, 10, 20)
+                },
+            }
+        }
+
+    monkeypatch.setattr(
+        ablation_script,
+        "run_walk_forward_models",
+        fake_run_walk_forward_models,
+    )
+    output_path = tmp_path / "ablation.csv"
+
+    results = ablation_script.main(
+        [
+            "--prediction-days",
+            "20",
+            "--period",
+            "10y",
+            "--random-trials",
+            "7",
+            "--output",
+            str(output_path),
+        ]
+    )
+
+    assert len(calls) == len(specs)
+    assert [call["feature_columns_override"] for call in calls] == [
+        spec.feature_columns for spec in specs
+    ]
+    assert all(
+        call["target_mode"] == trainer.TARGET_MODE_CROSS_SECTIONAL_RANK_NDCG
+        for call in calls
+    )
+    assert all(call["random_trial_workers"] == 8 for call in calls)
+    assert results[0]["evaluated_fold_count"] == 5
+    assert results[0]["top_10_average_model_minus_momentum"] == 0.001
+    csv_result = pd.read_csv(output_path)
+    assert "top_5_fold_win_rate_vs_momentum" in csv_result.columns
+    assert "top_20_average_model_minus_universe" in csv_result.columns
 
 
 def test_train_models_cross_sectional_rank_ndcg_trains_grouped_ranker_and_scores_all(
@@ -2633,6 +2716,152 @@ def test_run_walk_forward_models_rejects_unsupported_target_mode(monkeypatch):
         trainer.run_walk_forward_models(
             pd.DataFrame({"Close": [1.0]}),
             target_mode="cross_sectional_top_bottom",
+        )
+
+
+def test_run_walk_forward_models_without_override_uses_prepared_full_feature_contract(
+    monkeypatch,
+):
+    captured = {}
+    prepared_frame = pd.DataFrame(
+        {"prediction_date": pd.to_datetime(["2020-01-01"])}
+    )
+    fold = {
+        "fold_index": 0,
+        "train_years": [2019],
+        "validation_years": [2020],
+        "test_years": [2021],
+        "train_date_range": {"start": None, "end": None},
+        "validation_date_range": {"start": None, "end": None},
+        "test_date_range": {"start": None, "end": None},
+    }
+
+    monkeypatch.setattr(
+        trainer,
+        "prepare_walk_forward_model_frame",
+        lambda *args, **kwargs: (prepared_frame, list(MODEL_FEATURE_COLUMNS)),
+    )
+    monkeypatch.setattr(
+        trainer,
+        "build_expanding_yearly_walk_forward_folds",
+        lambda *args, **kwargs: [fold],
+    )
+
+    def fake_build_split(frame, current_fold, feature_columns, **kwargs):
+        captured["split_features"] = list(feature_columns)
+        return {"split_date_ranges": {}}
+
+    def fake_run_regressor_fold(
+        split,
+        feature_columns,
+        regressor_candidate_configs,
+        **kwargs,
+    ):
+        captured["fit_features"] = list(feature_columns)
+        return {
+            "selected_candidate_id": 0,
+            "selected_candidate_name": "candidate_0",
+            "selected_validation_top_n_mean_excess_return": 0.0,
+        }, {}
+
+    monkeypatch.setattr(trainer, "build_walk_forward_split", fake_build_split)
+    monkeypatch.setattr(
+        trainer,
+        "_run_excess_return_walk_forward_fold",
+        fake_run_regressor_fold,
+    )
+
+    trainer.run_walk_forward_models(pd.DataFrame({"Close": [1.0]}))
+
+    assert captured["split_features"] == MODEL_FEATURE_COLUMNS
+    assert captured["fit_features"] == MODEL_FEATURE_COLUMNS
+
+
+def test_run_walk_forward_models_feature_override_preserves_order_for_all_splits(
+    monkeypatch,
+):
+    captured = {}
+    override = [MODEL_FEATURE_COLUMNS[5], MODEL_FEATURE_COLUMNS[0]]
+    prepared_frame = pd.DataFrame(
+        {"prediction_date": pd.to_datetime(["2020-01-01"])}
+    )
+    fold = {
+        "fold_index": 0,
+        "train_years": [2019],
+        "validation_years": [2020],
+        "test_years": [2021],
+        "train_date_range": {"start": None, "end": None},
+        "validation_date_range": {"start": None, "end": None},
+        "test_date_range": {"start": None, "end": None},
+    }
+
+    monkeypatch.setattr(
+        trainer,
+        "prepare_walk_forward_model_frame",
+        lambda *args, **kwargs: (prepared_frame, list(MODEL_FEATURE_COLUMNS)),
+    )
+    monkeypatch.setattr(
+        trainer,
+        "build_expanding_yearly_walk_forward_folds",
+        lambda *args, **kwargs: [fold],
+    )
+
+    def fake_build_split(frame, current_fold, feature_columns, **kwargs):
+        captured["split_features"] = list(feature_columns)
+        return {
+            "x_train": np.zeros((3, len(feature_columns))),
+            "x_val": np.zeros((2, len(feature_columns))),
+            "x_test": np.zeros((4, len(feature_columns))),
+            "split_date_ranges": {},
+        }
+
+    def fake_run_ranker_fold(split, feature_columns, **kwargs):
+        captured["fit_features"] = list(feature_columns)
+        captured["split_widths"] = [
+            split[key].shape[1] for key in ("x_train", "x_val", "x_test")
+        ]
+        return {
+            "selected_candidate_id": None,
+            "selected_candidate_name": "rank_ndcg",
+            "selected_validation_top_n_mean_excess_return": None,
+        }, {}
+
+    monkeypatch.setattr(trainer, "build_walk_forward_split", fake_build_split)
+    monkeypatch.setattr(
+        trainer,
+        "_run_rank_ndcg_walk_forward_fold",
+        fake_run_ranker_fold,
+    )
+
+    trainer.run_walk_forward_models(
+        pd.DataFrame({"Close": [1.0]}),
+        target_mode="cross_sectional_rank_ndcg",
+        feature_columns_override=override,
+    )
+
+    assert captured["split_features"] == override
+    assert captured["fit_features"] == override
+    assert captured["split_widths"] == [2, 2, 2]
+
+
+@pytest.mark.parametrize(
+    "feature_columns_override",
+    [[], ["targetReturns"]],
+)
+def test_run_walk_forward_models_rejects_invalid_feature_overrides_before_preparation(
+    monkeypatch,
+    feature_columns_override,
+):
+    monkeypatch.setattr(
+        trainer,
+        "prepare_walk_forward_model_frame",
+        lambda *args, **kwargs: pytest.fail("walk-forward prep should not run"),
+    )
+
+    with pytest.raises(ValueError, match="feature_columns_override"):
+        trainer.run_walk_forward_models(
+            pd.DataFrame({"Close": [1.0]}),
+            feature_columns_override=feature_columns_override,
         )
 
 
