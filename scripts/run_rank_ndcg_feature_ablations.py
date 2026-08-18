@@ -21,7 +21,7 @@ from src.train.rank_ndcg_feature_ablations import (
     extract_ablation_result_row,
     format_ablation_table,
 )
-from src.train.trainer import (
+from src.train.walk_forward_runner import (
     run_walk_forward_models,
 )
 

@@ -8,7 +8,6 @@ from sklearn.preprocessing import StandardScaler
 
 from src.config import PREDICTION_DAYS
 from src.data.data_prep import DataPreparator
-from src.features.feature_contract import MODEL_FEATURE_COLUMNS
 from src.train.evaluation.validation import _mean_or_nan
 
 
@@ -17,31 +16,6 @@ DEFAULT_WALK_FORWARD_VALIDATION_YEARS = 1
 DEFAULT_WALK_FORWARD_TEST_YEARS = 1
 DEFAULT_WALK_FORWARD_STEP_YEARS = 1
 DEFAULT_WALK_FORWARD_TOP_N_BUCKETS = ("top_5", "top_10", "top_20")
-
-
-def prepare_walk_forward_model_frame(
-    data,
-    prediction_days=PREDICTION_DAYS,
-    data_preparator=None,
-):
-    """Create the SPY-relative modeling frame used by yearly walk-forward folds."""
-    data_preparator = data_preparator or DataPreparator()
-    prepared = data_preparator.prepare_features(data)
-    prepared = data_preparator._normalize_prediction_date(prepared)
-    data_preparator._validate_required_columns(prepared)
-    prepared = data_preparator._create_raw_forward_returns(
-        prepared,
-        prediction_days,
-    )
-    prepared = data_preparator._add_benchmark_relative_momentum(prepared)
-    benchmark_returns = data_preparator._build_benchmark_forward_returns(prepared)
-    prepared = data_preparator._create_benchmark_relative_targets(
-        prepared,
-        benchmark_returns,
-    )
-    data_preparator.feature_columns = list(MODEL_FEATURE_COLUMNS)
-    prepared = data_preparator._drop_unusable_rows(prepared)
-    return prepared, list(data_preparator.feature_columns)
 
 
 def build_expanding_yearly_walk_forward_folds(
@@ -194,12 +168,8 @@ def build_walk_forward_aggregate_summary(
         )
         bucket_summary[bucket_name] = {
             "average_model_excess": _mean_or_nan(model_excess_values),
-            "average_model_minus_momentum": _mean_or_nan(
-                model_minus_momentum_values
-            ),
-            "average_model_minus_universe": _mean_or_nan(
-                model_minus_universe_values
-            ),
+            "average_model_minus_momentum": _mean_or_nan(model_minus_momentum_values),
+            "average_model_minus_universe": _mean_or_nan(model_minus_universe_values),
             "fold_win_rate_vs_momentum": _positive_rate_or_nan(
                 model_minus_momentum_values
             ),
@@ -295,10 +265,7 @@ def _date_range_for_frame(frame):
 def _metric_values(bucket_fold_metrics, metric_name):
     """Return numeric metric values across folds."""
     return np.asarray(
-        [
-            metrics.get(metric_name, np.nan)
-            for metrics in bucket_fold_metrics
-        ],
+        [metrics.get(metric_name, np.nan) for metrics in bucket_fold_metrics],
         dtype=float,
     )
 
