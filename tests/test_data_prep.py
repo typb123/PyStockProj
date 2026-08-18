@@ -319,6 +319,44 @@ def test_benchmark_relative_ranking_labels_exclude_spy_candidate_rows():
     assert candidates["excess_return_rank_pct_by_date"].tolist() == [1.0, 0.0]
 
 
+def test_prepare_model_frame_matches_existing_preparation_sequence():
+    prediction_days = 3
+    df = make_panel_feature_frame(num_dates=20)
+    df["Dividends"] = 0.0
+    df["Stock Splits"] = 0.0
+
+    expected_preparator = DataPreparator()
+    expected = expected_preparator.prepare_features(df)
+    expected = expected_preparator._normalize_prediction_date(expected)
+    expected_preparator._validate_required_columns(expected)
+    expected = expected_preparator._create_raw_forward_returns(
+        expected,
+        prediction_days,
+    )
+    expected = expected_preparator._add_benchmark_relative_momentum(expected)
+    benchmark_returns = expected_preparator._build_benchmark_forward_returns(
+        expected
+    )
+    expected = expected_preparator._create_benchmark_relative_targets(
+        expected,
+        benchmark_returns,
+    )
+    expected_preparator.feature_columns = list(MODEL_FEATURE_COLUMNS)
+    expected = expected_preparator._drop_unusable_rows(expected)
+
+    preparator = DataPreparator()
+    prepared, feature_columns = preparator.prepare_model_frame(
+        df,
+        prediction_days=prediction_days,
+    )
+
+    pd.testing.assert_frame_equal(prepared, expected)
+    assert feature_columns == MODEL_FEATURE_COLUMNS
+    assert preparator.feature_columns == MODEL_FEATURE_COLUMNS
+    assert feature_columns is not preparator.feature_columns
+    assert not hasattr(preparator.scalar, "mean_")
+
+
 def test_prepare_for_train_uses_global_date_split_with_embargo_and_drops_spy():
     prediction_days = 3
     df = make_panel_feature_frame(num_dates=50)

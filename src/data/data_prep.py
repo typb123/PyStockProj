@@ -278,6 +278,24 @@ class DataPreparator:
         ]
         return split_df[available_columns].copy()
 
+    def prepare_model_frame(
+        self,
+        df: pd.DataFrame,
+        prediction_days: int = PREDICTION_DAYS,
+    ) -> tuple[pd.DataFrame, list[str]]:
+        """Build the unsplit, unscaled SPY-relative modeling frame."""
+        df = self.prepare_features(df)
+        df = self._normalize_prediction_date(df)
+        self._validate_required_columns(df)
+
+        df = self._create_raw_forward_returns(df, prediction_days)
+        df = self._add_benchmark_relative_momentum(df)
+        benchmark_returns = self._build_benchmark_forward_returns(df)
+        df = self._create_benchmark_relative_targets(df, benchmark_returns)
+        self.feature_columns = list(MODEL_FEATURE_COLUMNS)
+        df = self._drop_unusable_rows(df)
+        return df, list(self.feature_columns)
+
     def prepare_for_train(
         self,
         df: pd.DataFrame,
