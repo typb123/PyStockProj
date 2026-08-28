@@ -29,15 +29,6 @@ from src.train.training_contract import (
     validate_target_mode,
     validate_walk_forward_target_mode,
 )
-from src.train.artifacts import (
-    build_horizon_model_paths,
-    build_model_metadata,
-    build_rank_ndcg_model_paths,
-    save_horizon_model_artifacts,
-    save_model_artifacts,
-    save_rank_ndcg_model_artifacts,
-    save_ranking_model_artifacts,
-)
 from src.train.reporting import (
     evaluate_model,
     format_horizon_comparison_summary,

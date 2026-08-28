@@ -20,9 +20,9 @@ from src.data.data_prep import DataPreparator
 from src.data.training_data import validate_input_data
 from src.train.artifacts import (
     build_model_metadata,
-    save_horizon_model_artifacts,
-    save_rank_ndcg_model_artifacts,
-    save_ranking_model_artifacts,
+    save_cross_sectional_rank_ndcg_artifacts,
+    save_cross_sectional_top_bottom_artifacts,
+    save_excess_return_model_artifacts,
 )
 from src.train.evaluation import build_model_only_top_n_basket_backtest_report
 from src.train.reporting import (
@@ -537,7 +537,7 @@ def train_cross_sectional_rank_ndcg_model(
     model_metadata["classifier_artifact"] = None
     model_metadata["regressor_artifact"] = None
 
-    saved_paths = save_rank_ndcg_model_artifacts(
+    saved_paths = save_cross_sectional_rank_ndcg_artifacts(
         prediction_days,
         data_preparator,
         all_features,
@@ -645,7 +645,7 @@ def train_cross_sectional_ranking_model(
     model_metadata["model_artifact_type"] = "classifier_only"
     model_metadata["regressor_artifact"] = None
 
-    saved_paths = save_ranking_model_artifacts(
+    saved_paths = save_cross_sectional_top_bottom_artifacts(
         prediction_days,
         data_preparator,
         all_features,
@@ -892,7 +892,7 @@ def train_models(
     model_metadata["xgboost_regressor_selected_params"] = (
         regressor_validation_selection_report.get("selected_params")
     )
-    saved_paths = save_horizon_model_artifacts(
+    saved_paths = save_excess_return_model_artifacts(
         prediction_days,
         linear_model,
         scaler_lr,

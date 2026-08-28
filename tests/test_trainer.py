@@ -26,7 +26,6 @@ from src.train.rank_ndcg_feature_ablations import (
     format_ablation_table,
 )
 import src.data.training_data as training_data
-import src.train.artifacts as artifacts
 import src.train.model_training as model_training
 import src.train.training_contract as training_contract
 import src.train.reporting as reporting
@@ -100,21 +99,6 @@ def test_trainer_reexports_reporting_public_api():
 
     for name in public_names:
         assert getattr(trainer, name) is getattr(reporting, name)
-
-
-def test_trainer_reexports_artifact_public_api():
-    public_names = (
-        "build_model_metadata",
-        "build_horizon_model_paths",
-        "build_rank_ndcg_model_paths",
-        "save_model_artifacts",
-        "save_horizon_model_artifacts",
-        "save_ranking_model_artifacts",
-        "save_rank_ndcg_model_artifacts",
-    )
-
-    for name in public_names:
-        assert getattr(trainer, name) is getattr(artifacts, name)
 
 
 def test_trainer_reexports_model_training_public_api():

@@ -48,7 +48,11 @@ XG_PARAMS_REGRESSOR = {
     "random_state": 42,
 }
 
-# Artifact keys are compatibility-sensitive: trainer.py writes them and predictor.py reads them.
+# New training runs publish immutable bundles beneath this root.
+MODEL_ARTIFACT_ROOT = "models"
+
+# Legacy inference-only paths. New training runs intentionally do not write these;
+# predictor migration belongs to the ranked-watchlist inference milestone.
 MODEL_PATHS = {
     "linear": "models/linear_regression_model.pkl",
     "linear_scaler": "models/linear_regression_scaler.pkl",

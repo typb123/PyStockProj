@@ -316,14 +316,18 @@ def test_train_models_uses_selected_regressor_predictions_for_final_report(
         model_training, "log_feature_importances", lambda *args, **kwargs: None
     )
 
-    def fake_save_horizon_model_artifacts(*args, **kwargs):
+    def fake_save_excess_return_model_artifacts(*args, **kwargs):
         captured["saved_model_metadata"] = args[5]
-        return {"model_metadata": "models/horizon_10/model_metadata.pkl"}
+        return {
+            "model_metadata": (
+                "models/excess_return/horizon_10/bundle/model_metadata.pkl"
+            )
+        }
 
     monkeypatch.setattr(
         model_training,
-        "save_horizon_model_artifacts",
-        fake_save_horizon_model_artifacts,
+        "save_excess_return_model_artifacts",
+        fake_save_excess_return_model_artifacts,
     )
 
     report = model_training.train_models(pd.DataFrame({"Close": [1.0]}), prediction_days=10)
@@ -424,7 +428,7 @@ def test_train_models_metadata_includes_momentum_features_and_excludes_targets(
         def save_model(self, path):
             pass
 
-    def fake_save_horizon_model_artifacts(
+    def fake_save_excess_return_model_artifacts(
         prediction_days,
         linear_model,
         scaler_lr,
@@ -436,7 +440,11 @@ def test_train_models_metadata_includes_momentum_features_and_excludes_targets(
     ):
         captured["all_features"] = all_features
         captured["model_metadata"] = model_metadata
-        return {"model_metadata": "models/horizon_10/model_metadata.pkl"}
+        return {
+            "model_metadata": (
+                "models/excess_return/horizon_10/bundle/model_metadata.pkl"
+            )
+        }
 
     monkeypatch.setattr(model_training, "DataPreparator", FakePreparator)
     monkeypatch.setattr(model_training, "LinearRegression", FakeLinearRegression)
@@ -456,8 +464,8 @@ def test_train_models_metadata_includes_momentum_features_and_excludes_targets(
     )
     monkeypatch.setattr(
         model_training,
-        "save_horizon_model_artifacts",
-        fake_save_horizon_model_artifacts,
+        "save_excess_return_model_artifacts",
+        fake_save_excess_return_model_artifacts,
     )
 
     model_training.train_models(pd.DataFrame({"Close": [1.0]}), prediction_days=10)
@@ -607,7 +615,7 @@ def test_train_models_cross_sectional_ranking_trains_on_top_bottom_and_scores_al
             "basket_backtest_by_year": {},
         }
 
-    def fake_save_ranking_model_artifacts(
+    def fake_save_cross_sectional_top_bottom_artifacts(
         prediction_days,
         data_preparator,
         all_features,
@@ -617,16 +625,24 @@ def test_train_models_cross_sectional_ranking_trains_on_top_bottom_and_scores_al
         captured["saved_prediction_days"] = prediction_days
         captured["saved_all_features"] = all_features
         captured["saved_model_metadata"] = model_metadata
-        classifier.save_model("models/horizon_10/xgboost_classifier.json")
-        return {"model_metadata": "models/horizon_10/model_metadata.pkl"}
+        classifier.save_model(
+            "models/cross_sectional_top_bottom/horizon_10/"
+            "bundle/xgboost_classifier.json"
+        )
+        return {
+            "model_metadata": (
+                "models/cross_sectional_top_bottom/horizon_10/"
+                "bundle/model_metadata.pkl"
+            )
+        }
 
     monkeypatch.setattr(model_training, "DataPreparator", FakePreparator)
     monkeypatch.setattr(model_training, "XGBClassifier", FakeRankingClassifier)
     monkeypatch.setattr(reporting, "build_top_n_selection_reports", fake_top_n_reports)
     monkeypatch.setattr(
         model_training,
-        "save_ranking_model_artifacts",
-        fake_save_ranking_model_artifacts,
+        "save_cross_sectional_top_bottom_artifacts",
+        fake_save_cross_sectional_top_bottom_artifacts,
     )
     monkeypatch.setattr(
         model_training, "log_feature_importances", lambda *args, **kwargs: None
@@ -660,7 +676,10 @@ def test_train_models_cross_sectional_ranking_trains_on_top_bottom_and_scores_al
     assert captured["top_n_random_trial_workers"] == 2
     assert captured["saved_prediction_days"] == 10
     assert captured["saved_all_features"] == MODEL_FEATURE_COLUMNS
-    assert captured["saved_classifier_path"] == "models/horizon_10/xgboost_classifier.json"
+    assert captured["saved_classifier_path"] == (
+        "models/cross_sectional_top_bottom/horizon_10/"
+        "bundle/xgboost_classifier.json"
+    )
 
     metadata = captured["saved_model_metadata"]
     assert metadata["target_mode"] == "cross_sectional_top_bottom"
@@ -973,7 +992,7 @@ def test_train_models_cross_sectional_rank_ndcg_trains_grouped_ranker_and_scores
             "basket_backtest_by_year": {},
         }
 
-    def fake_save_rank_ndcg_model_artifacts(
+    def fake_save_cross_sectional_rank_ndcg_artifacts(
         prediction_days,
         data_preparator,
         all_features,
@@ -983,15 +1002,20 @@ def test_train_models_cross_sectional_rank_ndcg_trains_grouped_ranker_and_scores
         captured["saved_prediction_days"] = prediction_days
         captured["saved_all_features"] = all_features
         captured["saved_model_metadata"] = model_metadata
-        return {"model_metadata": "models/horizon_10/model_metadata.pkl"}
+        return {
+            "model_metadata": (
+                "models/cross_sectional_rank_ndcg/horizon_10/"
+                "bundle/model_metadata.pkl"
+            )
+        }
 
     monkeypatch.setattr(model_training, "DataPreparator", FakePreparator)
     monkeypatch.setattr(model_training, "XGBRanker", FakeRanker)
     monkeypatch.setattr(reporting, "build_top_n_selection_reports", fake_top_n_reports)
     monkeypatch.setattr(
         model_training,
-        "save_rank_ndcg_model_artifacts",
-        fake_save_rank_ndcg_model_artifacts,
+        "save_cross_sectional_rank_ndcg_artifacts",
+        fake_save_cross_sectional_rank_ndcg_artifacts,
     )
     monkeypatch.setattr(
         model_training, "log_feature_importances", lambda *args, **kwargs: None
