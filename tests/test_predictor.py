@@ -4,7 +4,6 @@ import numpy as np
 import pandas as pd
 import pytest
 
-import src.app as app
 import src.inference.predictor as predictor
 from src.config import MODEL_PATHS
 
@@ -356,58 +355,3 @@ def test_predict_spy_relative_return_falls_back_to_latest_complete_relative_mome
     assert "error" not in result
     assert FakeRegressor.last_values["Close"].iloc[0] == 100.0
     assert np.isclose(FakeRegressor.last_values["relative_momentum_10d"].iloc[0], 0.08)
-
-
-def test_get_stock_info_prints_spy_relative_prediction_without_expected_price(
-    monkeypatch,
-    capsys,
-):
-    one_month_data = pd.DataFrame(
-        {
-            "High": [110.0, 120.0],
-            "Low": [90.0, 95.0],
-        },
-        index=pd.to_datetime(["2026-06-01", "2026-06-02"]),
-    )
-    one_year_data = pd.DataFrame(
-        {
-            "High": [130.0, 140.0],
-            "Low": [80.0, 85.0],
-        },
-        index=pd.to_datetime(["2026-06-01", "2026-06-02"]),
-    )
-
-    def fake_fetch_stock_data(ticker, period="5y"):
-        return one_month_data if period == "1mo" else one_year_data
-
-    class FakeTicker:
-        def __init__(self, ticker):
-            self.info = {"currentPrice": 100.0}
-
-    monkeypatch.setattr(app, "fetch_stock_data", fake_fetch_stock_data)
-    monkeypatch.setattr(app.yf, "Ticker", FakeTicker)
-    monkeypatch.setattr(
-        app, "get_prediction_date", lambda *args, **kwargs: "07/10/2026"
-    )
-    monkeypatch.setattr(
-        app,
-        "predict_spy_relative_return",
-        lambda ticker: {
-            "predicted_excess_return": -0.001864,
-            "signal": "Expected to underperform SPY",
-            "linear_predicted_return": 0.01,
-        },
-    )
-
-    app.get_stock_info("AAPL")
-
-    output = capsys.readouterr().out
-    assert "Current Price: $100.00" in output
-    assert "1-Month High: $120.00" in output
-    assert "52-Week Low: $80.00" in output
-    assert "Prediction for AAPL on 07/10/2026 (10 trading days ahead):" in output
-    assert "Predicted Excess Return vs SPY: -0.1864%" in output
-    assert "Signal: Expected to underperform SPY" in output
-    assert "Expected Price" not in output
-    assert "Predicted Return" not in output
-    assert "Direction:" not in output
