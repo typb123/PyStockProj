@@ -508,3 +508,9 @@ Aggregate results:
 * This negative result does not invalidate the large/mega-cap stock results. It instead suggests that the current model's useful domain may be specifically cross-sectional ranking among individual large/mega-cap stocks rather than arbitrary tradable assets.
 * Do not tune the model to improve ETF performance based on these results.
 * The planned robustness stage is now complete. Next step: structural refactor without changing research behavior.
+
+### August 2026 price-adjustment audit
+
+An audit identified a point-in-time data-validity issue in the canonical Rank-NDCG research. The project currently relies on Yahoo/yfinance historical OHLC data with retrospective corporate-action adjustment semantics. Of the 39 model features, 20 are absolute price-level or price-difference features whose historical values can therefore depend on later splits or dividends. Return-, ratio-, momentum-, volatility-, and most SPY-relative features do not have the same future scale-factor problem, and the audit did not identify corresponding issues in target alignment, chronological splitting, embargoes, SPY matching, or Rank-NDCG query construction.
+
+The previously documented 10d and 20d Rank-NDCG walk-forward results should therefore be treated as **provisional historical results**, not leakage-clean canonical evidence, until the affected feature contract is corrected and the experiments are rerun. The planned remediation is to make Yahoo adjustment semantics explicit, remove or normalize corporate-action-scale-sensitive features, improve data provenance metadata, retrain the serving bundles, and rerun the canonical 10d/20d max-history walk-forward evaluations. Simply switching to `auto_adjust=False` is not sufficient because Yahoo also retrospectively restates historical prices for stock splits.
