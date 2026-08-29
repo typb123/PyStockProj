@@ -1,76 +1,79 @@
 # PyStockProj
 
-PyStockProj is a research-oriented stock selection project. The current branch
-frames the model around SPY-relative ranked watchlists.
+PyStockProj is a cross-sectional stock-ranking ML research project built around
+XGBoost learning-to-rank (`rank:ndcg`). It pairs chronological walk-forward
+evaluation with a tested, versioned artifact and same-date inference pipeline.
 
-## Current Pipeline
+## What it does
 
-- Fetches historical daily OHLCV data with `yfinance`.
-- Builds technical indicators per ticker before concatenating ticker data.
-- Creates ticker-aware forward returns over a configurable trading-day horizon.
-- Aligns each stock row to SPY forward return by prediction date.
-- Trains on stock forward return minus SPY forward return.
-- Uses global chronological train/validation/test splits with embargo gaps.
-- Fits preprocessing scalers on training data only.
-- Trains three artifacts:
-  - Linear Regression baseline for excess return
-  - XGBoost classifier for whether a stock beats SPY
-  - XGBoost regressor for SPY-relative excess return
+- Trains an XGBoost learning-to-rank model with the `rank:ndcg` objective.
+- Scores stocks **relative to one another on a shared prediction date** to
+  produce a ranked watchlist; a score is not a predicted return or probability.
+- Uses SPY as the benchmark when constructing forward excess-return targets.
+- Serves explicit **10- and 20-trading-day** ranked-watchlist horizons.
+- Supports the configured `large_mega_cap_stocks` research universe and custom
+  ticker lists (with SPY excluded from candidates).
+- Enforces one shared SPY-anchored date across all ranked candidates at
+  inference time.
 
-The default horizon is 10 trading days. The trainer also supports explicit
-horizons and an all-horizons research run.
+The training pipeline includes chronological, embargoed walk-forward
+evaluation. Model artifacts are published as isolated, versioned bundles with
+feature contracts and checksum validation.
 
-## Evaluation
+## Research snapshot
 
-Training logs test-set diagnostics to `training.log`, including:
+The strongest canonical evidence is the max-history expanding walk-forward
+evaluation: 28 annual folds, with test years from 1999 through partial 2026,
+on the configured large/mega-cap universe. Top-5 aggregate results:
 
-- beat-benchmark classification reports
-- excess-return regression reports
-- probability threshold and validation-selected threshold reports
-- regressor ranking, quantile, and correlation reports
-- per-date Top-N ranked-selection reports
-- equal-weight Top-N basket backtest summaries
-- random, same-date universe, SPY benchmark, momentum, and relative-momentum baselines
+| Horizon | Model excess vs. SPY | Model minus momentum |
+| --- | ---: | ---: |
+| 10 trading days | +1.19% | +0.67% |
+| 20 trading days | +2.28% | +0.80% |
 
-Top-N reports rank candidates within each prediction date. SPY is the benchmark,
-not a normal candidate in ranked stock-selection evaluation.
+These are historical walk-forward research results, not promises of trading
+profitability. The primary limitation is survivorship/selection bias: the
+historical universe projects a contemporary large/mega-cap stock list backward,
+rather than using point-in-time historical membership.
 
-## Usage
+## Run
 
-Run the default 10-trading-day training workflow:
-
-```bash
-python -m src.train.trainer
-```
-
-Run all configured research horizons:
+Requires Python 3.10+.
 
 ```bash
-python -m src.train.trainer --all-horizons
+python3 -m venv venv
+./venv/bin/python -m pip install -r requirements-dev.txt
+
+# Train and publish a 10-day Rank-NDCG bundle. Replace 10 with 20 to train the
+# 20-day serving bundle; the app requires a matching bundle for its selection.
+./venv/bin/python -m src.train.trainer \
+  --prediction-days 10 \
+  --period max \
+  --target-mode cross_sectional_rank_ndcg \
+  --universe large_mega_cap_stocks
+
+# Run the interactive ranked-watchlist application (choose 10d or 20d).
+./venv/bin/python -m src.app
+
+# Run the max-history 10-day walk-forward evaluation; replace 10 with 20 for
+# the 20-day evaluation.
+./venv/bin/python -m src.train.trainer \
+  --prediction-days 10 \
+  --period max \
+  --universe large_mega_cap_stocks \
+  --target-mode cross_sectional_rank_ndcg \
+  --walk-forward
+
+# Test.
+./venv/bin/python -m pytest -q
 ```
 
-Useful runtime controls:
+Generated model artifacts live under `models/` and are intentionally not
+committed. Train the relevant horizon before using the application.
 
-```bash
-python -m src.train.trainer --prediction-days 10 --period 10y --random-trials 20
-python -m src.train.trainer --all-horizons --period max --random-trial-workers 4
-```
+## Further reading
 
-## Scripts
-
-- `scripts/run_medium_signal_check.py` runs a fixed 10-ticker smoke check and
-  prints an AAPL prediction after training.
-- `scripts/run_current_model_experiments.py` is kept for historical reference;
-  the trainer CLI is the authoritative current workflow.
-
-## Artifacts
-
-Training writes model and preprocessing artifacts under `models/`, including:
-
-- model files
-- linear-model scaler
-- fitted `DataPreparator`
-- feature names
-- model metadata used by prediction-time feature alignment and target semantics
-
-Generated artifacts, caches, and logs are intentionally ignored by Git.
+- [Experiment notes](docs/EXPERIMENT_NOTES.md) — detailed results and history.
+- [Data audit](docs/DATA_AUDIT.md) — data sources, coverage, and limitations.
+- [Ranking target design](docs/CROSS_SECTIONAL_RANKING_TARGET_DESIGN.md) —
+  target and evaluation rationale.
