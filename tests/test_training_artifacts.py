@@ -24,6 +24,12 @@ class BrokenXgbModel:
 
 def build_metadata(target_mode, prediction_days, features=None):
     features = list(features or ["Close", "Volume"])
+    training_population = {
+        "universe_name": "test_universe",
+        "candidate_tickers": ["AAA", "BBB"],
+        "candidate_ticker_count": 2,
+        "benchmark_ticker": "SPY",
+    }
     return artifacts.build_model_metadata(
         linear_features=["Close"],
         classifier_features=features,
@@ -32,6 +38,7 @@ def build_metadata(target_mode, prediction_days, features=None):
         ),
         prediction_days=prediction_days,
         target_mode=target_mode,
+        training_population=training_population,
     )
 
 
@@ -174,6 +181,12 @@ def test_manifest_records_contract_semantics_artifacts_and_checksums(
     assert manifest["model_artifact_type"] == "ranker"
     assert manifest["prediction_days"] == 10
     assert manifest["benchmark_ticker"] == "SPY"
+    assert manifest["training_population"] == {
+        "universe_name": "test_universe",
+        "candidate_tickers": ["AAA", "BBB"],
+        "candidate_ticker_count": 2,
+        "benchmark_ticker": "SPY",
+    }
     assert manifest["feature_contract"] == {
         "preprocessor": ["Close", "Volume"],
         "models": {"ranker": ["Close", "Volume"]},
@@ -280,6 +293,25 @@ def test_checksum_validation_rejects_modified_artifact(tmp_path, monkeypatch):
     with pytest.raises(
         artifacts.ArtifactBundleValidationError,
         match="Checksum mismatch",
+    ):
+        artifacts.load_and_validate_bundle_manifest(paths["bundle_dir"])
+
+
+def test_schema_one_bundle_without_provenance_is_not_reconstructed(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.chdir(tmp_path)
+    paths = save_bundle("cross_sectional_rank_ndcg", 10)
+    manifest_path = Path(paths["manifest"])
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["schema_version"] = 1
+    del manifest["training_population"]
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    with pytest.raises(
+        artifacts.ArtifactBundleValidationError,
+        match="schema_version",
     ):
         artifacts.load_and_validate_bundle_manifest(paths["bundle_dir"])
 

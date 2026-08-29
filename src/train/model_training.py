@@ -13,6 +13,7 @@ from xgboost import XGBClassifier, XGBRanker, XGBRegressor
 from src.config import (
     PREDICTION_DAYS,
     TEST_SIZE,
+    TRAINING_UNIVERSES,
     XG_PARAMS_CLASSIFIER,
     XG_PARAMS_REGRESSOR,
 )
@@ -61,6 +62,51 @@ XG_PARAMS_RANKER = {
     "reg_lambda": 5.0,
     "random_state": 42,
 }
+
+
+def _build_training_population(
+    data: pd.DataFrame,
+    *,
+    universe_name: str | None,
+    benchmark_ticker: str = "SPY",
+) -> dict:
+    """Record the ordered tickers actually present in one training input frame."""
+    if "Ticker" not in data.columns:
+        raise ValueError("Training data must include Ticker for artifact provenance.")
+    if universe_name is not None and (
+        not isinstance(universe_name, str) or not universe_name
+    ):
+        raise ValueError("training_universe_name must be a non-empty string or None.")
+    if universe_name is not None and universe_name not in TRAINING_UNIVERSES:
+        raise ValueError(
+            "training_universe_name must identify a configured training universe."
+        )
+
+    ordered_tickers = []
+    seen = set()
+    for raw_ticker in data["Ticker"]:
+        ticker = str(raw_ticker).strip().upper()
+        if not ticker or ticker in seen:
+            continue
+        seen.add(ticker)
+        ordered_tickers.append(ticker)
+
+    if benchmark_ticker not in seen:
+        raise ValueError(
+            f"Training data must include benchmark ticker {benchmark_ticker}."
+        )
+    candidate_tickers = [
+        ticker for ticker in ordered_tickers if ticker != benchmark_ticker
+    ]
+    if not candidate_tickers:
+        raise ValueError("Training data must include at least one candidate ticker.")
+
+    return {
+        "universe_name": universe_name,
+        "candidate_tickers": candidate_tickers,
+        "candidate_ticker_count": len(candidate_tickers),
+        "benchmark_ticker": benchmark_ticker,
+    }
 
 
 def _finite_report_float(value):
@@ -460,6 +506,7 @@ def train_cross_sectional_rank_ndcg_model(
     prediction_days,
     random_trials,
     random_trial_workers,
+    training_population,
     ranker_params=None,
 ):
     """Train grouped learning-to-rank model on same-date rank percentile labels."""
@@ -520,6 +567,7 @@ def train_cross_sectional_rank_ndcg_model(
         regressor_features=[],
         prediction_days=prediction_days,
         target_mode=TARGET_MODE_CROSS_SECTIONAL_RANK_NDCG,
+        training_population=training_population,
     )
     model_metadata["ranker_training_row_count"] = int(len(x_train_grouped))
     model_metadata["ranker_training_candidate_count"] = int(len(x_train_ranker))
@@ -576,6 +624,7 @@ def train_cross_sectional_ranking_model(
     prediction_days,
     random_trials,
     random_trial_workers,
+    training_population,
     classifier_params=None,
 ):
     """Train ranking-mode classifier on labeled top/bottom rows and score all rows."""
@@ -635,6 +684,7 @@ def train_cross_sectional_ranking_model(
         regressor_features=[],
         prediction_days=prediction_days,
         target_mode=TARGET_MODE_CROSS_SECTIONAL_TOP_BOTTOM,
+        training_population=training_population,
     )
     model_metadata["ranking_training_row_count"] = int(len(x_train_ranking))
     model_metadata["ranking_training_candidate_count"] = int(len(x_train_classifier))
@@ -682,6 +732,7 @@ def train_models(
     regressor_params: dict | None = None,
     ranker_params: dict | None = None,
     feature_columns_override: list[str] | None = None,
+    training_universe_name: str | None = None,
 ) -> dict:
     """
     Train the linear baseline, beat-benchmark classifier, and excess-return regressor.
@@ -698,6 +749,10 @@ def train_models(
 
     # DataPreparator owns target creation, chronological splits, and shared scaling.
     data = validate_input_data(data)
+    training_population = _build_training_population(
+        data,
+        universe_name=training_universe_name,
+    )
     data_preparator = DataPreparator()
     prepared_data = data_preparator.prepare_for_train(
         data, prediction_days=prediction_days, test_size=TEST_SIZE
@@ -774,6 +829,7 @@ def train_models(
             prediction_days,
             random_trials,
             random_trial_workers,
+            training_population,
             ranker_params=ranker_params,
         )
 
@@ -790,6 +846,7 @@ def train_models(
             prediction_days,
             random_trials,
             random_trial_workers,
+            training_population,
             classifier_params=classifier_params,
         )
 
@@ -882,6 +939,7 @@ def train_models(
         regressor_features,
         prediction_days,
         target_mode=target_mode,
+        training_population=training_population,
     )
     model_metadata["regressor_validation_selection"] = (
         regressor_validation_selection_report

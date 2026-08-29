@@ -269,6 +269,7 @@ def main(argv=None):
             target_mode=args.target_mode,
             random_trials=args.random_trials,
             random_trial_workers=args.random_trial_workers,
+            training_universe_name=args.universe,
         )
         logging.info(f"Model training completed for prediction_days={prediction_days}.")
 

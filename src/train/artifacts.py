@@ -23,7 +23,7 @@ from src.train.training_contract import (
 )
 
 
-BUNDLE_SCHEMA_VERSION = 1
+BUNDLE_SCHEMA_VERSION = 2
 MANIFEST_FILENAME = "manifest.json"
 CURRENT_POINTER_FILENAME = "current.json"
 
@@ -88,6 +88,7 @@ def build_model_metadata(
     regressor_features,
     prediction_days,
     target_mode=TARGET_MODE_EXCESS_RETURN,
+    training_population=None,
 ):
     """Build prediction-time metadata needed to align saved artifacts and features."""
     metadata = {
@@ -102,6 +103,7 @@ def build_model_metadata(
         "benchmark_ticker": "SPY",
         "regressor_target": "targetReturns",
         "classifier_target": "beat_benchmark_target",
+        "training_population": training_population,
     }
     if target_mode == TARGET_MODE_CROSS_SECTIONAL_TOP_BOTTOM:
         metadata.update(
@@ -233,6 +235,7 @@ def _build_manifest(
             "models": _ordered_model_features(target_mode, model_metadata),
         },
         "score_target_semantics": semantics,
+        "training_population": model_metadata.get("training_population"),
         "artifacts": {
             artifact_name: {
                 "filename": artifact_path.name,
@@ -314,6 +317,45 @@ def _validate_manifest_data(
     if not isinstance(benchmark_ticker, str) or not benchmark_ticker:
         raise ArtifactBundleValidationError(
             "Manifest benchmark_ticker must be a non-empty string."
+        )
+
+    training_population = manifest.get("training_population")
+    if not isinstance(training_population, dict):
+        raise ArtifactBundleValidationError(
+            "Manifest training_population must be an object."
+        )
+    if set(training_population) != {
+        "universe_name",
+        "candidate_tickers",
+        "candidate_ticker_count",
+        "benchmark_ticker",
+    }:
+        raise ArtifactBundleValidationError(
+            "Manifest training_population fields are incomplete."
+        )
+    universe_name = training_population["universe_name"]
+    if universe_name is not None and (
+        not isinstance(universe_name, str) or not universe_name
+    ):
+        raise ArtifactBundleValidationError(
+            "Manifest training_population universe_name is invalid."
+        )
+    candidate_tickers = training_population["candidate_tickers"]
+    _require_nonempty_ordered_strings(
+        candidate_tickers,
+        "training_population.candidate_tickers",
+    )
+    if benchmark_ticker in candidate_tickers:
+        raise ArtifactBundleValidationError(
+            "Manifest training candidates must not include the benchmark ticker."
+        )
+    if training_population["candidate_ticker_count"] != len(candidate_tickers):
+        raise ArtifactBundleValidationError(
+            "Manifest training candidate count does not match candidate_tickers."
+        )
+    if training_population["benchmark_ticker"] != benchmark_ticker:
+        raise ArtifactBundleValidationError(
+            "Manifest training benchmark does not match benchmark_ticker."
         )
 
     spec = _MODE_BUNDLE_SPECS[target_mode]
@@ -416,13 +458,13 @@ def load_and_validate_bundle_manifest(
     return manifest
 
 
-def load_current_bundle_manifest(
+def resolve_current_bundle(
     target_mode: str,
     prediction_days: int,
     *,
     artifact_root: str | Path = MODEL_ARTIFACT_ROOT,
-) -> dict:
-    """Resolve current.json and validate its immutable bundle without loading pickle."""
+) -> tuple[Path, dict]:
+    """Resolve and validate the current immutable bundle without loading pickle."""
     horizon_dir = _horizon_directory(target_mode, prediction_days, artifact_root)
     current_path = horizon_dir / CURRENT_POINTER_FILENAME
     try:
@@ -450,11 +492,28 @@ def load_current_bundle_manifest(
             f"Current bundle pointer is invalid: {current_path}"
         )
 
-    return load_and_validate_bundle_manifest(
-        horizon_dir / bundle_id,
+    bundle_dir = horizon_dir / bundle_id
+    manifest = load_and_validate_bundle_manifest(
+        bundle_dir,
         expected_target_mode=target_mode,
         expected_prediction_days=prediction_days,
     )
+    return bundle_dir, manifest
+
+
+def load_current_bundle_manifest(
+    target_mode: str,
+    prediction_days: int,
+    *,
+    artifact_root: str | Path = MODEL_ARTIFACT_ROOT,
+) -> dict:
+    """Return the validated current manifest without loading serialized artifacts."""
+    _, manifest = resolve_current_bundle(
+        target_mode,
+        prediction_days,
+        artifact_root=artifact_root,
+    )
+    return manifest
 
 
 def _publish_artifact_bundle(

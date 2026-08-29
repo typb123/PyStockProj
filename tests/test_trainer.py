@@ -519,6 +519,7 @@ def test_main_trains_all_horizons_and_logs_comparison(monkeypatch, caplog, capsy
         random_trials=100,
         random_trial_workers=4,
         target_mode="excess_return",
+        training_universe_name=None,
     ):
         trained_horizons.append(prediction_days)
         trained_target_modes.append(target_mode)
@@ -598,9 +599,11 @@ def test_main_passes_selected_broad_sector_etf_universe_to_prepare_data(
         random_trials=100,
         random_trial_workers=4,
         target_mode="excess_return",
+        training_universe_name=None,
     ):
         trained_horizons.append(prediction_days)
         trained_target_modes.append(target_mode)
+        assert training_universe_name == "broad_sector_etfs"
         return {
             "prediction_days": prediction_days,
             "basket_backtest": {
@@ -659,6 +662,7 @@ def test_main_single_horizon_prints_top_n_basket_summary(monkeypatch, capsys):
         random_trials=100,
         random_trial_workers=4,
         target_mode="excess_return",
+        training_universe_name=None,
     ):
         trained_horizons.append(prediction_days)
         trained_target_modes.append(target_mode)
@@ -733,6 +737,7 @@ def test_main_passes_cross_sectional_target_mode_to_train_models(monkeypatch):
         random_trials=100,
         random_trial_workers=4,
         target_mode="excess_return",
+        training_universe_name=None,
     ):
         trained_target_modes.append(target_mode)
         return {

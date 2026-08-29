@@ -14,6 +14,43 @@ import src.train.model_training as model_training
 import src.train.reporting as reporting
 
 
+def make_training_input_frame():
+    return pd.DataFrame(
+        {
+            "Close": [1.0, 1.0],
+            "Ticker": ["AAA", "SPY"],
+        }
+    )
+
+
+def test_build_training_population_preserves_actual_order_and_excludes_spy():
+    data = pd.DataFrame(
+        {
+            "Ticker": ["SPY", "nvda", "AAPL", "NVDA", "amd", "SPY"],
+        }
+    )
+
+    named = model_training._build_training_population(
+        data,
+        universe_name="large_mega_cap_stocks",
+    )
+    unnamed = model_training._build_training_population(
+        data,
+        universe_name=None,
+    )
+
+    assert named == {
+        "universe_name": "large_mega_cap_stocks",
+        "candidate_tickers": ["NVDA", "AAPL", "AMD"],
+        "candidate_ticker_count": 3,
+        "benchmark_ticker": "SPY",
+    }
+    assert unnamed == {
+        **named,
+        "universe_name": None,
+    }
+
+
 def test_xgboost_regressor_candidates_include_default_baseline():
     candidates = model_training.build_xgboost_regressor_candidate_configs()
 
@@ -330,7 +367,7 @@ def test_train_models_uses_selected_regressor_predictions_for_final_report(
         fake_save_excess_return_model_artifacts,
     )
 
-    report = model_training.train_models(pd.DataFrame({"Close": [1.0]}), prediction_days=10)
+    report = model_training.train_models(make_training_input_frame(), prediction_days=10)
 
     np.testing.assert_array_equal(captured["regressor_fit_y"][0], y_train)
     np.testing.assert_array_equal(
@@ -352,6 +389,12 @@ def test_train_models_uses_selected_regressor_predictions_for_final_report(
     )
     assert captured["saved_model_metadata"]["xgboost_regressor_selected_params"] == {
         "prediction": 0.04
+    }
+    assert captured["saved_model_metadata"]["training_population"] == {
+        "universe_name": None,
+        "candidate_tickers": ["AAA"],
+        "candidate_ticker_count": 1,
+        "benchmark_ticker": "SPY",
     }
 
 
@@ -468,7 +511,7 @@ def test_train_models_metadata_includes_momentum_features_and_excludes_targets(
         fake_save_excess_return_model_artifacts,
     )
 
-    model_training.train_models(pd.DataFrame({"Close": [1.0]}), prediction_days=10)
+    model_training.train_models(make_training_input_frame(), prediction_days=10)
 
     metadata = captured["model_metadata"]
     assert metadata["target_mode"] == "excess_return"
@@ -502,7 +545,7 @@ def test_train_models_rejects_unknown_target_mode(monkeypatch):
         match="Unsupported target_mode='bad_mode'",
     ):
         model_training.train_models(
-            pd.DataFrame({"Close": [1.0]}),
+            make_training_input_frame(),
             target_mode="bad_mode",
         )
 
@@ -654,7 +697,7 @@ def test_train_models_cross_sectional_ranking_trains_on_top_bottom_and_scores_al
     )
 
     report = model_training.train_models(
-        pd.DataFrame({"Close": [1.0]}),
+        make_training_input_frame(),
         prediction_days=10,
         target_mode="cross_sectional_top_bottom",
         random_trials=7,
@@ -763,7 +806,7 @@ def test_train_models_cross_sectional_ranking_requires_ranking_metadata(monkeypa
         match=r"requires split_metadata\['train'\] columns",
     ):
         model_training.train_models(
-            pd.DataFrame({"Close": [1.0]}),
+            make_training_input_frame(),
             target_mode="cross_sectional_top_bottom",
         )
 
@@ -813,7 +856,7 @@ def test_train_models_cross_sectional_ranking_requires_test_split_metadata(
         match=r"target_mode='cross_sectional_top_bottom' requires split_metadata\['test'\]",
     ):
         model_training.train_models(
-            pd.DataFrame({"Close": [1.0]}),
+            make_training_input_frame(),
             target_mode="cross_sectional_top_bottom",
         )
 
@@ -862,7 +905,7 @@ def test_train_models_cross_sectional_ranking_requires_both_classes(monkeypatch)
         match="Ranking training sample must contain both classes",
     ):
         model_training.train_models(
-            pd.DataFrame({"Close": [1.0]}),
+            make_training_input_frame(),
             target_mode="cross_sectional_top_bottom",
         )
 
@@ -1027,7 +1070,7 @@ def test_train_models_cross_sectional_rank_ndcg_trains_grouped_ranker_and_scores
     )
 
     report = model_training.train_models(
-        pd.DataFrame({"Close": [1.0]}),
+        make_training_input_frame(),
         prediction_days=10,
         target_mode="cross_sectional_rank_ndcg",
         random_trials=7,
@@ -1093,7 +1136,7 @@ def test_train_models_rejects_unknown_feature_columns_override(monkeypatch):
 
     with pytest.raises(ValueError, match="feature_columns_override"):
         model_training.train_models(
-            pd.DataFrame({"Close": [1.0]}),
+            make_training_input_frame(),
             target_mode="cross_sectional_rank_ndcg",
             feature_columns_override=["momentum_10d", "targetReturns"],
         )
@@ -1133,6 +1176,7 @@ def test_train_models_feature_columns_override_reaches_rank_ndcg_branch(monkeypa
         prediction_days,
         random_trials,
         random_trial_workers,
+        training_population,
         ranker_params=None,
     ):
         captured.append(
@@ -1154,11 +1198,11 @@ def test_train_models_feature_columns_override_reaches_rank_ndcg_branch(monkeypa
     )
 
     model_training.train_models(
-        pd.DataFrame({"Close": [1.0]}),
+        make_training_input_frame(),
         target_mode="cross_sectional_rank_ndcg",
     )
     model_training.train_models(
-        pd.DataFrame({"Close": [1.0]}),
+        make_training_input_frame(),
         target_mode="cross_sectional_rank_ndcg",
         feature_columns_override=override_features,
     )
@@ -1227,6 +1271,6 @@ def test_train_models_cross_sectional_rank_ndcg_requires_rank_metadata(
 
     with pytest.raises(ValueError, match=expected_message):
         model_training.train_models(
-            pd.DataFrame({"Close": [1.0]}),
+            make_training_input_frame(),
             target_mode="cross_sectional_rank_ndcg",
         )

@@ -17,6 +17,47 @@ from src.features.feature_contract import (
 )
 
 
+def add_benchmark_relative_momentum(
+    df: pd.DataFrame,
+    benchmark_ticker: str = "SPY",
+) -> pd.DataFrame:
+    """Add same-date benchmark-relative trailing momentum without creating targets."""
+    available_momentum_columns = [
+        column
+        for column in ABSOLUTE_MOMENTUM_FEATURE_COLUMNS
+        if column in df.columns
+    ]
+    if not available_momentum_columns:
+        return df.copy()
+
+    benchmark_rows = df[df["Ticker"] == benchmark_ticker]
+    if benchmark_rows.empty:
+        raise ValueError(f"Benchmark ticker {benchmark_ticker} is missing.")
+
+    benchmark_momentum = benchmark_rows[
+        ["prediction_date"] + available_momentum_columns
+    ].drop_duplicates(
+        subset=["prediction_date"],
+        keep="first",
+    )
+    benchmark_momentum = benchmark_momentum.rename(
+        columns={
+            column: f"benchmark_{column}"
+            for column in available_momentum_columns
+        }
+    )
+
+    result = df.merge(benchmark_momentum, on="prediction_date", how="left")
+    for column in available_momentum_columns:
+        window = column.removeprefix("momentum_")
+        result[f"relative_momentum_{window}"] = (
+            result[column] - result[f"benchmark_{column}"]
+        )
+        result = result.drop(columns=[f"benchmark_{column}"])
+
+    return result
+
+
 class DataPreparator:
     """
     Prepare features, SPY-relative targets, global date splits, and scaled arrays.
@@ -113,44 +154,7 @@ class DataPreparator:
 
     def _add_benchmark_relative_momentum(self, df: pd.DataFrame) -> pd.DataFrame:
         """Add same-date benchmark-relative trailing momentum features."""
-        momentum_columns = [
-            "momentum_5d",
-            "momentum_10d",
-            "momentum_20d",
-            "momentum_50d",
-        ]
-        available_momentum_columns = [
-            column for column in momentum_columns if column in df.columns
-        ]
-        if not available_momentum_columns:
-            return df
-
-        benchmark_rows = df[df["Ticker"] == self.benchmark_ticker]
-        if benchmark_rows.empty:
-            raise ValueError(f"Benchmark ticker {self.benchmark_ticker} is missing.")
-
-        benchmark_momentum = benchmark_rows[
-            ["prediction_date"] + available_momentum_columns
-        ].drop_duplicates(
-            subset=["prediction_date"],
-            keep="first",
-        )
-        benchmark_momentum = benchmark_momentum.rename(
-            columns={
-                column: f"benchmark_{column}"
-                for column in available_momentum_columns
-            }
-        )
-
-        df = df.merge(benchmark_momentum, on="prediction_date", how="left")
-        for column in available_momentum_columns:
-            window = column.removeprefix("momentum_")
-            df[f"relative_momentum_{window}"] = (
-                df[column] - df[f"benchmark_{column}"]
-            )
-            df = df.drop(columns=[f"benchmark_{column}"])
-
-        return df
+        return add_benchmark_relative_momentum(df, self.benchmark_ticker)
 
     def _create_benchmark_relative_targets(
         self,
