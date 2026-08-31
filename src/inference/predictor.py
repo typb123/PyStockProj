@@ -1,7 +1,8 @@
-"""Prediction-time inference using the artifacts saved by trainer.py.
+"""Legacy inference helpers for earlier regression/classifier workflows.
 
-Feature order, preprocessing, and model feature subsets are loaded from training
-artifacts so live predictions match the trained inputs.
+The current application serves Rank-NDCG ranked watchlists through
+src.inference.ranked_watchlist. This module is retained for historical
+research and compatibility and is not part of the current serving path.
 """
 
 import joblib

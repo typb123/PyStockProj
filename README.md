@@ -3,6 +3,8 @@
 PyStockProj is a cross-sectional stock-ranking ML research project built around
 XGBoost learning-to-rank (`rank:ndcg`). It pairs chronological walk-forward
 evaluation with a tested, versioned artifact and same-date inference pipeline.
+After the market closes, the application ranks a set of stocks by which appear
+most likely to outperform SPY over the next 10 or 20 trading sessions.
 
 ## What it does
 
@@ -30,12 +32,12 @@ Example 10-day ranking for a custom ticker list:
 
 The corrected max-history expanding walk-forward evaluation covers 28 annual folds, with test years from 1999 through partial 2026, on the configured large/mega-cap universe. Top-5 results:
 
-| Horizon | Model excess vs. SPY | Model minus momentum |
+| Horizon | Avg. Top-5 excess vs. SPY | Model minus momentum |
 | --- | ---: | ---: |
 | 10 trading days | +1.07% | +0.61% |
 | 20 trading days | +1.85% | +0.47% |
 
-These are historical walk-forward research results, not promises of trading profitability. The primary limitation is survivorship/selection bias: the historical universe projects a contemporary large/mega-cap stock list backward rather than using point-in-time historical membership.
+These are average fold-level Top-5 basket diagnostics from historical walk-forward evaluation, not realized trading returns or promises of profitability. Evaluation windows overlap and do not include transaction costs. The primary limitation is survivorship/selection bias: the historical universe projects a contemporary large/mega-cap stock list backward rather than using point-in-time historical membership.
 
 ## Run
 
