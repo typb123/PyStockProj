@@ -33,7 +33,7 @@ def calculate_data(data: pd.DataFrame) -> pd.DataFrame:
         - Stochastic Oscillator
 
     Parameters:
-        data (pd.DataFrame): Stock DataFrame with 'Close', 'High', 'Low', 'Volume' columns.
+        data (pd.DataFrame): Stock DataFrame with OHLCV columns.
 
     Returns:
         pd.DataFrame: DataFrame with added technical indicators.
@@ -41,7 +41,7 @@ def calculate_data(data: pd.DataFrame) -> pd.DataFrame:
     Raises:
         KeyError: If required columns are missing.
     """
-    required_columns = {'Close', 'High', 'Low', 'Volume'}
+    required_columns = {'Open', 'High', 'Low', 'Close', 'Volume'}
     missing_cols = required_columns - set(data.columns)
     if missing_cols:
         raise KeyError(f"Input DataFrame must contain {missing_cols} columns")
@@ -49,10 +49,18 @@ def calculate_data(data: pd.DataFrame) -> pd.DataFrame:
     df = data.copy()
 
     # --- Indicator Functions ---
+    def calculate_price_relative_features(df: pd.DataFrame) -> pd.DataFrame:
+        """Express same-session OHLC information relative to the close."""
+        df['open_to_close'] = df['Open'] / df['Close'] - 1
+        df['high_to_close'] = df['High'] / df['Close'] - 1
+        df['low_to_close'] = df['Low'] / df['Close'] - 1
+        return df
+
     def calculate_moving_averages(df: pd.DataFrame, windows: List[int] = [5, 10, 20]) -> pd.DataFrame:
-        """Calculate Simple Moving Averages for specified windows."""
+        """Calculate scale-invariant Simple Moving Average distances."""
         for window in windows:
-            df[f'{window}_day_avg'] = df['Close'].rolling(window=window, min_periods=1).mean()
+            average = df['Close'].rolling(window=window, min_periods=1).mean()
+            df[f'sma_{window}_to_close'] = average / df['Close'] - 1
         return df
 
     def calculate_returns_and_volatility(df: pd.DataFrame, vol_window: int = 10) -> pd.DataFrame:
@@ -82,13 +90,16 @@ def calculate_data(data: pd.DataFrame) -> pd.DataFrame:
         return df
 
     def calculate_macd(df: pd.DataFrame, fast: int = 12, slow: int = 26, signal: int = 9) -> pd.DataFrame:
-        """Calculate MACD, signal line, and histogram."""
+        """Calculate MACD, signal line, and histogram relative to the close."""
         # Early MACD values remain NaN until the EMA lookback has enough rows.
         ema_fast = df['Close'].ewm(span=fast, min_periods=5, adjust=False).mean()
         ema_slow = df['Close'].ewm(span=slow, min_periods=5, adjust=False).mean()
-        df['macd'] = ema_fast - ema_slow
-        df['signalLine'] = df['macd'].ewm(span=signal, adjust=False).mean()
-        df['macdHistogram'] = df['macd'] - df['signalLine']
+        macd = ema_fast - ema_slow
+        signal_line = macd.ewm(span=signal, adjust=False).mean()
+        macd_histogram = macd - signal_line
+        df['macd_to_close'] = macd / df['Close']
+        df['signal_line_to_close'] = signal_line / df['Close']
+        df['macd_histogram_to_close'] = macd_histogram / df['Close']
         return df
 
     def calculate_obv(df: pd.DataFrame) -> pd.DataFrame:
@@ -104,16 +115,20 @@ def calculate_data(data: pd.DataFrame) -> pd.DataFrame:
         return df
 
     def calculate_bollinger_bands(df: pd.DataFrame, period: int = 20, std_dev: float = 2.0) -> pd.DataFrame:
-        """Calculate Bollinger Bands."""
+        """Calculate scale-invariant Bollinger band distances."""
         # Bollinger bands intentionally start after a minimum lookback window.
-        df['BB_Middle'] = df['Close'].rolling(window=period, min_periods=5).mean()
-        df['BB_Std'] = df['Close'].rolling(window=period, min_periods=5).std()
-        df['BB_Upper'] = df['BB_Middle'] + std_dev * df['BB_Std']
-        df['BB_Lower'] = df['BB_Middle'] - std_dev * df['BB_Std']
+        middle = df['Close'].rolling(window=period, min_periods=5).mean()
+        std = df['Close'].rolling(window=period, min_periods=5).std()
+        upper = middle + std_dev * std
+        lower = middle - std_dev * std
+        df['bb_middle_to_close'] = middle / df['Close'] - 1
+        df['bb_upper_to_close'] = upper / df['Close'] - 1
+        df['bb_lower_to_close'] = lower / df['Close'] - 1
+        df['bb_std_to_close'] = std / df['Close']
         return df
 
     def calculate_atr(df: pd.DataFrame, period: int = 14) -> pd.DataFrame:
-        """Calculate Average True Range (ATR)."""
+        """Calculate Average True Range relative to the close."""
         # Calculate True Range
         high_low = df['High'] - df['Low']
         high_close_prev = abs(df['High'] - df['Close'].shift(1))
@@ -127,7 +142,8 @@ def calculate_data(data: pd.DataFrame) -> pd.DataFrame:
         true_range = pd.concat([high_low, high_close_prev, low_close_prev], axis=1).max(axis=1)
 
         # Calculate ATR with better handling of NaN values
-        df['ATR'] = true_range.rolling(window=period, min_periods=1).mean().fillna(0)
+        atr = true_range.rolling(window=period, min_periods=1).mean().fillna(0)
+        df['atr_to_close'] = atr / df['Close']
 
         return df
 
@@ -140,22 +156,28 @@ def calculate_data(data: pd.DataFrame) -> pd.DataFrame:
         return df
 
     def calculate_ichimoku_cloud(df: pd.DataFrame) -> pd.DataFrame:
-        """Calculate Ichimoku-style features using only current and past rows."""
-        df['tenkan_sen'] = (df['High'].rolling(window=9, min_periods=5).max() +
-                            df['Low'].rolling(window=9, min_periods=5).min()) / 2
-        df['kijun_sen'] = (df['High'].rolling(window=26, min_periods=5).max() +
-                           df['Low'].rolling(window=26, min_periods=5).min()) / 2
+        """Calculate past-looking Ichimoku-style features relative to the close."""
+        tenkan_sen = (df['High'].rolling(window=9, min_periods=5).max() +
+                      df['Low'].rolling(window=9, min_periods=5).min()) / 2
+        kijun_sen = (df['High'].rolling(window=26, min_periods=5).max() +
+                     df['Low'].rolling(window=26, min_periods=5).min()) / 2
         # Positive shifts move historical cloud values forward; they do not expose future rows.
-        df['senkou_span_a'] = ((df['tenkan_sen'] + df['kijun_sen']) / 2).shift(26)
-        df['senkou_span_b'] = ((df['High'].rolling(window=52, min_periods=5).max() +
-                               df['Low'].rolling(window=52, min_periods=5).min()) / 2).shift(26)
+        senkou_span_a = ((tenkan_sen + kijun_sen) / 2).shift(26)
+        senkou_span_b = ((df['High'].rolling(window=52, min_periods=5).max() +
+                         df['Low'].rolling(window=52, min_periods=5).min()) / 2).shift(26)
         # Chikou-inspired ML features use a past close, not the future-shifted charting span.
-        df['chikou_lag_close_26'] = df['Close'].shift(26)
+        chikou_lag_close = df['Close'].shift(26)
+        df['tenkan_sen_to_close'] = tenkan_sen / df['Close'] - 1
+        df['kijun_sen_to_close'] = kijun_sen / df['Close'] - 1
+        df['senkou_span_a_to_close'] = senkou_span_a / df['Close'] - 1
+        df['senkou_span_b_to_close'] = senkou_span_b / df['Close'] - 1
+        df['chikou_lag_close_26_to_close'] = chikou_lag_close / df['Close'] - 1
         df['chikou_return_26'] = (df['Close'] - df['Close'].shift(26)) / df['Close'].shift(26)
         df['chikou_above_lag_26'] = (df['Close'] > df['Close'].shift(26)).astype(int)
         return df
 
     # --- Compute All Indicators ---
+    df = calculate_price_relative_features(df)
     df = calculate_moving_averages(df)
     df = calculate_returns_and_volatility(df)
     df = calculate_trailing_momentum(df)

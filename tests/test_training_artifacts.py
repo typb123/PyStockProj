@@ -118,6 +118,27 @@ def test_model_metadata_records_cross_sectional_rank_ndcg_fields():
     assert metadata["model_artifact_type"] == "ranker"
 
 
+def test_model_metadata_records_explicit_market_data_provenance():
+    provenance = {
+        "provider": "Yahoo Finance",
+        "library": "yfinance",
+        "library_version": "1.4.1",
+        "auto_adjust": True,
+        "price_convention": "yfinance_auto_adjusted_ohlcv",
+        "training_period": "max",
+    }
+    metadata = artifacts.build_model_metadata(
+        linear_features=[],
+        classifier_features=["feature"],
+        regressor_features=[],
+        prediction_days=10,
+        target_mode="cross_sectional_rank_ndcg",
+        data_provenance=provenance,
+    )
+
+    assert metadata["data_provenance"] == provenance
+
+
 def test_saved_bundles_are_isolated_by_mode(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     expected_artifact_types = {
@@ -187,6 +208,8 @@ def test_manifest_records_contract_semantics_artifacts_and_checksums(
         "candidate_ticker_count": 2,
         "benchmark_ticker": "SPY",
     }
+    assert manifest["data_provenance"]["provider"] == "Yahoo Finance"
+    assert manifest["data_provenance"]["auto_adjust"] is True
     assert manifest["feature_contract"] == {
         "preprocessor": ["Close", "Volume"],
         "models": {"ranker": ["Close", "Volume"]},

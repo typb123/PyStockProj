@@ -441,9 +441,9 @@ def test_data_preparator_fits_scaler_on_training_rows_only():
     )
 
     scaler = prepared["scalar"]
-    first_feature_index = prepared["feature_names"].index("Open")
+    first_feature_index = prepared["feature_names"].index("open_to_close")
     train_source_indices = prepared["split_metadata"]["train"]["_source_index"]
-    expected_train_mean = df.loc[train_source_indices, "Open"].mean()
+    expected_train_mean = df.loc[train_source_indices, "open_to_close"].mean()
 
     assert scaler.mean_[first_feature_index] == expected_train_mean
 

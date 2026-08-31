@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from src.data.data_fetch import fetch_stock_data
+from src.data.data_fetch import YFINANCE_PRICE_CONVENTION, fetch_stock_data
 from src.data.technical_indicators import calculate_data
 
 
@@ -48,11 +48,15 @@ def _sanitize_cache_key(value):
 
 
 def get_yfinance_cache_path(ticker, period, cache_dir=None):
-    """Return the raw OHLCV cache path for a ticker/period pair."""
+    """Return the price-convention-specific cache path for a ticker/period pair."""
     cache_dir = YFINANCE_CACHE_DIR if cache_dir is None else cache_dir
     ticker_key = _sanitize_cache_key(ticker.upper())
     period_key = _sanitize_cache_key(period)
-    return Path(cache_dir) / f"{ticker_key}__{period_key}.{YFINANCE_CACHE_FORMAT}"
+    price_convention_key = _sanitize_cache_key(YFINANCE_PRICE_CONVENTION)
+    return Path(cache_dir) / (
+        f"{ticker_key}__{period_key}__{price_convention_key}."
+        f"{YFINANCE_CACHE_FORMAT}"
+    )
 
 
 def normalize_raw_ohlcv_index(data: pd.DataFrame) -> pd.DataFrame:
@@ -65,7 +69,7 @@ def normalize_raw_ohlcv_index(data: pd.DataFrame) -> pd.DataFrame:
 
 
 def load_cached_yfinance_data(ticker, period, cache_dir=None):
-    """Load raw yfinance OHLCV data from cache, or return None on miss/failure."""
+    """Load adjusted yfinance OHLCV data from cache, or return None on miss/failure."""
     cache_path = get_yfinance_cache_path(ticker, period, cache_dir=cache_dir)
     if not cache_path.exists():
         logging.info(f"YFinance cache miss for {ticker} period={period}.")
@@ -85,7 +89,7 @@ def load_cached_yfinance_data(ticker, period, cache_dir=None):
 
 
 def write_yfinance_cache(data, ticker, period, cache_dir=None):
-    """Write raw yfinance OHLCV data to cache; warn but do not fail on errors."""
+    """Write adjusted yfinance OHLCV data to cache; warn but do not fail on errors."""
     cache_path = get_yfinance_cache_path(ticker, period, cache_dir=cache_dir)
     try:
         cache_path.parent.mkdir(parents=True, exist_ok=True)
@@ -99,7 +103,10 @@ def write_yfinance_cache(data, ticker, period, cache_dir=None):
 
 
 def fetch_raw_ticker_data(ticker, period="5y", use_cache=True):
-    """Fetch raw OHLCV data, optionally using the ticker/period cache."""
+    """Fetch adjusted OHLCV data, optionally using the ticker/period cache.
+
+    The historical function name is retained for caller compatibility.
+    """
     if use_cache:
         cached_data = load_cached_yfinance_data(ticker, period)
         if cached_data is not None:

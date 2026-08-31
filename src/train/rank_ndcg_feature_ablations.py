@@ -35,22 +35,19 @@ def build_rank_ndcg_feature_ablation_specs() -> list[FeatureAblationSpec]:
     """Build the initial controlled feature-group ablation grid."""
     all_features = list(MODEL_FEATURE_COLUMNS)
     groups = MODEL_FEATURE_GROUPS
-    raw_ohlc = {"Open", "High", "Low", "Close"}
+    raw_ohlc = {"open_to_close", "high_to_close", "low_to_close"}
     price_level_trend = set(
         [
-            "Open",
-            "High",
-            "Low",
-            "Close",
+            *raw_ohlc,
             *groups["trend"],
-            "BB_Middle",
-            "BB_Upper",
-            "BB_Lower",
-            "tenkan_sen",
-            "kijun_sen",
-            "senkou_span_a",
-            "senkou_span_b",
-            "chikou_lag_close_26",
+            "bb_middle_to_close",
+            "bb_upper_to_close",
+            "bb_lower_to_close",
+            "tenkan_sen_to_close",
+            "kijun_sen_to_close",
+            "senkou_span_a_to_close",
+            "senkou_span_b_to_close",
+            "chikou_lag_close_26_to_close",
         ]
     )
     volume_scale = {"Volume", "vma_10", "vma_20", "obv"}
@@ -60,12 +57,12 @@ def build_rank_ndcg_feature_ablation_specs() -> list[FeatureAblationSpec]:
             *groups["spy_relative_momentum"],
             "dailyReturn",
             "volatility",
-            "ATR",
-            "BB_Std",
+            "atr_to_close",
+            "bb_std_to_close",
             "rsi",
             "stoch_k",
             "stoch_d",
-            "macdHistogram",
+            "macd_histogram_to_close",
         ]
     )
     momentum_plus_volatility = set(
@@ -74,8 +71,8 @@ def build_rank_ndcg_feature_ablation_specs() -> list[FeatureAblationSpec]:
             *groups["spy_relative_momentum"],
             "dailyReturn",
             "volatility",
-            "ATR",
-            "BB_Std",
+            "atr_to_close",
+            "bb_std_to_close",
         ]
     )
 
@@ -88,12 +85,12 @@ def build_rank_ndcg_feature_ablation_specs() -> list[FeatureAblationSpec]:
         FeatureAblationSpec(
             name="drop_raw_ohlc",
             feature_columns=_without(all_features, raw_ohlc),
-            removed_groups="raw_ohlc",
+            removed_groups="intraday_price_relative",
         ),
         FeatureAblationSpec(
             name="drop_price_level_trend",
             feature_columns=_without(all_features, price_level_trend),
-            removed_groups="raw_ohlc,trend,bollinger_levels,ichimoku_levels",
+            removed_groups="price_relative,trend,bollinger_distances,ichimoku_distances",
         ),
         FeatureAblationSpec(
             name="drop_volume_scale",
@@ -115,13 +112,19 @@ def build_rank_ndcg_feature_ablation_specs() -> list[FeatureAblationSpec]:
         ),
         FeatureAblationSpec(
             name="drop_macd_redundant",
-            feature_columns=_without(all_features, {"macd", "signalLine"}),
-            removed_groups="macd,signalLine",
+            feature_columns=_without(
+                all_features,
+                {"macd_to_close", "signal_line_to_close"},
+            ),
+            removed_groups="macd_to_close,signal_line_to_close",
         ),
         FeatureAblationSpec(
             name="minimal_momentum_risk_oscillator",
             feature_columns=_only(all_features, minimal_momentum_risk_oscillator),
-            included_groups="momentum,relative_momentum,risk,rsi,stochastic,macdHistogram",
+            included_groups=(
+                "momentum,relative_momentum,risk,rsi,stochastic,"
+                "macd_histogram_to_close"
+            ),
         ),
         FeatureAblationSpec(
             name="momentum_only",
@@ -131,7 +134,10 @@ def build_rank_ndcg_feature_ablation_specs() -> list[FeatureAblationSpec]:
         FeatureAblationSpec(
             name="momentum_plus_volatility",
             feature_columns=_only(all_features, momentum_plus_volatility),
-            included_groups="momentum,relative_momentum,volatility,ATR,BB_Std",
+            included_groups=(
+                "momentum,relative_momentum,volatility,atr_to_close,"
+                "bb_std_to_close"
+            ),
         ),
     ]
 

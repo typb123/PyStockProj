@@ -229,7 +229,7 @@ def main(argv=None):
     training_tickers = get_training_tickers(args.universe)
     logging.info(f"Selected YFinance period: {args.period}")
     logging.info(f"Selected target mode: {args.target_mode}")
-    logging.info(f"Raw YFinance OHLCV cache enabled: {use_cache}")
+    logging.info(f"YFinance adjusted OHLCV cache enabled: {use_cache}")
     logging.info(
         f"Selected training universe: {args.universe} "
         f"({len(training_tickers)} tickers): {training_tickers}"
@@ -270,6 +270,7 @@ def main(argv=None):
             random_trials=args.random_trials,
             random_trial_workers=args.random_trial_workers,
             training_universe_name=args.universe,
+            training_period=args.period,
         )
         logging.info(f"Model training completed for prediction_days={prediction_days}.")
 

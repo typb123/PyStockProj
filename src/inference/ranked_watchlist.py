@@ -156,6 +156,7 @@ def _load_rank_ndcg_bundle(
         or list(model_metadata.get("classifier_features", [])) != ranker_features
         or model_metadata.get("training_population")
         != manifest.get("training_population")
+        or model_metadata.get("data_provenance") != manifest.get("data_provenance")
     ):
         raise RankedWatchlistArtifactError(
             "Serialized model metadata does not match the validated manifest."

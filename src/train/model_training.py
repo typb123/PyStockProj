@@ -18,6 +18,7 @@ from src.config import (
     XG_PARAMS_REGRESSOR,
 )
 from src.data.data_prep import DataPreparator
+from src.data.data_fetch import get_yfinance_data_provenance
 from src.data.training_data import validate_input_data
 from src.train.artifacts import (
     build_model_metadata,
@@ -507,6 +508,7 @@ def train_cross_sectional_rank_ndcg_model(
     random_trials,
     random_trial_workers,
     training_population,
+    data_provenance=None,
     ranker_params=None,
 ):
     """Train grouped learning-to-rank model on same-date rank percentile labels."""
@@ -568,6 +570,7 @@ def train_cross_sectional_rank_ndcg_model(
         prediction_days=prediction_days,
         target_mode=TARGET_MODE_CROSS_SECTIONAL_RANK_NDCG,
         training_population=training_population,
+        data_provenance=data_provenance,
     )
     model_metadata["ranker_training_row_count"] = int(len(x_train_grouped))
     model_metadata["ranker_training_candidate_count"] = int(len(x_train_ranker))
@@ -625,6 +628,7 @@ def train_cross_sectional_ranking_model(
     random_trials,
     random_trial_workers,
     training_population,
+    data_provenance=None,
     classifier_params=None,
 ):
     """Train ranking-mode classifier on labeled top/bottom rows and score all rows."""
@@ -685,6 +689,7 @@ def train_cross_sectional_ranking_model(
         prediction_days=prediction_days,
         target_mode=TARGET_MODE_CROSS_SECTIONAL_TOP_BOTTOM,
         training_population=training_population,
+        data_provenance=data_provenance,
     )
     model_metadata["ranking_training_row_count"] = int(len(x_train_ranking))
     model_metadata["ranking_training_candidate_count"] = int(len(x_train_classifier))
@@ -733,6 +738,7 @@ def train_models(
     ranker_params: dict | None = None,
     feature_columns_override: list[str] | None = None,
     training_universe_name: str | None = None,
+    training_period: str | None = None,
 ) -> dict:
     """
     Train the linear baseline, beat-benchmark classifier, and excess-return regressor.
@@ -753,6 +759,7 @@ def train_models(
         data,
         universe_name=training_universe_name,
     )
+    data_provenance = get_yfinance_data_provenance(training_period)
     data_preparator = DataPreparator()
     prepared_data = data_preparator.prepare_for_train(
         data, prediction_days=prediction_days, test_size=TEST_SIZE
@@ -774,37 +781,36 @@ def train_models(
 
     # Feature lists are intentionally inline for now; prediction metadata mirrors them.
     linear_features = [
-        "tenkan_sen",
-        "kijun_sen",
-        "senkou_span_a",
-        "senkou_span_b",
-        "chikou_lag_close_26",
+        "tenkan_sen_to_close",
+        "kijun_sen_to_close",
+        "senkou_span_a_to_close",
+        "senkou_span_b_to_close",
+        "chikou_lag_close_26_to_close",
         "chikou_return_26",
         "chikou_above_lag_26",
-        "Open",
-        "Close",
+        "open_to_close",
         "rsi",
-        "signalLine",
-        "ATR",
-        "20_day_avg",
-        "macd",
-        "BB_Std",
+        "signal_line_to_close",
+        "atr_to_close",
+        "sma_20_to_close",
+        "macd_to_close",
+        "bb_std_to_close",
         "obv",
         "dailyReturn",
-        "macdHistogram",
+        "macd_histogram_to_close",
         "vma_20",
-        "High",
-        "Low",
-        "BB_Middle",
-        "BB_Upper",
-        "BB_Lower",
+        "high_to_close",
+        "low_to_close",
+        "bb_middle_to_close",
+        "bb_upper_to_close",
+        "bb_lower_to_close",
         "stoch_k",
         "stoch_d",
         "Volume",
-        "10_day_avg",
+        "sma_10_to_close",
         "volatility",
         "vma_10",
-        "5_day_avg",
+        "sma_5_to_close",
     ]
     classifier_features = list(model_feature_columns)
     regressor_features = list(model_feature_columns)
@@ -830,6 +836,7 @@ def train_models(
             random_trials,
             random_trial_workers,
             training_population,
+            data_provenance=data_provenance,
             ranker_params=ranker_params,
         )
 
@@ -847,6 +854,7 @@ def train_models(
             random_trials,
             random_trial_workers,
             training_population,
+            data_provenance=data_provenance,
             classifier_params=classifier_params,
         )
 
@@ -940,6 +948,7 @@ def train_models(
         prediction_days,
         target_mode=target_mode,
         training_population=training_population,
+        data_provenance=data_provenance,
     )
     model_metadata["regressor_validation_selection"] = (
         regressor_validation_selection_report

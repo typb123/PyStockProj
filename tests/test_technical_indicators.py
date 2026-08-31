@@ -8,10 +8,11 @@ from src.features.feature_contract import (
     BASE_MODEL_FEATURE_COLUMNS,
     MODEL_FEATURE_COLUMNS,
 )
+from src.data.data_prep import add_benchmark_relative_momentum
 from src.data.technical_indicators import calculate_data
 
 
-def test_chikou_features_use_lagged_close_only():
+def test_chikou_features_preserve_lagged_close_timing_without_nominal_scale():
     close = np.arange(100.0, 140.0)
     df = pd.DataFrame(
         {
@@ -27,12 +28,15 @@ def test_chikou_features_use_lagged_close_only():
 
     expected_return = (df.loc[26, "Close"] - df.loc[0, "Close"]) / df.loc[0, "Close"]
 
-    assert result.loc[26, "chikou_lag_close_26"] == df.loc[0, "Close"]
+    assert np.isclose(
+        result.loc[26, "chikou_lag_close_26_to_close"],
+        df.loc[0, "Close"] / df.loc[26, "Close"] - 1,
+    )
     assert result.loc[26, "chikou_return_26"] == expected_return
     assert result.loc[26, "chikou_above_lag_26"] == int(df.loc[26, "Close"] > df.loc[0, "Close"])
     assert "chikou_span" not in result.columns
     assert "chikou_span" not in BASE_MODEL_FEATURE_COLUMNS
-    assert "chikou_lag_close_26" in BASE_MODEL_FEATURE_COLUMNS
+    assert "chikou_lag_close_26_to_close" in BASE_MODEL_FEATURE_COLUMNS
     assert "chikou_return_26" in BASE_MODEL_FEATURE_COLUMNS
     assert "chikou_above_lag_26" in BASE_MODEL_FEATURE_COLUMNS
 
@@ -76,3 +80,48 @@ def test_trailing_momentum_columns_are_past_looking():
     expected_50d = close[50] / close[0] - 1
     assert np.isclose(result.loc[5, "momentum_5d"], expected_5d)
     assert np.isclose(result.loc[50, "momentum_50d"], expected_50d)
+
+
+def test_remediated_model_features_are_invariant_to_common_price_scaling():
+    index = np.arange(90, dtype=float)
+    close = 100.0 + index + 3.0 * np.sin(index / 3.0)
+    raw = pd.DataFrame(
+        {
+            "Open": close * (0.995 + 0.001 * np.cos(index)),
+            "High": close * 1.015,
+            "Low": close * 0.985,
+            "Close": close,
+            "Volume": 1_000_000.0 + index * 1000.0,
+        }
+    )
+    scaled = raw.copy()
+    scaled[["Open", "High", "Low", "Close"]] *= 7.5
+
+    def model_feature_frame(ohlcv):
+        stock = calculate_data(ohlcv)
+        spy_ohlcv = ohlcv.copy()
+        spy_ohlcv[["Open", "High", "Low", "Close"]] *= 1.5
+        spy = calculate_data(spy_ohlcv)
+        dates = pd.bdate_range("2024-01-01", periods=len(ohlcv))
+        stock["Ticker"] = "AAA"
+        stock["prediction_date"] = dates
+        spy["Ticker"] = "SPY"
+        spy["prediction_date"] = dates
+        return add_benchmark_relative_momentum(
+            pd.concat([stock, spy], ignore_index=True)
+        )
+
+    baseline_features = model_feature_frame(raw).query("Ticker == 'AAA'")[
+        MODEL_FEATURE_COLUMNS
+    ]
+    scaled_features = model_feature_frame(scaled).query("Ticker == 'AAA'")[
+        MODEL_FEATURE_COLUMNS
+    ]
+
+    np.testing.assert_allclose(
+        scaled_features.to_numpy(dtype=float),
+        baseline_features.to_numpy(dtype=float),
+        rtol=1e-9,
+        atol=1e-10,
+        equal_nan=True,
+    )

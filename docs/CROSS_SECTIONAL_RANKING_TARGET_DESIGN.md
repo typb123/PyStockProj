@@ -1,5 +1,11 @@
 # Cross-Sectional Ranking Target Design
 
+> **Status — historical design document.** Portions of this note describe
+> earlier model and application phases. The current serving model is
+> `cross_sectional_rank_ndcg`: XGBoost `XGBRanker` with `rank:ndcg`, serving
+> explicit 10d and 20d horizons. The top/bottom classifier and excess-return
+> regressor remain research/baseline machinery, not the current serving model.
+
 ## Purpose
 
 The project has moved from raw return prediction toward SPY-relative stock selection.

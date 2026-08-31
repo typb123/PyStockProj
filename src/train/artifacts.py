@@ -15,6 +15,7 @@ from collections.abc import Callable, Mapping
 import joblib
 
 from src.config import MODEL_ARTIFACT_ROOT
+from src.data.data_fetch import get_yfinance_data_provenance
 from src.train.training_contract import (
     TARGET_MODE_CROSS_SECTIONAL_RANK_NDCG,
     TARGET_MODE_CROSS_SECTIONAL_TOP_BOTTOM,
@@ -23,7 +24,7 @@ from src.train.training_contract import (
 )
 
 
-BUNDLE_SCHEMA_VERSION = 2
+BUNDLE_SCHEMA_VERSION = 3
 MANIFEST_FILENAME = "manifest.json"
 CURRENT_POINTER_FILENAME = "current.json"
 
@@ -89,8 +90,12 @@ def build_model_metadata(
     prediction_days,
     target_mode=TARGET_MODE_EXCESS_RETURN,
     training_population=None,
+    data_provenance=None,
 ):
     """Build prediction-time metadata needed to align saved artifacts and features."""
+    if data_provenance is None:
+        data_provenance = get_yfinance_data_provenance()
+
     metadata = {
         "linear_features": linear_features,
         "classifier_features": classifier_features,
@@ -104,6 +109,7 @@ def build_model_metadata(
         "regressor_target": "targetReturns",
         "classifier_target": "beat_benchmark_target",
         "training_population": training_population,
+        "data_provenance": dict(data_provenance),
     }
     if target_mode == TARGET_MODE_CROSS_SECTIONAL_TOP_BOTTOM:
         metadata.update(
@@ -236,6 +242,7 @@ def _build_manifest(
         },
         "score_target_semantics": semantics,
         "training_population": model_metadata.get("training_population"),
+        "data_provenance": model_metadata.get("data_provenance"),
         "artifacts": {
             artifact_name: {
                 "filename": artifact_path.name,
@@ -357,6 +364,42 @@ def _validate_manifest_data(
         raise ArtifactBundleValidationError(
             "Manifest training benchmark does not match benchmark_ticker."
         )
+
+    data_provenance = manifest.get("data_provenance")
+    required_provenance_fields = {
+        "provider",
+        "library",
+        "library_version",
+        "auto_adjust",
+        "price_convention",
+        "training_period",
+    }
+    if (
+        not isinstance(data_provenance, dict)
+        or set(data_provenance) != required_provenance_fields
+    ):
+        raise ArtifactBundleValidationError(
+            "Manifest data_provenance fields are incomplete."
+        )
+    if data_provenance["provider"] != "Yahoo Finance":
+        raise ArtifactBundleValidationError("Manifest data provider is invalid.")
+    if data_provenance["library"] != "yfinance":
+        raise ArtifactBundleValidationError("Manifest data library is invalid.")
+    if not isinstance(data_provenance["library_version"], str) or not data_provenance[
+        "library_version"
+    ]:
+        raise ArtifactBundleValidationError("Manifest data library version is invalid.")
+    if data_provenance["auto_adjust"] is not True:
+        raise ArtifactBundleValidationError(
+            "Manifest data provenance must record auto_adjust=True."
+        )
+    if data_provenance["price_convention"] != "yfinance_auto_adjusted_ohlcv":
+        raise ArtifactBundleValidationError("Manifest price convention is invalid.")
+    if data_provenance["training_period"] is not None and (
+        not isinstance(data_provenance["training_period"], str)
+        or not data_provenance["training_period"]
+    ):
+        raise ArtifactBundleValidationError("Manifest training period is invalid.")
 
     spec = _MODE_BUNDLE_SPECS[target_mode]
     if manifest.get("model_artifact_type") != spec["model_artifact_type"]:

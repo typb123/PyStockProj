@@ -2,18 +2,21 @@
 
 ## Current data source
 
-The project currently fetches historical daily OHLCV data through `yfinance`:
+The project currently fetches historical daily OHLCV data through `yfinance`
+with explicit adjusted-price semantics:
 
-    yf.Ticker(ticker).history(period=period)
+    yf.Ticker(ticker).history(period=period, auto_adjust=True)
 
 ## Current price field
 
-Forward returns are currently calculated from the `Close` column:
+Forward returns are currently calculated from the adjusted `Close` column:
 
     future_close = df.groupby("Ticker", sort=False)["Close"].shift(-prediction_days)
     raw_forward_return = (future_close - Close) / Close
 
-Audit question: confirm whether `Close` from `yfinance.Ticker.history()` is adjusted or raw under the current yfinance defaults. The code currently does not make this explicit.
+The historical `raw_forward_return` field name is retained for compatibility,
+but it represents a provider-adjusted, total-return-like forward return rather
+than a raw price return.
 
 ## Current universes
 
@@ -73,7 +76,7 @@ Open questions:
 Current training data flow:
 
 1. each ticker is fetched independently,
-2. raw OHLCV data is normalized and optionally cached to CSV,
+2. adjusted OHLCV data is normalized and optionally cached to CSV,
 3. technical indicators are calculated per ticker before concatenation,
 4. `prediction_date` and `Ticker` are added,
 5. valid ticker frames are concatenated into one training frame.
@@ -106,15 +109,16 @@ Positive findings:
 
 Open concerns:
 
-- Raw price-level columns (`Open`, `High`, `Low`, `Close`, `Volume`) are included as model features.
-- This may let the model learn price level, liquidity, or ticker-style proxies rather than only return dynamics.
-- This is not necessarily wrong, but it should be tested later with feature ablations.
-- Price adjustment behavior still needs to be made explicit because targets and indicators use `Close`.
+- The model uses price-relative OHLC and normalized technical features rather
+  than nominal price levels, so a common retrospective corporate-action scale
+  factor cancels from model inputs.
+- `Volume`, volume moving averages, and OBV remain in the contract; their
+  liquidity and split-unit interpretation remains a separate research choice.
 
 Future audit check:
 
-- Compare results with raw OHLCV price-level features removed or transformed into normalized return/liquidity features.
-- Confirm yfinance adjustment behavior and decide whether to explicitly request adjusted or unadjusted prices.
+- Rerun the canonical walk-forward experiments with the corrected feature
+  contract before treating prior headline results as canonical evidence.
 
 ## Current conclusion
 
@@ -122,7 +126,8 @@ The data is usable for research and engineering development, but it has not yet 
 
 Before treating model results as meaningful trading evidence, the project should verify:
 
-1. whether `Close` is adjusted or raw,
+1. corrected walk-forward results under the explicit adjusted-price policy and
+   scale-invariant feature contract,
 2. whether the universe should be stocks-only, ETFs-only, or explicitly mixed,
 3. whether liquidity filters are needed,
 4. whether ticker survivorship/selection bias is acceptable for the project goal,

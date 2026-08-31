@@ -6,6 +6,7 @@ from src.features.feature_contract import (
     FORWARD_RETURN_METADATA_COLUMNS,
     MODEL_FEATURE_COLUMNS,
     MODEL_FEATURE_GROUPS,
+    NOMINAL_PRICE_SCALE_SENSITIVE_FEATURE_COLUMNS,
     NON_FEATURE_COLUMNS,
     RANKING_TARGET_COLUMNS,
     SPLIT_METADATA_COLUMNS,
@@ -16,35 +17,34 @@ from src.features.feature_contract import (
 
 
 EXPECTED_MODEL_FEATURE_COLUMNS = [
-    "Open",
-    "High",
-    "Low",
-    "Close",
+    "open_to_close",
+    "high_to_close",
+    "low_to_close",
     "Volume",
-    "5_day_avg",
-    "10_day_avg",
-    "20_day_avg",
+    "sma_5_to_close",
+    "sma_10_to_close",
+    "sma_20_to_close",
     "dailyReturn",
     "volatility",
     "rsi",
-    "macd",
-    "signalLine",
-    "macdHistogram",
+    "macd_to_close",
+    "signal_line_to_close",
+    "macd_histogram_to_close",
     "obv",
     "vma_10",
     "vma_20",
-    "tenkan_sen",
-    "kijun_sen",
-    "senkou_span_a",
-    "senkou_span_b",
-    "chikou_lag_close_26",
+    "tenkan_sen_to_close",
+    "kijun_sen_to_close",
+    "senkou_span_a_to_close",
+    "senkou_span_b_to_close",
+    "chikou_lag_close_26_to_close",
     "chikou_return_26",
     "chikou_above_lag_26",
-    "BB_Middle",
-    "BB_Upper",
-    "BB_Lower",
-    "BB_Std",
-    "ATR",
+    "bb_middle_to_close",
+    "bb_upper_to_close",
+    "bb_lower_to_close",
+    "bb_std_to_close",
+    "atr_to_close",
     "stoch_k",
     "stoch_d",
     "momentum_5d",
@@ -67,6 +67,12 @@ def test_model_feature_contract_has_no_duplicates_or_target_overlap():
     assert len(MODEL_FEATURE_COLUMNS) == len(set(MODEL_FEATURE_COLUMNS))
     assert set(MODEL_FEATURE_COLUMNS).isdisjoint(TARGET_COLUMNS)
     assert set(TARGET_COLUMNS).issubset(NON_FEATURE_COLUMNS)
+
+
+def test_model_feature_contract_excludes_nominal_price_scale_sensitive_columns():
+    assert set(MODEL_FEATURE_COLUMNS).isdisjoint(
+        NOMINAL_PRICE_SCALE_SENSITIVE_FEATURE_COLUMNS
+    )
 
 
 def test_ranking_target_columns_are_metadata_not_model_features():
@@ -105,7 +111,7 @@ def test_spy_relative_momentum_features_are_present():
 
 def test_feature_contract_validation_rejects_duplicate_features():
     feature_groups = dict(MODEL_FEATURE_GROUPS)
-    feature_groups["duplicate"] = ["Open"]
+    feature_groups["duplicate"] = ["open_to_close"]
 
     with pytest.raises(ValueError, match="Duplicate model feature columns"):
         validate_feature_contract(feature_groups=feature_groups)
@@ -116,6 +122,14 @@ def test_feature_contract_validation_rejects_target_overlap():
     feature_groups["bad_target_feature"] = ["targetReturns"]
 
     with pytest.raises(ValueError, match="Target columns must not overlap"):
+        validate_feature_contract(feature_groups=feature_groups)
+
+
+def test_feature_contract_validation_rejects_nominal_price_scale_sensitive_column():
+    feature_groups = dict(MODEL_FEATURE_GROUPS)
+    feature_groups["bad_nominal_price"] = ["Close"]
+
+    with pytest.raises(ValueError, match="nominal price-scale-sensitive"):
         validate_feature_contract(feature_groups=feature_groups)
 
 

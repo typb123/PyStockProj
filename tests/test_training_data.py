@@ -12,7 +12,8 @@ def test_default_cache_path_preserves_project_relative_location_and_filename():
     cache_path = training_data.get_yfinance_cache_path("brk/b", "1 y")
 
     assert cache_path == (
-        training_data.PROJECT_ROOT / "data/cache/yfinance/BRK_B__1_y.csv"
+        training_data.PROJECT_ROOT
+        / "data/cache/yfinance/BRK_B__1_y__yfinance_auto_adjusted_ohlcv.csv"
     )
     assert training_data.YFINANCE_CACHE_DIR == (
         training_data.PROJECT_ROOT / "data/cache/yfinance"
@@ -74,7 +75,7 @@ def test_explicit_cache_directory_remains_supported(tmp_path):
         cache_dir=tmp_path,
     )
 
-    assert cache_path == tmp_path / "AAPL__10y.csv"
+    assert cache_path == tmp_path / "AAPL__10y__yfinance_auto_adjusted_ohlcv.csv"
 
 
 def test_prepare_data_parallel_passes_period_to_fetch_stock_data(monkeypatch):

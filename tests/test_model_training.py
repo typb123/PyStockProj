@@ -1177,6 +1177,7 @@ def test_train_models_feature_columns_override_reaches_rank_ndcg_branch(monkeypa
         random_trials,
         random_trial_workers,
         training_population,
+        data_provenance=None,
         ranker_params=None,
     ):
         captured.append(

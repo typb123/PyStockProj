@@ -18,9 +18,28 @@ logging.basicConfig(
 )
 logging.getLogger("yfinance").setLevel(logging.CRITICAL)
 
+
+YFINANCE_PROVIDER = "Yahoo Finance"
+YFINANCE_LIBRARY = "yfinance"
+YFINANCE_AUTO_ADJUST = True
+YFINANCE_PRICE_CONVENTION = "yfinance_auto_adjusted_ohlcv"
+
+
+def get_yfinance_data_provenance(training_period: str | None = None) -> dict:
+    """Return the market-data semantics recorded with trained artifacts."""
+    return {
+        "provider": YFINANCE_PROVIDER,
+        "library": YFINANCE_LIBRARY,
+        "library_version": str(getattr(yf, "__version__", "unknown")),
+        "auto_adjust": YFINANCE_AUTO_ADJUST,
+        "price_convention": YFINANCE_PRICE_CONVENTION,
+        "training_period": training_period,
+    }
+
+
 def fetch_stock_data(ticker: str, period: str = "5y") -> pd.DataFrame:
     """
-    Fetch historical stock data with yfinance Ticker.history(period=period).
+    Fetch adjusted historical OHLCV with explicit yfinance adjustment semantics.
 
     Provider-specific extra columns such as Dividends, Stock Splits, or Capital
     Gains may be present and are cleaned or ignored downstream.
@@ -34,7 +53,7 @@ def fetch_stock_data(ticker: str, period: str = "5y") -> pd.DataFrame:
     """
     try:
         stock = yf.Ticker(ticker)
-        data = stock.history(period=period)
+        data = stock.history(period=period, auto_adjust=YFINANCE_AUTO_ADJUST)
 
         if data.empty:
             logging.debug(f"No data found for {ticker}. DataFrame is empty.")

@@ -86,7 +86,7 @@ class DataPreparator:
         df: pd.DataFrame,
         prediction_days: int = PREDICTION_DAYS,
     ) -> pd.DataFrame:
-        """Create ticker-aware raw forward returns without benchmark alignment."""
+        """Create ticker-aware adjusted forward returns without benchmark alignment."""
         df = self._normalize_prediction_date(df)
         df = self._create_raw_forward_returns(df, prediction_days)
         df = df.dropna(subset=["raw_forward_return"]).copy()
@@ -122,7 +122,11 @@ class DataPreparator:
         df: pd.DataFrame,
         prediction_days: int,
     ) -> pd.DataFrame:
-        """Add ticker-aware raw forward returns for the prediction horizon."""
+        """Add ticker-aware adjusted forward returns for the prediction horizon.
+
+        The historical ``raw_forward_return`` column name is retained for
+        compatibility, but its values use the explicit adjusted yfinance close.
+        """
         df = df.sort_values(["Ticker", "prediction_date"]).copy()
         ticker_groups = df.groupby("Ticker", sort=False)
         future_close = ticker_groups["Close"].shift(-prediction_days)
@@ -133,7 +137,7 @@ class DataPreparator:
         return df
 
     def _build_benchmark_forward_returns(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Build date-aligned benchmark forward returns for target creation."""
+        """Build date-aligned adjusted benchmark returns for target creation."""
         benchmark_rows = df[df["Ticker"] == self.benchmark_ticker]
         if benchmark_rows.empty:
             raise ValueError(f"Benchmark ticker {self.benchmark_ticker} is missing.")

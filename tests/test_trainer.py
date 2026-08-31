@@ -180,19 +180,19 @@ def test_rank_ndcg_feature_ablation_specs_include_expected_subsets():
         "momentum_plus_volatility",
     ]
     assert specs["all_features"].feature_columns == MODEL_FEATURE_COLUMNS
-    assert set(["Open", "High", "Low", "Close"]).isdisjoint(
+    assert set(["open_to_close", "high_to_close", "low_to_close"]).isdisjoint(
         specs["drop_raw_ohlc"].feature_columns
     )
     assert "Volume" in specs["drop_raw_ohlc"].feature_columns
-    assert set(["BB_Middle", "BB_Upper", "BB_Lower"]).isdisjoint(
+    assert set(["bb_middle_to_close", "bb_upper_to_close", "bb_lower_to_close"]).isdisjoint(
         specs["drop_price_level_trend"].feature_columns
     )
-    assert "BB_Std" in specs["drop_price_level_trend"].feature_columns
+    assert "bb_std_to_close" in specs["drop_price_level_trend"].feature_columns
     assert specs["momentum_only"].feature_columns == ABSOLUTE_MOMENTUM_FEATURE_COLUMNS
     minimal = specs["minimal_momentum_risk_oscillator"].feature_columns
-    assert "macdHistogram" in minimal
-    assert "macd" not in minimal
-    assert "signalLine" not in minimal
+    assert "macd_histogram_to_close" in minimal
+    assert "macd_to_close" not in minimal
+    assert "signal_line_to_close" not in minimal
 
 
 def test_rank_ndcg_ablation_result_extraction_handles_missing_metrics():
@@ -505,6 +505,7 @@ def test_main_trains_all_horizons_and_logs_comparison(monkeypatch, caplog, capsy
     trained_target_modes = []
     trained_random_trials = []
     trained_random_trial_workers = []
+    trained_periods = []
     prepare_calls = []
 
     def fake_prepare_data_parallel(tickers, period="5y", use_cache=True):
@@ -520,11 +521,13 @@ def test_main_trains_all_horizons_and_logs_comparison(monkeypatch, caplog, capsy
         random_trial_workers=4,
         target_mode="excess_return",
         training_universe_name=None,
+        training_period=None,
     ):
         trained_horizons.append(prediction_days)
         trained_target_modes.append(target_mode)
         trained_random_trials.append(random_trials)
         trained_random_trial_workers.append(random_trial_workers)
+        trained_periods.append(training_period)
         return {
             "prediction_days": prediction_days,
             "basket_backtest": {
@@ -571,9 +574,10 @@ def test_main_trains_all_horizons_and_logs_comparison(monkeypatch, caplog, capsy
     assert trained_target_modes == ["excess_return"] * 4
     assert trained_random_trials == [20, 20, 20, 20]
     assert trained_random_trial_workers == [2, 2, 2, 2]
+    assert trained_periods == ["10y", "10y", "10y", "10y"]
     assert "Selected YFinance period: 10y" in caplog.text
     assert "Selected target mode: excess_return" in caplog.text
-    assert "Raw YFinance OHLCV cache enabled: True" in caplog.text
+    assert "YFinance adjusted OHLCV cache enabled: True" in caplog.text
     assert "Horizon Comparison Summary:" in caplog.text
     assert "50d:" in caplog.text
     output = capsys.readouterr().out
@@ -600,6 +604,7 @@ def test_main_passes_selected_broad_sector_etf_universe_to_prepare_data(
         random_trial_workers=4,
         target_mode="excess_return",
         training_universe_name=None,
+        training_period=None,
     ):
         trained_horizons.append(prediction_days)
         trained_target_modes.append(target_mode)
@@ -663,6 +668,7 @@ def test_main_single_horizon_prints_top_n_basket_summary(monkeypatch, capsys):
         random_trial_workers=4,
         target_mode="excess_return",
         training_universe_name=None,
+        training_period=None,
     ):
         trained_horizons.append(prediction_days)
         trained_target_modes.append(target_mode)
@@ -738,6 +744,7 @@ def test_main_passes_cross_sectional_target_mode_to_train_models(monkeypatch):
         random_trial_workers=4,
         target_mode="excess_return",
         training_universe_name=None,
+        training_period=None,
     ):
         trained_target_modes.append(target_mode)
         return {

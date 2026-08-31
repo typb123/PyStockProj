@@ -1,17 +1,16 @@
 """Column ownership for model features, targets, and evaluation metadata."""
 
-RAW_PRICE_FEATURE_COLUMNS = [
-    "Open",
-    "High",
-    "Low",
-    "Close",
+PRICE_RELATIVE_FEATURE_COLUMNS = [
+    "open_to_close",
+    "high_to_close",
+    "low_to_close",
     "Volume",
 ]
 
 TREND_FEATURE_COLUMNS = [
-    "5_day_avg",
-    "10_day_avg",
-    "20_day_avg",
+    "sma_5_to_close",
+    "sma_10_to_close",
+    "sma_20_to_close",
 ]
 
 RETURN_RISK_FEATURE_COLUMNS = [
@@ -21,9 +20,9 @@ RETURN_RISK_FEATURE_COLUMNS = [
 
 MOMENTUM_OSCILLATOR_FEATURE_COLUMNS = [
     "rsi",
-    "macd",
-    "signalLine",
-    "macdHistogram",
+    "macd_to_close",
+    "signal_line_to_close",
+    "macd_histogram_to_close",
 ]
 
 VOLUME_INDICATOR_FEATURE_COLUMNS = [
@@ -33,24 +32,24 @@ VOLUME_INDICATOR_FEATURE_COLUMNS = [
 ]
 
 ICHIMOKU_FEATURE_COLUMNS = [
-    "tenkan_sen",
-    "kijun_sen",
-    "senkou_span_a",
-    "senkou_span_b",
-    "chikou_lag_close_26",
+    "tenkan_sen_to_close",
+    "kijun_sen_to_close",
+    "senkou_span_a_to_close",
+    "senkou_span_b_to_close",
+    "chikou_lag_close_26_to_close",
     "chikou_return_26",
     "chikou_above_lag_26",
 ]
 
 BOLLINGER_FEATURE_COLUMNS = [
-    "BB_Middle",
-    "BB_Upper",
-    "BB_Lower",
-    "BB_Std",
+    "bb_middle_to_close",
+    "bb_upper_to_close",
+    "bb_lower_to_close",
+    "bb_std_to_close",
 ]
 
 ATR_FEATURE_COLUMNS = [
-    "ATR",
+    "atr_to_close",
 ]
 
 STOCHASTIC_FEATURE_COLUMNS = [
@@ -72,8 +71,31 @@ SPY_RELATIVE_MOMENTUM_FEATURE_COLUMNS = [
     "relative_momentum_50d",
 ]
 
+NOMINAL_PRICE_SCALE_SENSITIVE_FEATURE_COLUMNS = [
+    "Open",
+    "High",
+    "Low",
+    "Close",
+    "5_day_avg",
+    "10_day_avg",
+    "20_day_avg",
+    "macd",
+    "signalLine",
+    "macdHistogram",
+    "tenkan_sen",
+    "kijun_sen",
+    "senkou_span_a",
+    "senkou_span_b",
+    "chikou_lag_close_26",
+    "BB_Middle",
+    "BB_Upper",
+    "BB_Lower",
+    "BB_Std",
+    "ATR",
+]
+
 MODEL_FEATURE_GROUPS = {
-    "raw_price": RAW_PRICE_FEATURE_COLUMNS,
+    "price_relative": PRICE_RELATIVE_FEATURE_COLUMNS,
     "trend": TREND_FEATURE_COLUMNS,
     "return_risk": RETURN_RISK_FEATURE_COLUMNS,
     "momentum_oscillator": MOMENTUM_OSCILLATOR_FEATURE_COLUMNS,
@@ -171,6 +193,15 @@ def validate_feature_contract(
     if target_overlap:
         raise ValueError(
             f"Target columns must not overlap model features: {target_overlap}"
+        )
+
+    nominal_price_overlap = sorted(
+        set(model_features).intersection(NOMINAL_PRICE_SCALE_SENSITIVE_FEATURE_COLUMNS)
+    )
+    if nominal_price_overlap:
+        raise ValueError(
+            "Model features must not include nominal price-scale-sensitive columns: "
+            f"{nominal_price_overlap}"
         )
 
 

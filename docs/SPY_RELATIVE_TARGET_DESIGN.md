@@ -1,5 +1,10 @@
 # SPY-Relative Target Design
 
+> **Status — historical design document.** This note documents the earlier
+> SPY-relative regression/classification design and should not be read as the
+> current serving contract. Current serving uses Rank-NDCG with explicit 10d
+> and 20d horizons.
+
 ## Purpose
 
 The current project predicts raw forward returns. That baseline is useful, but it appears to capture broad market drift more than stock-specific edge.
