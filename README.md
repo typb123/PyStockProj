@@ -20,21 +20,16 @@ The training pipeline includes chronological, embargoed walk-forward
 evaluation. Model artifacts are published as isolated, versioned bundles with
 feature contracts and checksum validation.
 
-## Provisional research snapshot
+## Research snapshot
 
-The pre-remediation max-history expanding walk-forward evaluation covered 28
-annual folds, with test years from 1999 through partial 2026, on the configured
-large/mega-cap universe. Its Top-5 aggregate results were:
+The corrected max-history expanding walk-forward evaluation covers 28 annual folds, with test years from 1999 through partial 2026, on the configured large/mega-cap universe. Top-5 results:
 
 | Horizon | Model excess vs. SPY | Model minus momentum |
 | --- | ---: | ---: |
-| 10 trading days | +1.19% | +0.67% |
-| 20 trading days | +2.28% | +0.80% |
+| 10 trading days | +1.07% | +0.61% |
+| 20 trading days | +1.85% | +0.47% |
 
-These provisional historical walk-forward research results are not promises of
-trading profitability. The primary limitation is survivorship/selection bias: the
-historical universe projects a contemporary large/mega-cap stock list backward,
-rather than using point-in-time historical membership.
+These are historical walk-forward research results, not promises of trading profitability. The primary limitation is survivorship/selection bias: the historical universe projects a contemporary large/mega-cap stock list backward rather than using point-in-time historical membership.
 
 ## Run
 

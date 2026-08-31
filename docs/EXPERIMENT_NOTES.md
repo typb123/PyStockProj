@@ -513,4 +513,19 @@ Aggregate results:
 
 An audit identified a point-in-time data-validity issue in the prior Rank-NDCG research. Yahoo/yfinance historical OHLC data uses retrospective corporate-action adjustment semantics. The prior 39-feature contract contained 20 absolute price-level or price-difference features whose historical values could therefore depend on later splits or dividends. Return-, ratio-, momentum-, volatility-, and most SPY-relative features did not have the same future scale-factor problem, and the audit did not identify corresponding issues in target alignment, chronological splitting, embargoes, SPY matching, or Rank-NDCG query construction.
 
-The implementation now makes Yahoo adjustment semantics explicit, replaces those inputs with price-relative or normalized features in a 38-feature contract, records fetch provenance in artifact bundles, and rejects prior artifact schemas. The previously documented 10d and 20d Rank-NDCG walk-forward results remain **provisional historical results**, not leakage-clean canonical evidence, until the corrected 10d/20d max-history experiments are rerun. Simply switching to `auto_adjust=False` is not sufficient because Yahoo also retrospectively restates historical prices for stock splits.
+The implementation now makes Yahoo adjustment semantics explicit, replaces those inputs with price-relative or normalized features in a 38-feature contract, records fetch provenance in artifact bundles, and rejects prior artifact schemas.The previously documented 10d and 20d Rank-NDCG results are retained as provisional pre-remediation historical results and are superseded by the corrected rerun below. Simply switching to auto_adjust=False is not sufficient because Yahoo also retrospectively restates historical prices for stock splits.
+
+### Corrected Rank-NDCG walk-forward rerun
+
+After replacing nominal price-scale-sensitive inputs with scale-invariant features, making the Yahoo adjustment policy explicit, and moving to the 38-feature contract, the canonical max-history Rank-NDCG walk-forward evaluation was rerun for both serving horizons.
+
+The corrected runs retained the same 28-fold expanding-window methodology and continued to show positive cross-sectional ranking performance:
+
+| Horizon | Top-5 model excess vs. SPY | Model minus momentum | Model minus universe | Win rate vs. momentum | Win rate vs. universe |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 10 trading days | +1.07% | +0.61% | +0.77% | 78.57% | 82.14% |
+| 20 trading days | +1.85% | +0.47% | +1.24% | 71.43% | 78.57% |
+
+Performance weakened somewhat relative to the pre-remediation results, but the core Rank-NDCG signal survived the removal of retrospectively price-scale-sensitive features. These corrected results supersede the prior headline figures as the current canonical research evidence.
+
+The remaining major limitation is unchanged: the historical large/mega-cap universe is based on a contemporary stock list projected backward rather than point-in-time historical membership. The Top-N results also remain overlapping-horizon research diagnostics rather than a realistic execution- and transaction-cost-aware trading backtest.
