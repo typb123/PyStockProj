@@ -6,7 +6,17 @@ import src.app as app
 from src.inference.ranked_watchlist import RankedWatchlistError
 
 
-def sample_result(*, source_type="configured_universe"):
+def sample_result(
+    *,
+    source_type="configured_universe",
+    validation_context=None,
+):
+    if validation_context is None:
+        validation_context = (
+            "configured_research_universe"
+            if source_type == "configured_universe"
+            else "no_historical_validation_claim"
+        )
     return {
         "bundle_id": "bundle-123",
         "prediction_days": 10,
@@ -18,6 +28,7 @@ def sample_result(*, source_type="configured_universe"):
                 if source_type == "configured_universe"
                 else None
             ),
+            "validation_context": validation_context,
         },
         "ranked_count": 2,
         "skipped_count": 1,
@@ -57,6 +68,7 @@ def test_main_menu_requires_explicit_horizon_and_runs_configured_universe(
     assert "Invalid horizon choice" in output
     assert "Horizon: 10 trading days" in output
     assert "Configured universe: large_mega_cap_stocks" in output
+    assert "Validation context: matches the artifact training universe" in output
 
 
 def test_main_menu_sends_raw_custom_tickers_to_backend_and_displays_ranking(
@@ -79,6 +91,10 @@ def test_main_menu_sends_raw_custom_tickers_to_backend_and_displays_ranking(
     assert calls == [(20, {"tickers": [" nvda", " AAPL", " spy "]})]
     output = capsys.readouterr().out
     assert "Candidate source: Custom ticker list" in output
+    assert (
+        "Validation context: no historical validation claim for this candidate set"
+        in output
+    )
     assert "Rank | Ticker | Rank-NDCG score" in output
     assert (
         "Rank-NDCG score is a ranking score, not a predicted return or probability."
@@ -86,6 +102,21 @@ def test_main_menu_sends_raw_custom_tickers_to_backend_and_displays_ranking(
     )
     assert "SPY: benchmark ticker is excluded" in output
     assert "Bundle ID: bundle-123" in output
+
+
+def test_display_configured_universe_without_matching_provenance_shows_no_claim(
+    capsys,
+):
+    app.display_ranked_watchlist(
+        sample_result(validation_context="no_historical_validation_claim")
+    )
+
+    output = capsys.readouterr().out
+    assert "Candidate source: Configured universe: large_mega_cap_stocks" in output
+    assert (
+        "Validation context: no historical validation claim for this candidate set"
+        in output
+    )
 
 
 def test_main_menu_handles_expected_backend_errors_without_traceback(

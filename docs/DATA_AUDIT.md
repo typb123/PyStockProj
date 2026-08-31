@@ -115,20 +115,20 @@ Open concerns:
 - `Volume`, volume moving averages, and OBV remain in the contract; their
   liquidity and split-unit interpretation remains a separate research choice.
 
-Future audit check:
+Completed audit check:
 
-- Rerun the canonical walk-forward experiments with the corrected feature
-  contract before treating prior headline results as canonical evidence.
+- The corrected 10d and 20d canonical walk-forward reruns are complete. See the
+  [corrected Rank-NDCG results](EXPERIMENT_NOTES.md#corrected-rank-ndcg-walk-forward-rerun).
 
 ## Current conclusion
 
 The data is usable for research and engineering development, but it has not yet been audited enough to support strong trading conclusions.
 
-Before treating model results as meaningful trading evidence, the project should verify:
+The corrected feature-contract reruns are now the canonical research evidence.
+Before treating model results as meaningful trading evidence, the project should
+still resolve:
 
-1. corrected walk-forward results under the explicit adjusted-price policy and
-   scale-invariant feature contract,
-2. whether the universe should be stocks-only, ETFs-only, or explicitly mixed,
-3. whether liquidity filters are needed,
-4. whether ticker survivorship/selection bias is acceptable for the project goal,
-5. how many rows are dropped per ticker and why.
+1. whether the universe should be stocks-only, ETFs-only, or explicitly mixed,
+2. whether liquidity filters are needed,
+3. whether ticker survivorship/selection bias is acceptable for the project goal,
+4. how many rows are dropped per ticker and why.

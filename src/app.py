@@ -59,6 +59,10 @@ def display_ranked_watchlist(result: dict) -> None:
     print(f"As-of date: {result['as_of_date']}")
     print(f"Horizon: {result['prediction_days']} trading days")
     print(f"Candidate source: {source_label}")
+    if source["validation_context"] == "configured_research_universe":
+        print("Validation context: matches the artifact training universe")
+    else:
+        print("Validation context: no historical validation claim for this candidate set")
     print(f"Candidates ranked: {result['ranked_count']}")
     print(f"Candidates skipped: {result['skipped_count']}")
     print("\nRank | Ticker | Rank-NDCG score")

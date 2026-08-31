@@ -174,6 +174,12 @@ def test_custom_ranking_normalizes_deduplicates_excludes_spy_and_sorts(
 
 def test_named_universe_uses_configured_candidates(monkeypatch):
     bundle = make_loaded_bundle()
+    bundle.manifest["training_population"].update(
+        {
+            "candidate_tickers": ["AAPL", "NVDA"],
+            "candidate_ticker_count": 2,
+        }
+    )
     histories = standard_histories()
     monkeypatch.setattr(
         ranked_watchlist,
@@ -195,6 +201,46 @@ def test_named_universe_uses_configured_candidates(monkeypatch):
     assert result["requested_count"] == 2
     assert result["ranked_count"] == 2
     assert all(row["ticker"] != "SPY" for row in result["ranked_rows"])
+
+
+@pytest.mark.parametrize(
+    "artifact_universe, artifact_candidates",
+    [
+        ("broad_sector_etfs", ["AAPL", "NVDA"]),
+        ("large_mega_cap_stocks", ["AAPL", "NVDA", "AMD"]),
+    ],
+)
+def test_named_universe_without_matching_artifact_provenance_has_no_validation_claim(
+    monkeypatch,
+    artifact_universe,
+    artifact_candidates,
+):
+    bundle = make_loaded_bundle()
+    bundle.manifest["training_population"].update(
+        {
+            "universe_name": artifact_universe,
+            "candidate_tickers": artifact_candidates,
+            "candidate_ticker_count": len(artifact_candidates),
+        }
+    )
+    histories = standard_histories()
+    monkeypatch.setattr(
+        ranked_watchlist,
+        "get_training_tickers",
+        lambda universe: ["SPY", "AAPL", "NVDA"],
+    )
+    install_ranking_fakes(monkeypatch, bundle, histories)
+
+    result = ranked_watchlist.rank_candidate_universe(
+        10,
+        universe="large_mega_cap_stocks",
+    )
+
+    assert result["candidate_source"] == {
+        "type": "configured_universe",
+        "universe_name": "large_mega_cap_stocks",
+        "validation_context": "no_historical_validation_claim",
+    }
 
 
 def test_candidates_never_fall_back_to_a_different_date(monkeypatch):

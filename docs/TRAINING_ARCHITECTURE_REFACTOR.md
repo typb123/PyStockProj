@@ -1,5 +1,10 @@
 # Training Architecture Refactor
 
+> **Status — historical and superseded.** This plan describes the earlier
+> 39-feature contract and pre-schema-v3 artifact/serving limitations. The current
+> implementation uses the remediated 38-feature contract and validated schema-v3
+> Rank-NDCG serving bundles.
+
 ## Purpose
 
 The current research milestone is complete. This refactor improves code ownership, maintainability, testability, and reviewability without intentionally changing model or evaluation behavior.

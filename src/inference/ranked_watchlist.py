@@ -255,6 +255,29 @@ def _resolve_candidate_source(*, universe, tickers):
     return candidates, source, requested_count, skipped
 
 
+def _apply_training_population_context(
+    source: dict,
+    candidates: list[str],
+    training_population: dict,
+) -> dict:
+    """Label configured requests as validated only when artifact provenance matches."""
+    if source["type"] != "configured_universe":
+        return source
+
+    artifact_candidates = training_population.get("candidate_tickers", [])
+    provenance_matches = (
+        source["universe_name"] == training_population.get("universe_name")
+        and set(candidates) == set(artifact_candidates)
+    )
+    result = dict(source)
+    result["validation_context"] = (
+        "configured_research_universe"
+        if provenance_matches
+        else "no_historical_validation_claim"
+    )
+    return result
+
+
 def _prepare_histories(tickers: list[str], *, now=None) -> dict[str, object]:
     def prepare(ticker):
         try:
@@ -388,6 +411,11 @@ def rank_candidate_universe(
         tickers=tickers,
     )
     bundle = _load_rank_ndcg_bundle(prediction_days)
+    source = _apply_training_population_context(
+        source,
+        candidates,
+        bundle.manifest["training_population"],
+    )
 
     prepared_histories = _prepare_histories(
         [BENCHMARK_TICKER, *candidates],

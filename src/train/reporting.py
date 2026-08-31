@@ -940,4 +940,3 @@ def _format_date_range(date_range):
     if not date_range or date_range.get("start") is None:
         return "n/a"
     return f"{date_range['start']}..{date_range['end']}"
-

@@ -608,4 +608,3 @@ def test_run_walk_forward_models_rejects_invalid_feature_overrides_before_prepar
             pd.DataFrame({"Close": [1.0]}),
             feature_columns_override=feature_columns_override,
         )
-
