@@ -20,6 +20,12 @@ The training pipeline includes chronological, embargoed walk-forward
 evaluation. Model artifacts are published as isolated, versioned bundles with
 feature contracts and checksum validation.
 
+## Example
+
+Example 10-day ranking for a custom ticker list:
+
+![Rank-NDCG ranked watchlist example](docs/images/ranked-watchlist-example.jpg)
+
 ## Research snapshot
 
 The corrected max-history expanding walk-forward evaluation covers 28 annual folds, with test years from 1999 through partial 2026, on the configured large/mega-cap universe. Top-5 results:
