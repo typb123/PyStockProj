@@ -166,6 +166,82 @@ def _benchmark_specs():
     return focused_specs * 3
 
 
+def _format_benchmark_terminal_output(benchmark_results):
+    """Render compact benchmark timing tables without altering result data."""
+    if not benchmark_results:
+        return "CPU BENCHMARK\n(no results)"
+
+    shared = benchmark_results[0]
+    preparation = [
+        ("model context", shared["model_context_preparation_seconds"]),
+        ("evaluation state", shared["evaluation_preparation_seconds"]),
+        ("total preparation", shared["context_preparation_seconds"]),
+    ]
+    lines = ["Shared preparation:"]
+    lines.extend(
+        f"  {label + ':':<19} {seconds:>7.2f}s" for label, seconds in preparation
+    )
+
+    def append_table(title, headers, fields):
+        rows = [
+            [
+                str(result[field])
+                if field in {"outer_workers", "xgb_threads"}
+                else f"{float(result[field]):.2f}"
+                for field in fields
+            ]
+            for result in benchmark_results
+        ]
+        widths = [
+            max(len(header), *(len(row[index]) for row in rows))
+            for index, header in enumerate(headers)
+        ]
+        lines.extend(["", title])
+        lines.append(
+            "  ".join(
+                header.rjust(widths[index]) for index, header in enumerate(headers)
+            )
+        )
+        lines.extend(
+            "  ".join(value.rjust(widths[index]) for index, value in enumerate(row))
+            for row in rows
+        )
+
+    append_table(
+        "CPU BENCHMARK",
+        ("workers", "xgb_threads", "wall_s", "total_s", "fits/min"),
+        (
+            "outer_workers",
+            "xgb_threads",
+            "wall_clock_seconds",
+            "total_wall_clock_equivalent_seconds",
+            "fits_per_minute",
+        ),
+    )
+    append_table(
+        "PHASE TOTALS",
+        (
+            "workers",
+            "fit_s",
+            "eval_s",
+            "model_topn_s",
+            "momentum_s",
+            "diag_s",
+            "assembly_s",
+        ),
+        (
+            "outer_workers",
+            "model_fit_seconds",
+            "evaluation_seconds",
+            "model_top_n_seconds",
+            "momentum_baseline_seconds",
+            "ranking_diagnostics_seconds",
+            "report_assembly_seconds",
+        ),
+    )
+    return "\n".join(lines)
+
+
 def _run_benchmark(data, args):
     """Benchmark bounded process/thread configurations on recent focused folds."""
     benchmark_results = []
@@ -174,6 +250,19 @@ def _run_benchmark(data, args):
         data,
         prediction_days=args.prediction_days,
         max_folds=args.benchmark_folds,
+        random_trials=args.random_trials,
+    )
+    context_preparation_seconds = float(
+        prepared_context.get("context_preparation_seconds", 0.0)
+    )
+    evaluation_preparation_seconds = float(
+        prepared_context.get("evaluation_preparation_seconds", 0.0)
+    )
+    model_context_preparation_seconds = float(
+        prepared_context.get(
+            "model_context_preparation_seconds",
+            context_preparation_seconds - evaluation_preparation_seconds,
+        )
     )
     for parallelism in build_benchmark_parallelism_configs(args.cpu_budget):
         print(
@@ -205,6 +294,25 @@ def _run_benchmark(data, args):
         )
         wall_clock_seconds = time.perf_counter() - started_at
         model_fit_count = sum(len(run.report.get("folds", [])) for run in runs)
+        phase_seconds = {
+            phase_name: sum(
+                float(run.report.get("phase_timings", {}).get(phase_name, 0.0))
+                for run in runs
+            )
+            for phase_name in (
+                "model_fit_seconds",
+                "prediction_seconds",
+                "evaluation_seconds",
+                "evaluation_setup_seconds",
+                "model_top_n_seconds",
+                "momentum_baseline_seconds",
+                "universe_baseline_seconds",
+                "random_baseline_seconds",
+                "bootstrap_seconds",
+                "ranking_diagnostics_seconds",
+                "report_assembly_seconds",
+            )
+        }
         benchmark_results.append(
             {
                 "outer_workers": parallelism.outer_workers,
@@ -213,7 +321,18 @@ def _run_benchmark(data, args):
                 "benchmark_variant_runs": len(benchmark_specs),
                 "recent_fold_count": args.benchmark_folds,
                 "model_fit_count": model_fit_count,
+                # This context is built once before the CPU matrix, not once per
+                # variant or configuration, so retain its single shared duration.
+                "context_preparation_seconds": context_preparation_seconds,
+                "model_context_preparation_seconds": (
+                    model_context_preparation_seconds
+                ),
+                "evaluation_preparation_seconds": evaluation_preparation_seconds,
+                **phase_seconds,
                 "wall_clock_seconds": wall_clock_seconds,
+                "total_wall_clock_equivalent_seconds": (
+                    wall_clock_seconds + context_preparation_seconds
+                ),
                 "fits_per_minute": (
                     model_fit_count * 60.0 / wall_clock_seconds
                     if wall_clock_seconds > 0.0
@@ -222,8 +341,7 @@ def _run_benchmark(data, args):
             }
         )
 
-    benchmark_table = pd.DataFrame(benchmark_results)
-    print(benchmark_table.to_string(index=False))
+    print(_format_benchmark_terminal_output(benchmark_results))
     return benchmark_results
 
 
@@ -250,16 +368,14 @@ def main(argv=None) -> list[dict]:
     prepared_context = prepare_rank_ndcg_walk_forward_context(
         data,
         prediction_days=args.prediction_days,
+        random_trials=args.random_trials,
     )
 
     results = []
     paired_reports = []
     baseline_report = None
     for spec in specs:
-        print(
-            f"Queueing {spec.name} "
-            f"({len(spec.feature_columns)} features)..."
-        )
+        print(f"Queueing {spec.name} ({len(spec.feature_columns)} features)...")
     if parallelism.outer_workers > 1 and args.random_trial_workers > 1:
         print(
             "Outer ablation workers enabled; random baseline trials run "

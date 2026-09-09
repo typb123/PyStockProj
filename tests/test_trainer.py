@@ -412,7 +412,19 @@ def test_rank_ndcg_benchmark_output_has_cpu_and_timing_fields(monkeypatch, capsy
     def fake_run_ablation_specs(data, specs, **kwargs):
         calls.append(kwargs)
         task_orders.append([spec.name for spec in specs])
-        return [SimpleNamespace(report={"folds": [{}]}) for _ in specs]
+        return [
+            SimpleNamespace(
+                report={
+                    "folds": [{}],
+                    "phase_timings": {
+                        "model_fit_seconds": 1.0,
+                        "prediction_seconds": 0.25,
+                        "evaluation_seconds": 0.5,
+                    },
+                }
+            )
+            for _ in specs
+        ]
 
     monkeypatch.setattr(
         ablation_script,
@@ -422,7 +434,10 @@ def test_rank_ndcg_benchmark_output_has_cpu_and_timing_fields(monkeypatch, capsy
     monkeypatch.setattr(
         ablation_script,
         "prepare_rank_ndcg_walk_forward_context",
-        lambda *args, **kwargs: {"context_kind": "rank_ndcg_walk_forward"},
+        lambda *args, **kwargs: {
+            "context_kind": "rank_ndcg_walk_forward",
+            "context_preparation_seconds": 2.5,
+        },
     )
 
     results = ablation_script._run_benchmark(pd.DataFrame({"Close": [1.0]}), args)
@@ -436,6 +451,10 @@ def test_rank_ndcg_benchmark_output_has_cpu_and_timing_fields(monkeypatch, capsy
     ] * 3
     assert all(result["benchmark_variant_runs"] == 6 for result in results)
     assert all(result["model_fit_count"] == 6 for result in results)
+    assert all(result["context_preparation_seconds"] == 2.5 for result in results)
+    assert all(result["model_fit_seconds"] == 6.0 for result in results)
+    assert all(result["prediction_seconds"] == 1.5 for result in results)
+    assert all(result["evaluation_seconds"] == 3.0 for result in results)
     assert all(
         call["walk_forward_kwargs"] == calls[0]["walk_forward_kwargs"]
         for call in calls
@@ -445,13 +464,27 @@ def test_rank_ndcg_benchmark_output_has_cpu_and_timing_fields(monkeypatch, capsy
         "xgb_threads",
         "cpu_budget",
         "model_fit_count",
+        "context_preparation_seconds",
+        "model_fit_seconds",
+        "prediction_seconds",
+        "evaluation_seconds",
         "wall_clock_seconds",
         "fits_per_minute",
     ):
         assert field in results[0]
     output = capsys.readouterr().out
-    assert "wall_clock_seconds" in output
-    assert "fits_per_minute" in output
+    assert "Shared preparation:" in output
+    assert "CPU BENCHMARK" in output
+    assert "PHASE TOTALS" in output
+    assert "workers" in output
+    assert "xgb_threads" in output
+    assert "wall_s" in output
+    assert "total_s" in output
+    assert "fits/min" in output
+    assert "model_topn_s" in output
+    assert "momentum_s" in output
+    assert "wall_clock_seconds" not in output
+    assert "fits_per_minute" not in output
 
 
 def test_parse_args_defaults_to_ten_prediction_days():

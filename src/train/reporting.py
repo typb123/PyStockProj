@@ -1,6 +1,7 @@
 """Report assembly, formatting, and logging for model training."""
 
 import logging
+import time
 
 import pandas as pd
 
@@ -695,6 +696,7 @@ def log_rank_ndcg_test_report(
     prediction_days=PREDICTION_DAYS,
     random_trials=100,
     random_trial_workers=4,
+    prepared_evaluation_state=None,
 ):
     """Log Top-N reports that rank candidates by grouped Rank-NDCG score."""
     top_n_selection_reports = build_top_n_selection_reports(
@@ -703,13 +705,17 @@ def log_rank_ndcg_test_report(
         prediction_days=prediction_days,
         random_trials=random_trials,
         random_trial_workers=random_trial_workers,
+        prepared_evaluation_state=prepared_evaluation_state,
+        include_phase_timings=True,
     )
+    diagnostics_started_at = time.perf_counter()
     ranking_diagnostics = build_same_date_ranking_diagnostics_with_baselines(
         test_split_metadata,
         ranking_scores,
         model_score_column="xgboost_rank_ndcg_score",
         prediction_days=prediction_days,
     )
+    ranking_diagnostics_seconds = time.perf_counter() - diagnostics_started_at
     top_n_ranked_selection_report = top_n_selection_reports["ranked_selection"]
     top_n_basket_backtest_report = top_n_selection_reports["basket_backtest"]
     top_n_basket_backtest_by_year_report = top_n_selection_reports.get(
@@ -763,6 +769,10 @@ def log_rank_ndcg_test_report(
         "basket_backtest": top_n_basket_backtest_report,
         "basket_backtest_by_year": top_n_basket_backtest_by_year_report,
         "same_date_ranking_diagnostics": ranking_diagnostics,
+        "evaluation_phase_timings": {
+            **top_n_selection_reports.get("phase_timings", {}),
+            "ranking_diagnostics_seconds": ranking_diagnostics_seconds,
+        },
     }
 
 

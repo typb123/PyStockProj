@@ -646,6 +646,8 @@ def test_train_models_cross_sectional_ranking_trains_on_top_bottom_and_scores_al
         prediction_days=None,
         random_trials=100,
         random_trial_workers=4,
+        prepared_evaluation_state=None,
+        include_phase_timings=False,
     ):
         captured["top_n_split_metadata"] = split_metadata.copy()
         captured["top_n_ranked_predictions"] = np.asarray(ranked_predictions)
@@ -1023,6 +1025,8 @@ def test_train_models_cross_sectional_rank_ndcg_trains_grouped_ranker_and_scores
         prediction_days=None,
         random_trials=100,
         random_trial_workers=4,
+        prepared_evaluation_state=None,
+        include_phase_timings=False,
     ):
         captured["top_n_split_metadata"] = split_metadata.copy()
         captured["top_n_ranked_predictions"] = np.asarray(ranked_predictions)
