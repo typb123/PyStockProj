@@ -6,6 +6,7 @@ from concurrent.futures import ProcessPoolExecutor
 from contextlib import nullcontext
 import hashlib
 import math
+import multiprocessing as mp
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -14,7 +15,7 @@ from typing import Callable, Iterable
 
 import numpy as np
 import pandas as pd
-from threadpoolctl import threadpool_limits
+from threadpoolctl import threadpool_info, threadpool_limits
 
 from src.features.feature_contract import MODEL_FEATURE_COLUMNS, MODEL_FEATURE_GROUPS
 from src.train.walk_forward_runner import run_walk_forward_models
@@ -66,6 +67,7 @@ class AblationRun:
     spec: "FeatureAblationSpec"
     report: dict
     elapsed_seconds: float
+    native_threadpools: list[dict] | None = None
 
 
 _ABLATION_WORKER_DATA: pd.DataFrame | None = None
@@ -136,6 +138,7 @@ def _run_one_ablation(
     walk_forward_kwargs: dict,
     runner: Callable[..., dict],
     blas_threads: int | None = None,
+    collect_worker_diagnostics: bool = False,
 ) -> AblationRun:
     """Run one independent variant and record its complete wall-clock duration."""
     started_at = time.perf_counter()
@@ -150,19 +153,42 @@ def _run_one_ablation(
             feature_columns_override=spec.feature_columns,
             **walk_forward_kwargs,
         )
+        native_threadpools = (
+            _native_threadpool_summary() if collect_worker_diagnostics else None
+        )
     return AblationRun(
         index=index,
         spec=spec,
         report=report,
         elapsed_seconds=time.perf_counter() - started_at,
+        native_threadpools=native_threadpools,
     )
+
+
+def _native_threadpool_summary() -> list[dict]:
+    """Return serializable native-pool details for an opt-in spawn smoke check."""
+    return [
+        {
+            "user_api": pool.get("user_api"),
+            "internal_api": pool.get("internal_api"),
+            "prefix": pool.get("prefix"),
+            "num_threads": pool.get("num_threads"),
+        }
+        for pool in threadpool_info()
+    ]
 
 
 def _run_one_ablation_worker(task) -> AblationRun:
     """Run a task using the process-local market-data copy."""
     if _ABLATION_WORKER_DATA is None:
         raise RuntimeError("Ablation worker was not initialized with market data.")
-    index, spec, walk_forward_kwargs, blas_threads = task
+    (
+        index,
+        spec,
+        walk_forward_kwargs,
+        blas_threads,
+        collect_worker_diagnostics,
+    ) = task
     return _run_one_ablation(
         _ABLATION_WORKER_DATA,
         index,
@@ -170,6 +196,7 @@ def _run_one_ablation_worker(task) -> AblationRun:
         walk_forward_kwargs,
         run_walk_forward_models,
         blas_threads,
+        collect_worker_diagnostics,
     )
 
 
@@ -182,6 +209,7 @@ def run_rank_ndcg_ablation_specs(
     cpu_budget: int,
     walk_forward_kwargs: dict,
     serial_runner: Callable[..., dict] | None = None,
+    collect_worker_diagnostics: bool = False,
 ) -> list[AblationRun]:
     """Run ordered ablation specs serially or in a bounded outer process pool.
 
@@ -208,16 +236,32 @@ def run_rank_ndcg_ablation_specs(
     if parallelism.outer_workers == 1:
         runner = serial_runner or run_walk_forward_models
         return [
-            _run_one_ablation(data, index, spec, worker_kwargs, runner)
+            _run_one_ablation(
+                data,
+                index,
+                spec,
+                worker_kwargs,
+                runner,
+                blas_threads,
+                collect_worker_diagnostics,
+            )
             for index, spec in indexed_specs
         ]
 
     tasks = [
-        (index, spec, worker_kwargs, blas_threads)
+        (
+            index,
+            spec,
+            worker_kwargs,
+            blas_threads,
+            collect_worker_diagnostics,
+        )
         for index, spec in indexed_specs
     ]
+    mp_context = mp.get_context("spawn")
     with ProcessPoolExecutor(
         max_workers=parallelism.outer_workers,
+        mp_context=mp_context,
         initializer=_initialize_ablation_worker,
         initargs=(data,),
     ) as executor:

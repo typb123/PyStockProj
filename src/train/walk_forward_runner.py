@@ -275,5 +275,6 @@ def _run_rank_ndcg_walk_forward_fold(
         "selected_candidate_id": None,
         "selected_candidate_name": "rank_ndcg",
         "selected_validation_top_n_mean_excess_return": None,
+        "ranker_n_jobs": ranker_params["n_jobs"],
     }
     return selection_report, rank_ndcg_reports["basket_backtest"]

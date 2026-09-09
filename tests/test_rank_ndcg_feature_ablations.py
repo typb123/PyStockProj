@@ -1,5 +1,7 @@
 """Focused tests for Rank-NDCG feature-ablation comparison semantics."""
 
+import pickle
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -179,9 +181,18 @@ def test_outer_ablation_execution_is_ordered_and_disables_nested_random_workers(
 ):
     calls = []
     blas_limit_calls = []
+    pool_contexts = []
 
     class ReversedSynchronousProcessPool:
-        def __init__(self, max_workers, initializer=None, initargs=()):
+        def __init__(
+            self,
+            max_workers,
+            mp_context=None,
+            initializer=None,
+            initargs=(),
+        ):
+            assert mp_context.get_start_method() == "spawn"
+            pool_contexts.append(mp_context.get_start_method())
             self.initializer = initializer
             self.initargs = initargs
 
@@ -251,15 +262,22 @@ def test_outer_ablation_execution_is_ordered_and_disables_nested_random_workers(
     assert all(call["xgb_threads"] == 4 for call in calls)
     assert all(call["model_seed"] == 137 for call in calls)
     assert blas_limit_calls == [(1, "blas"), (1, "blas")]
+    assert pool_contexts == ["spawn"]
 
 
-def test_serial_ablation_execution_preserves_random_worker_setting():
+def test_serial_ablation_execution_preserves_random_worker_setting(monkeypatch):
     calls = []
     specs = [FeatureAblationSpec("all_features", ["momentum_5d"])]
 
     def fake_walk_forward(data, **kwargs):
         calls.append(kwargs)
         return {"folds": []}
+
+    monkeypatch.setattr(
+        rank_ndcg_feature_ablations,
+        "ProcessPoolExecutor",
+        lambda *args, **kwargs: pytest.fail("serial execution must not create a pool"),
+    )
 
     runs = run_rank_ndcg_ablation_specs(
         pd.DataFrame({"Close": [1.0]}),
@@ -274,6 +292,21 @@ def test_serial_ablation_execution_preserves_random_worker_setting():
     assert [run.spec.name for run in runs] == ["all_features"]
     assert calls[0]["random_trial_workers"] == 3
     assert calls[0]["xgb_threads"] == 8
+
+
+def test_outer_worker_initializer_inputs_and_tasks_are_spawn_pickleable():
+    data = pd.DataFrame({"Close": [1.0]})
+    spec = FeatureAblationSpec("all_features", ["momentum_5d"])
+    task = (
+        0,
+        spec,
+        {"model_seed": 137, "random_trial_workers": 1, "xgb_threads": 4},
+        1,
+        True,
+    )
+
+    assert pickle.loads(pickle.dumps(data)).equals(data)
+    assert pickle.loads(pickle.dumps(task)) == task
 
 
 def test_default_ablation_output_paths_distinguish_mode_seed_and_lofo_selection():
