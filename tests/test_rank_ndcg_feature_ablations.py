@@ -476,6 +476,243 @@ def test_baseline_and_ablation_reports_have_identical_population_identity(
     assert_matching_ablation_population(baseline_report, ablation_report)
 
 
+def test_prepared_rank_context_freezes_effective_populations_and_subset_scaling(
+    monkeypatch,
+):
+    raw_data = _raw_feature_frame()
+    context = walk_forward_runner.prepare_rank_ndcg_walk_forward_context(
+        raw_data,
+        prediction_days=1,
+        min_train_years=2,
+        validation_years=1,
+        test_years=1,
+    )
+    dropped_feature = "rolling_signed_volume_20d"
+    subset = [feature for feature in MODEL_FEATURE_COLUMNS if feature != dropped_feature]
+    captured = []
+
+    def fake_ranker_fold(split, feature_columns, *, prepared_rank_populations=None, **kwargs):
+        captured.append(
+            {
+                "features": list(feature_columns),
+                "train_identity": prepared_rank_populations["train"]["identity"],
+                "validation_identity": prepared_rank_populations["validation"]["identity"],
+                "train_labels": prepared_rank_populations["train"]["labels"].copy(),
+                "train_qid": prepared_rank_populations["train"]["qid"].copy(),
+            }
+        )
+        basket = {
+            f"top_{top_n}": {
+                "model": {"average_basket_excess_return": 0.02},
+                "momentum_baseline": {"average_basket_excess_return": 0.01},
+                "universe": {"average_basket_excess_return": 0.00},
+            }
+            for top_n in (5, 10, 20)
+        }
+        return {
+            "selected_candidate_id": None,
+            "selected_candidate_name": "rank_ndcg",
+            "selected_validation_top_n_mean_excess_return": None,
+            "phase_timings": {},
+        }, basket
+
+    monkeypatch.setattr(
+        walk_forward_runner, "_run_rank_ndcg_walk_forward_fold", fake_ranker_fold
+    )
+    baseline = walk_forward_runner.run_rank_ndcg_walk_forward_from_context(
+        context, feature_columns_override=list(MODEL_FEATURE_COLUMNS)
+    )
+    ablation = walk_forward_runner.run_rank_ndcg_walk_forward_from_context(
+        context, feature_columns_override=subset
+    )
+
+    assert baseline["population_identity"] == ablation["population_identity"]
+    assert baseline["rank_population_identity"] == ablation["rank_population_identity"]
+    for baseline_fold, ablation_fold in zip(captured[:2], captured[2:]):
+        assert baseline_fold["train_identity"] == ablation_fold["train_identity"]
+        assert baseline_fold["validation_identity"] == ablation_fold["validation_identity"]
+        np.testing.assert_array_equal(
+            baseline_fold["train_labels"], ablation_fold["train_labels"]
+        )
+        np.testing.assert_array_equal(baseline_fold["train_qid"], ablation_fold["train_qid"])
+
+    prepared_fold = context["folds"][0]
+    prepared_frame, _ = DataPreparator().prepare_model_frame(
+        raw_data, prediction_days=1
+    )
+    direct_subset_split = build_walk_forward_split(
+        prepared_frame,
+        prepared_fold["fold"],
+        subset,
+        prediction_days=1,
+    )
+    full_positions = [MODEL_FEATURE_COLUMNS.index(feature) for feature in subset]
+    np.testing.assert_allclose(
+        prepared_fold["split"]["x_train"][:, full_positions],
+        direct_subset_split["x_train"],
+    )
+    np.testing.assert_allclose(
+        prepared_fold["split"]["x_val"][:, full_positions],
+        direct_subset_split["x_val"],
+    )
+    np.testing.assert_allclose(
+        prepared_fold["split"]["x_test"][:, full_positions],
+        direct_subset_split["x_test"],
+    )
+
+
+def test_prepared_rank_context_rejects_other_horizon_and_outer_runner_reuses_it(
+    monkeypatch,
+):
+    context = walk_forward_runner.prepare_rank_ndcg_walk_forward_context(
+        _raw_feature_frame(),
+        prediction_days=1,
+        min_train_years=2,
+        validation_years=1,
+        test_years=1,
+    )
+    with pytest.raises(ValueError, match="another horizon"):
+        walk_forward_runner.run_rank_ndcg_walk_forward_from_context(
+            context, prediction_days=2
+        )
+    with pytest.raises(TypeError, match="unexpected keyword"):
+        walk_forward_runner.run_rank_ndcg_walk_forward_from_context(
+            context, random_trial_wokers=1
+        )
+
+    calls = []
+
+    def fake_context_runner(context_arg, *, feature_columns_override, **kwargs):
+        calls.append((context_arg, list(feature_columns_override), kwargs["xgb_threads"]))
+        return {"folds": [], "aggregate": {}, "population_identity": {}}
+
+    monkeypatch.setattr(
+        rank_ndcg_feature_ablations,
+        "run_rank_ndcg_walk_forward_from_context",
+        fake_context_runner,
+    )
+    specs = build_rank_ndcg_feature_ablation_specs(
+        mode="leave-one-out", drop_features=["rolling_signed_volume_20d"]
+    )
+    runs = run_rank_ndcg_ablation_specs(
+        _raw_feature_frame(),
+        specs,
+        outer_workers=1,
+        xgb_threads=1,
+        cpu_budget=1,
+        walk_forward_kwargs={"prediction_days": 1, "target_mode": "cross_sectional_rank_ndcg"},
+        serial_runner=lambda *args, **kwargs: pytest.fail("raw runner should not run"),
+        prepared_context=context,
+    )
+
+    assert [run.spec.name for run in runs] == [spec.name for spec in specs]
+    assert [call[0] for call in calls] == [context, context]
+    assert [call[2] for call in calls] == [1, 1]
+
+
+def test_prepared_context_matches_direct_rank_ndcg_fit_predictions_and_metrics(
+    monkeypatch,
+):
+    captured_fits = []
+
+    class DeterministicRanker:
+        def __init__(self, **kwargs):
+            pass
+
+        def fit(self, features, labels, *, qid, eval_set, eval_qid, verbose):
+            captured_fits.append(
+                (
+                    features.copy(),
+                    np.asarray(labels).copy(),
+                    np.asarray(qid).copy(),
+                    eval_set[0][0].copy(),
+                    np.asarray(eval_set[0][1]).copy(),
+                    np.asarray(eval_qid[0]).copy(),
+                )
+            )
+            return self
+
+        def predict(self, features):
+            return features.sum(axis=1).to_numpy()
+
+    def fake_rank_report(metadata, scores, **kwargs):
+        score = float(np.mean(scores))
+        return {
+            "basket_backtest": {
+                f"top_{top_n}": {
+                    "model": {"average_basket_excess_return": score},
+                    "momentum_baseline": {"average_basket_excess_return": 0.01},
+                    "universe": {"average_basket_excess_return": 0.0},
+                }
+                for top_n in (5, 10, 20)
+            }
+        }
+
+    monkeypatch.setattr(walk_forward_runner, "XGBRanker", DeterministicRanker)
+    monkeypatch.setattr(
+        walk_forward_runner, "log_rank_ndcg_test_report", fake_rank_report
+    )
+    run_kwargs = {
+        "prediction_days": 1,
+        "min_train_years": 2,
+        "validation_years": 1,
+        "test_years": 1,
+        "target_mode": "cross_sectional_rank_ndcg",
+        "random_trials": 1,
+        "random_trial_workers": 1,
+        "model_seed": 7,
+        "xgb_threads": 1,
+    }
+    raw_data = _raw_feature_frame()
+    context = walk_forward_runner.prepare_rank_ndcg_walk_forward_context(
+        raw_data,
+        prediction_days=1,
+        min_train_years=2,
+        validation_years=1,
+        test_years=1,
+    )
+    subset = [
+        feature
+        for feature in MODEL_FEATURE_COLUMNS
+        if feature != "rolling_signed_volume_20d"
+    ]
+    context_run_kwargs = {
+        key: value
+        for key, value in run_kwargs.items()
+        if key not in {"min_train_years", "validation_years", "test_years"}
+    }
+    direct_baseline = walk_forward_runner.run_walk_forward_models(raw_data, **run_kwargs)
+    context_baseline = walk_forward_runner.run_rank_ndcg_walk_forward_from_context(
+        context,
+        feature_columns_override=list(MODEL_FEATURE_COLUMNS),
+        **context_run_kwargs,
+    )
+    direct_ablation = walk_forward_runner.run_walk_forward_models(
+        raw_data, feature_columns_override=subset, **run_kwargs
+    )
+    context_ablation = walk_forward_runner.run_rank_ndcg_walk_forward_from_context(
+        context, feature_columns_override=subset, **context_run_kwargs
+    )
+
+    for direct, reused in (
+        (direct_baseline, context_baseline),
+        (direct_ablation, context_ablation),
+    ):
+        assert direct["population_identity"] == reused["population_identity"]
+        assert direct["aggregate"] == reused["aggregate"]
+        assert [fold["top_n"] for fold in direct["folds"]] == [
+            fold["top_n"] for fold in reused["folds"]
+        ]
+
+    # Direct baseline, reused baseline, direct LOFO, reused LOFO; each has two folds.
+    for direct_fit, reused_fit in zip(captured_fits[:2], captured_fits[2:4]):
+        for direct_value, reused_value in zip(direct_fit, reused_fit):
+            np.testing.assert_allclose(direct_value, reused_value)
+    for direct_fit, reused_fit in zip(captured_fits[4:6], captured_fits[6:]):
+        for direct_value, reused_value in zip(direct_fit, reused_fit):
+            np.testing.assert_allclose(direct_value, reused_value)
+
+
 def test_walk_forward_forwards_explicit_model_seed_to_ranker_fold(monkeypatch):
     captured = {}
     fold = _fold()
