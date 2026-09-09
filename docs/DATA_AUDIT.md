@@ -112,19 +112,28 @@ Open concerns:
 - The model uses price-relative OHLC and normalized technical features rather
   than nominal price levels, so a common retrospective corporate-action scale
   factor cancels from model inputs.
-- `Volume`, volume moving averages, and OBV remain in the contract; their
-  liquidity and split-unit interpretation remains a separate research choice.
+- `Volume`, volume moving averages, and the 20-session rolling signed-volume
+  feature remain in the contract; their liquidity and split-unit interpretation
+  remains a separate research choice.
+- Cumulative OBV was removed because its value depended on the first row of the
+  supplied history: canonical `period=max` training and five-year serving could
+  assign different values to the same ticker/date. The replacement sums
+  `sign(Close.diff()) * Volume` across a trailing 20-session window and requires
+  a complete window, so it is invariant to an earlier history start once that
+  warmup is available.
 
 Completed audit check:
 
-- The corrected 10d and 20d canonical walk-forward reruns are complete. See the
-  [corrected Rank-NDCG results](EXPERIMENT_NOTES.md#corrected-rank-ndcg-walk-forward-rerun).
+- The corrected 10d and 20d walk-forward results must be rerun under the new
+  rolling signed-volume contract before they can be canonical again. See the
+  [experiment notes](EXPERIMENT_NOTES.md#volume-pressure-feature-parity-remediation).
 
 ## Current conclusion
 
 The data is usable for research and engineering development, but it has not yet been audited enough to support strong trading conclusions.
 
-The corrected feature-contract reruns are now the canonical research evidence.
+The existing corrected 10d and 20d figures are provisional until the canonical
+walk-forward evaluation is rerun with the rolling signed-volume feature.
 Before treating model results as meaningful trading evidence, the project should
 still resolve:
 

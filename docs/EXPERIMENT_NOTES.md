@@ -529,3 +529,25 @@ The corrected runs retained the same 28-fold expanding-window methodology and co
 Performance weakened somewhat relative to the pre-remediation results, but the core Rank-NDCG signal survived the removal of retrospectively price-scale-sensitive features. These corrected results supersede the prior headline figures as the current canonical research evidence.
 
 The remaining major limitation is unchanged: the historical large/mega-cap universe is based on a contemporary stock list projected backward rather than point-in-time historical membership. The Top-N results also remain overlapping-horizon research diagnostics rather than a realistic execution- and transaction-cost-aware trading backtest.
+
+### Volume-pressure feature parity remediation
+
+The corrected rerun above used cumulative OBV. Because OBV cumulatively sums
+`sign(Close.diff()) * Volume` from the first supplied row, the same ticker/date
+received a different value when canonical `period=max` training was compared
+with ranked-watchlist serving, which fetches five years. The first row of an
+isolated history also lacks the preceding close needed to determine its sign.
+
+The feature contract now replaces `obv` with `rolling_signed_volume_20d`: the
+sum of price-direction-signed volume over the trailing 20 completed sessions.
+It requires 20 valid signed-volume observations, so after the input boundary
+has rolled out it has no dependence on how much earlier history was supplied.
+Twenty sessions matches the existing 20-session SMA, volume moving average, and
+Bollinger lookbacks while remaining short enough to represent current volume
+pressure.
+
+This changes serving feature semantics and artifact schema. Existing saved
+bundles are intentionally incompatible, and the reported canonical 10d/20d
+results above are now provisional pending retraining and a max-history
+walk-forward rerun for both horizons. The headline figures have not yet been
+updated.

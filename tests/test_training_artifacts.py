@@ -320,6 +320,24 @@ def test_checksum_validation_rejects_modified_artifact(tmp_path, monkeypatch):
         artifacts.load_and_validate_bundle_manifest(paths["bundle_dir"])
 
 
+def test_schema_three_bundle_with_current_manifest_fields_is_rejected(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.chdir(tmp_path)
+    paths = save_bundle("cross_sectional_rank_ndcg", 10)
+    manifest_path = Path(paths["manifest"])
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["schema_version"] = 3
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    with pytest.raises(
+        artifacts.ArtifactBundleValidationError,
+        match="schema_version",
+    ):
+        artifacts.load_and_validate_bundle_manifest(paths["bundle_dir"])
+
+
 def test_schema_one_bundle_without_provenance_is_not_reconstructed(
     tmp_path,
     monkeypatch,

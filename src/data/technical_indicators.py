@@ -10,6 +10,9 @@ import numpy as np
 from typing import List
 
 
+SIGNED_VOLUME_WINDOW = 20
+
+
 def calculate_data(data: pd.DataFrame) -> pd.DataFrame:
     """
     Calculate technical indicators for one ticker's ordered OHLCV history.
@@ -25,7 +28,7 @@ def calculate_data(data: pd.DataFrame) -> pd.DataFrame:
         - Rolling Volatility
         - Relative Strength Index (RSI)
         - Moving Average Convergence Divergence (MACD)
-        - On-Balance Volume (OBV)
+        - Rolling signed volume (20 sessions)
         - Volume Moving Average (VMA)
         - Ichimoku Cloud components
         - Bollinger Bands
@@ -102,10 +105,18 @@ def calculate_data(data: pd.DataFrame) -> pd.DataFrame:
         df['macd_histogram_to_close'] = macd_histogram / df['Close']
         return df
 
-    def calculate_obv(df: pd.DataFrame) -> pd.DataFrame:
-        """Calculate On-Balance Volume."""
-        # OBV is cumulative over the provided single-ticker order.
-        df['obv'] = (np.sign(df['Close'].diff()) * df['Volume']).fillna(0).cumsum()
+    def calculate_rolling_signed_volume(df: pd.DataFrame) -> pd.DataFrame:
+        """Sum price-direction-signed volume over the trailing 20 sessions."""
+        signed_volume = np.sign(df['Close'].diff()) * df['Volume']
+        # Keep the missing first-row direction rather than treating it as neutral.
+        # With a full 20 signed-session window, values after the input boundary do
+        # not depend on where the supplied history began.
+        df[f'rolling_signed_volume_{SIGNED_VOLUME_WINDOW}d'] = (
+            signed_volume.rolling(
+                window=SIGNED_VOLUME_WINDOW,
+                min_periods=SIGNED_VOLUME_WINDOW,
+            ).sum()
+        )
         return df
 
     def calculate_vma(df: pd.DataFrame, windows: List[int] = [10, 20]) -> pd.DataFrame:
@@ -184,7 +195,7 @@ def calculate_data(data: pd.DataFrame) -> pd.DataFrame:
     df = calculate_rsi(df)
     df = calculate_macd(df)
     df = calculate_vma(df)
-    df = calculate_obv(df)
+    df = calculate_rolling_signed_volume(df)
     df = calculate_ichimoku_cloud(df)
     df = calculate_bollinger_bands(df)
     df = calculate_atr(df)

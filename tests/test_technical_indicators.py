@@ -9,7 +9,7 @@ from src.features.feature_contract import (
     MODEL_FEATURE_COLUMNS,
 )
 from src.data.data_prep import add_benchmark_relative_momentum
-from src.data.technical_indicators import calculate_data
+from src.data.technical_indicators import SIGNED_VOLUME_WINDOW, calculate_data
 
 
 def test_chikou_features_preserve_lagged_close_timing_without_nominal_scale():
@@ -80,6 +80,80 @@ def test_trailing_momentum_columns_are_past_looking():
     expected_50d = close[50] / close[0] - 1
     assert np.isclose(result.loc[5, "momentum_5d"], expected_5d)
     assert np.isclose(result.loc[50, "momentum_50d"], expected_50d)
+
+
+def test_rolling_signed_volume_uses_a_complete_trailing_window():
+    close = np.array(
+        [100.0, 102.0, 101.0, 101.0, 104.0, 103.0, 105.0, 106.0, 104.0,
+         107.0, 108.0, 107.0, 109.0, 110.0, 108.0, 111.0, 112.0, 110.0,
+         113.0, 114.0, 112.0],
+    )
+    volume = np.arange(1_000.0, 1_000.0 + len(close))
+    df = pd.DataFrame(
+        {
+            "Open": close - 0.5,
+            "High": close + 1.0,
+            "Low": close - 1.0,
+            "Close": close,
+            "Volume": volume,
+        }
+    )
+
+    result = calculate_data(df)
+    column = f"rolling_signed_volume_{SIGNED_VOLUME_WINDOW}d"
+    expected = np.sum(np.sign(np.diff(close)) * volume[1:])
+
+    assert column in result.columns
+    assert np.isnan(result.loc[SIGNED_VOLUME_WINDOW - 1, column])
+    assert result.loc[SIGNED_VOLUME_WINDOW, column] == expected
+    assert "obv" not in result.columns
+
+
+def test_base_model_features_match_after_history_start_boundary_has_warmed_up():
+    """A suffix with enough context must match a longer history at one date.
+
+    The target is deliberately far enough beyond the suffix boundary that the
+    first suffix row's missing prior close cannot enter the 20-session signed-
+    volume window. The long warmup also lets recursive EMA features converge.
+    """
+    periods = 520
+    steps = np.arange(periods, dtype=float)
+    close = 100.0 + 0.08 * steps + 3.0 * np.sin(steps / 5.0) + np.cos(steps / 13.0)
+    volume = 1_000_000.0 + 1_000.0 * steps + 10_000.0 * (steps % 7)
+    history = pd.DataFrame(
+        {
+            "Open": close * (0.997 + 0.001 * np.cos(steps / 9.0)),
+            "High": close * 1.015,
+            "Low": close * 0.985,
+            "Close": close,
+            "Volume": volume,
+        },
+        index=pd.bdate_range("2020-01-02", periods=periods),
+    )
+    short_history = history.iloc[-260:]
+    target_date = history.index[-1]
+
+    long_features = calculate_data(history)
+    short_features = calculate_data(short_history)
+
+    np.testing.assert_allclose(
+        long_features.loc[target_date, BASE_MODEL_FEATURE_COLUMNS].to_numpy(dtype=float),
+        short_features.loc[target_date, BASE_MODEL_FEATURE_COLUMNS].to_numpy(dtype=float),
+        rtol=1e-8,
+        atol=1e-10,
+        equal_nan=True,
+    )
+
+    column = f"rolling_signed_volume_{SIGNED_VOLUME_WINDOW}d"
+    assert long_features.loc[target_date, column] == short_features.loc[target_date, column]
+
+    # This fixture would fail under the old cumulative OBV definition because
+    # every signed-volume observation before the suffix start remains in its sum.
+    legacy_long_obv = (np.sign(history["Close"].diff()) * history["Volume"]).fillna(0).cumsum()
+    legacy_short_obv = (
+        np.sign(short_history["Close"].diff()) * short_history["Volume"]
+    ).fillna(0).cumsum()
+    assert legacy_long_obv.loc[target_date] != legacy_short_obv.loc[target_date]
 
 
 def test_remediated_model_features_are_invariant_to_common_price_scaling():

@@ -24,7 +24,7 @@ from src.train.training_contract import (
 )
 
 
-BUNDLE_SCHEMA_VERSION = 3
+BUNDLE_SCHEMA_VERSION = 4
 MANIFEST_FILENAME = "manifest.json"
 CURRENT_POINTER_FILENAME = "current.json"
 

@@ -30,7 +30,7 @@ EXPECTED_MODEL_FEATURE_COLUMNS = [
     "macd_to_close",
     "signal_line_to_close",
     "macd_histogram_to_close",
-    "obv",
+    "rolling_signed_volume_20d",
     "vma_10",
     "vma_20",
     "tenkan_sen_to_close",

@@ -26,7 +26,7 @@ MOMENTUM_OSCILLATOR_FEATURE_COLUMNS = [
 ]
 
 VOLUME_INDICATOR_FEATURE_COLUMNS = [
-    "obv",
+    "rolling_signed_volume_20d",
     "vma_10",
     "vma_20",
 ]

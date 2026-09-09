@@ -402,7 +402,7 @@ daily return
 volatility
 RSI
 MACD
-OBV
+20-session rolling signed volume
 volume moving averages
 Ichimoku-style fields
 Bollinger Bands
