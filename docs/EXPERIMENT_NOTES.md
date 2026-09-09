@@ -551,3 +551,12 @@ bundles are intentionally incompatible, and the reported canonical 10d/20d
 results above are now provisional pending retraining and a max-history
 walk-forward rerun for both horizons. The headline figures have not yet been
 updated.
+
+### 9/9/26 Feature-ablation methodology
+
+Added a matched leave-one-feature-out Rank-NDCG evaluation path. Baseline and ablated variants use identical eligible populations and walk-forward folds, matched model seeds, and paired per-fold comparisons. The ablation runner now supports controlled parallel execution and benchmarked CPU/thread configurations for faster research runs. No feature-retention conclusions have been drawn yet.
+
+
+
+
+
