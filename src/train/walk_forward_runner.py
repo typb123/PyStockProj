@@ -65,6 +65,8 @@ def run_walk_forward_models(
     target_mode: str = TARGET_MODE_EXCESS_RETURN,
     feature_columns_override: list[str] | None = None,
     model_seed: int | None = None,
+    xgb_threads: int | None = None,
+    max_folds: int | None = None,
 ) -> dict:
     """Run expanding-window walk-forward Top-N diagnostics for one horizon.
 
@@ -106,6 +108,13 @@ def run_walk_forward_models(
             "Not enough prediction years to create walk-forward folds with the "
             "requested windows."
         )
+    if max_folds is not None:
+        max_folds = int(max_folds)
+        if max_folds < 1:
+            raise ValueError("max_folds must be at least 1 when supplied.")
+        # Later folds have the largest expanding training window, making them a
+        # useful representative subset for benchmark-only executions.
+        folds = folds[-max_folds:]
 
     fold_reports = []
     fold_population_identities = []
@@ -137,6 +146,7 @@ def run_walk_forward_models(
                 random_trials=random_trials,
                 random_trial_workers=random_trial_workers,
                 model_seed=model_seed,
+                xgb_threads=xgb_threads,
             )
         else:
             selection_report, basket_backtest_report = (
@@ -215,6 +225,7 @@ def _run_rank_ndcg_walk_forward_fold(
     random_trials=100,
     random_trial_workers=8,
     model_seed=None,
+    xgb_threads=None,
 ):
     """Train and evaluate one grouped Rank-NDCG walk-forward fold."""
     train_metadata = _require_rank_ndcg_metadata(split["split_metadata"], "train")
@@ -243,6 +254,11 @@ def _run_rank_ndcg_walk_forward_fold(
     ranker_params = dict(XG_PARAMS_RANKER)
     if model_seed is not None:
         ranker_params["random_state"] = int(model_seed)
+    if xgb_threads is not None:
+        xgb_threads = int(xgb_threads)
+        if xgb_threads < 1:
+            raise ValueError("xgb_threads must be at least 1 when supplied.")
+        ranker_params["n_jobs"] = xgb_threads
     if "eval_set" not in fit_kwargs:
         ranker_params.pop("early_stopping_rounds", None)
     ranker = XGBRanker(**ranker_params)

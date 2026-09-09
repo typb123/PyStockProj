@@ -2,17 +2,22 @@
 
 from __future__ import annotations
 
+from concurrent.futures import ProcessPoolExecutor
+from contextlib import nullcontext
 import hashlib
 import math
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable
+import time
+from typing import Callable, Iterable
 
 import numpy as np
 import pandas as pd
+from threadpoolctl import threadpool_limits
 
 from src.features.feature_contract import MODEL_FEATURE_COLUMNS, MODEL_FEATURE_GROUPS
+from src.train.walk_forward_runner import run_walk_forward_models
 
 
 FEATURE_ABLATION_MODE_GROUPS = "groups"
@@ -34,6 +39,36 @@ PAIRED_AGGREGATE_METRICS = (
     "average_model_minus_universe",
     "fold_win_rate_vs_universe",
 )
+DEFAULT_CPU_BUDGET = 24
+DEFAULT_BENCHMARK_CPU_CONFIGURATIONS = (
+    (1, 24),
+    (2, 12),
+    (3, 8),
+    (4, 6),
+    (6, 4),
+)
+
+
+@dataclass(frozen=True)
+class AblationParallelismConfig:
+    """Explicit CPU allocation for independent ablation variants."""
+
+    outer_workers: int
+    xgb_threads: int
+    cpu_budget: int
+
+
+@dataclass
+class AblationRun:
+    """One completed ablation run, retaining its deterministic input position."""
+
+    index: int
+    spec: "FeatureAblationSpec"
+    report: dict
+    elapsed_seconds: float
+
+
+_ABLATION_WORKER_DATA: pd.DataFrame | None = None
 
 
 @dataclass(frozen=True)
@@ -45,6 +80,149 @@ class FeatureAblationSpec:
     removed_groups: str = ""
     included_groups: str = ""
     removed_features: tuple[str, ...] = ()
+
+
+def validate_ablation_parallelism(
+    outer_workers: int,
+    xgb_threads: int,
+    cpu_budget: int,
+) -> AblationParallelismConfig:
+    """Validate a non-oversubscribed process/thread allocation."""
+    values = {
+        "outer_workers": outer_workers,
+        "xgb_threads": xgb_threads,
+        "cpu_budget": cpu_budget,
+    }
+    normalized_values = {}
+    for name, value in values.items():
+        try:
+            normalized_value = int(value)
+        except (TypeError, ValueError) as error:
+            raise ValueError(f"{name} must be a positive integer.") from error
+        if normalized_value < 1:
+            raise ValueError(f"{name} must be a positive integer.")
+        normalized_values[name] = normalized_value
+
+    if (
+        normalized_values["outer_workers"] * normalized_values["xgb_threads"]
+        > normalized_values["cpu_budget"]
+    ):
+        raise ValueError(
+            "outer_workers * xgb_threads must not exceed cpu_budget."
+        )
+    return AblationParallelismConfig(**normalized_values)
+
+
+def build_benchmark_parallelism_configs(
+    cpu_budget: int,
+) -> list[AblationParallelismConfig]:
+    """Build the standard CPU benchmark matrix after budget validation."""
+    return [
+        validate_ablation_parallelism(outer_workers, xgb_threads, cpu_budget)
+        for outer_workers, xgb_threads in DEFAULT_BENCHMARK_CPU_CONFIGURATIONS
+    ]
+
+
+def _initialize_ablation_worker(data: pd.DataFrame) -> None:
+    """Store fetched market data once per outer process worker."""
+    global _ABLATION_WORKER_DATA
+    _ABLATION_WORKER_DATA = data
+
+
+def _run_one_ablation(
+    data: pd.DataFrame,
+    index: int,
+    spec: FeatureAblationSpec,
+    walk_forward_kwargs: dict,
+    runner: Callable[..., dict],
+    blas_threads: int | None = None,
+) -> AblationRun:
+    """Run one independent variant and record its complete wall-clock duration."""
+    started_at = time.perf_counter()
+    blas_context = (
+        threadpool_limits(limits=blas_threads, user_api="blas")
+        if blas_threads is not None
+        else nullcontext()
+    )
+    with blas_context:
+        report = runner(
+            data.copy(),
+            feature_columns_override=spec.feature_columns,
+            **walk_forward_kwargs,
+        )
+    return AblationRun(
+        index=index,
+        spec=spec,
+        report=report,
+        elapsed_seconds=time.perf_counter() - started_at,
+    )
+
+
+def _run_one_ablation_worker(task) -> AblationRun:
+    """Run a task using the process-local market-data copy."""
+    if _ABLATION_WORKER_DATA is None:
+        raise RuntimeError("Ablation worker was not initialized with market data.")
+    index, spec, walk_forward_kwargs, blas_threads = task
+    return _run_one_ablation(
+        _ABLATION_WORKER_DATA,
+        index,
+        spec,
+        walk_forward_kwargs,
+        run_walk_forward_models,
+        blas_threads,
+    )
+
+
+def run_rank_ndcg_ablation_specs(
+    data: pd.DataFrame,
+    specs: Iterable[FeatureAblationSpec],
+    *,
+    outer_workers: int,
+    xgb_threads: int,
+    cpu_budget: int,
+    walk_forward_kwargs: dict,
+    serial_runner: Callable[..., dict] | None = None,
+) -> list[AblationRun]:
+    """Run ordered ablation specs serially or in a bounded outer process pool.
+
+    Outer workers receive the fetched frame through their initializer, never
+    fetch independently, and force Top-N random trial work to serial execution
+    to avoid a nested process-pool beneath multi-threaded XGBoost fitting.
+    """
+    parallelism = validate_ablation_parallelism(
+        outer_workers,
+        xgb_threads,
+        cpu_budget,
+    )
+    ordered_specs = list(specs)
+    if not ordered_specs:
+        return []
+
+    worker_kwargs = dict(walk_forward_kwargs)
+    worker_kwargs["xgb_threads"] = parallelism.xgb_threads
+    blas_threads = 1 if parallelism.outer_workers > 1 else None
+    if parallelism.outer_workers > 1:
+        worker_kwargs["random_trial_workers"] = 1
+
+    indexed_specs = list(enumerate(ordered_specs))
+    if parallelism.outer_workers == 1:
+        runner = serial_runner or run_walk_forward_models
+        return [
+            _run_one_ablation(data, index, spec, worker_kwargs, runner)
+            for index, spec in indexed_specs
+        ]
+
+    tasks = [
+        (index, spec, worker_kwargs, blas_threads)
+        for index, spec in indexed_specs
+    ]
+    with ProcessPoolExecutor(
+        max_workers=parallelism.outer_workers,
+        initializer=_initialize_ablation_worker,
+        initargs=(data,),
+    ) as executor:
+        runs = list(executor.map(_run_one_ablation_worker, tasks))
+    return sorted(runs, key=lambda run: run.index)
 
 
 def _without(features: list[str], removed_features: set[str]) -> list[str]:

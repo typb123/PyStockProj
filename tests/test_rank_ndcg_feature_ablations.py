@@ -2,17 +2,23 @@
 
 import numpy as np
 import pandas as pd
+import pytest
 
 from src.data.data_prep import DataPreparator
 from src.features.feature_contract import MODEL_FEATURE_COLUMNS
 from src.train.evaluation.walk_forward import build_walk_forward_split
 from src.train.rank_ndcg_feature_ablations import (
+    FeatureAblationSpec,
     assert_matching_ablation_population,
+    build_benchmark_parallelism_configs,
     build_paired_ablation_report,
     build_output_path,
     build_rank_ndcg_feature_ablation_specs,
+    run_rank_ndcg_ablation_specs,
+    validate_ablation_parallelism,
 )
 import src.train.model_training as model_training
+import src.train.rank_ndcg_feature_ablations as rank_ndcg_feature_ablations
 import src.train.walk_forward_runner as walk_forward_runner
 
 
@@ -155,6 +161,119 @@ def test_group_ablation_specs_remain_available_and_start_with_baseline():
 
     assert specs[0].name == "all_features"
     assert any(spec.name == "drop_volume_scale" for spec in specs)
+
+
+def test_cpu_parallelism_validation_accepts_budgeted_configs_and_rejects_oversubscription():
+    assert validate_ablation_parallelism(3, 8, 24).outer_workers == 3
+    assert [
+        (config.outer_workers, config.xgb_threads)
+        for config in build_benchmark_parallelism_configs(24)
+    ] == [(1, 24), (2, 12), (3, 8), (4, 6), (6, 4)]
+
+    with pytest.raises(ValueError, match="must not exceed cpu_budget"):
+        validate_ablation_parallelism(3, 9, 24)
+
+
+def test_outer_ablation_execution_is_ordered_and_disables_nested_random_workers(
+    monkeypatch,
+):
+    calls = []
+    blas_limit_calls = []
+
+    class ReversedSynchronousProcessPool:
+        def __init__(self, max_workers, initializer=None, initargs=()):
+            self.initializer = initializer
+            self.initargs = initargs
+
+        def __enter__(self):
+            self.initializer(*self.initargs)
+            return self
+
+        def __exit__(self, exc_type, exc, traceback):
+            return False
+
+        def map(self, worker, tasks):
+            return [worker(task) for task in reversed(list(tasks))]
+
+    class RecordingBlasLimit:
+        def __init__(self, *, limits, user_api):
+            blas_limit_calls.append((limits, user_api))
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, traceback):
+            return False
+
+    def fake_walk_forward(data, **kwargs):
+        calls.append(kwargs)
+        return {"folds": [{"fold_index": 0}], "marker": kwargs["model_seed"]}
+
+    monkeypatch.setattr(
+        rank_ndcg_feature_ablations,
+        "ProcessPoolExecutor",
+        ReversedSynchronousProcessPool,
+    )
+    monkeypatch.setattr(
+        rank_ndcg_feature_ablations,
+        "run_walk_forward_models",
+        fake_walk_forward,
+    )
+    monkeypatch.setattr(
+        rank_ndcg_feature_ablations,
+        "threadpool_limits",
+        RecordingBlasLimit,
+    )
+    specs = [
+        FeatureAblationSpec("all_features", ["momentum_5d"]),
+        FeatureAblationSpec("drop__momentum_5d", ["momentum_10d"]),
+    ]
+
+    runs = run_rank_ndcg_ablation_specs(
+        pd.DataFrame({"Close": [1.0]}),
+        specs,
+        outer_workers=2,
+        xgb_threads=4,
+        cpu_budget=8,
+        walk_forward_kwargs={
+            "target_mode": "cross_sectional_rank_ndcg",
+            "random_trial_workers": 8,
+            "model_seed": 137,
+        },
+    )
+
+    assert [run.spec.name for run in runs] == [spec.name for spec in specs]
+    assert [call["feature_columns_override"] for call in calls] == [
+        specs[1].feature_columns,
+        specs[0].feature_columns,
+    ]
+    assert all(call["random_trial_workers"] == 1 for call in calls)
+    assert all(call["xgb_threads"] == 4 for call in calls)
+    assert all(call["model_seed"] == 137 for call in calls)
+    assert blas_limit_calls == [(1, "blas"), (1, "blas")]
+
+
+def test_serial_ablation_execution_preserves_random_worker_setting():
+    calls = []
+    specs = [FeatureAblationSpec("all_features", ["momentum_5d"])]
+
+    def fake_walk_forward(data, **kwargs):
+        calls.append(kwargs)
+        return {"folds": []}
+
+    runs = run_rank_ndcg_ablation_specs(
+        pd.DataFrame({"Close": [1.0]}),
+        specs,
+        outer_workers=1,
+        xgb_threads=8,
+        cpu_budget=8,
+        walk_forward_kwargs={"random_trial_workers": 3},
+        serial_runner=fake_walk_forward,
+    )
+
+    assert [run.spec.name for run in runs] == ["all_features"]
+    assert calls[0]["random_trial_workers"] == 3
+    assert calls[0]["xgb_threads"] == 8
 
 
 def test_default_ablation_output_paths_distinguish_mode_seed_and_lofo_selection():

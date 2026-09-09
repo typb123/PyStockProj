@@ -318,6 +318,7 @@ def test_run_walk_forward_models_rank_ndcg_trains_grouped_ranker_and_evaluates_t
         random_trials=7,
         random_trial_workers=2,
         target_mode="cross_sectional_rank_ndcg",
+        xgb_threads=3,
     )
 
     np.testing.assert_array_equal(captured["fit_first_feature"], [1.0, 3.0, 0.0, 2.0])
@@ -327,7 +328,11 @@ def test_run_walk_forward_models_rank_ndcg_trains_grouped_ranker_and_evaluates_t
     np.testing.assert_array_equal(captured["eval_y"], [0, 4])
     np.testing.assert_array_equal(captured["eval_qid"], [0, 0])
     assert captured["fit_verbose"] is False
-    assert captured["ranker_params"] == walk_forward_runner.XG_PARAMS_RANKER
+    assert captured["ranker_params"] == {
+        **walk_forward_runner.XG_PARAMS_RANKER,
+        "n_jobs": 3,
+    }
+    assert walk_forward_runner.XG_PARAMS_RANKER["n_jobs"] == -1
     np.testing.assert_array_equal(
         captured["rank_ndcg_scores"],
         [0.70, 0.40, 0.90, 0.20],

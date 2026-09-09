@@ -3,6 +3,7 @@
 import importlib.util
 import logging
 from pathlib import Path
+from types import SimpleNamespace
 
 import pandas as pd
 import numpy as np
@@ -368,6 +369,74 @@ def test_rank_ndcg_ablation_cli_selects_only_requested_leave_one_out_feature():
         "drop__rolling_signed_volume_20d",
     ]
     assert args.model_seed == 137
+
+
+def test_rank_ndcg_ablation_parallelism_and_benchmark_cli_options():
+    args = ablation_script.parse_args(
+        [
+            "--outer-workers",
+            "3",
+            "--cpu-budget",
+            "24",
+            "--benchmark",
+            "--benchmark-folds",
+            "2",
+        ]
+    )
+
+    parallelism = ablation_script._resolve_parallelism_args(args)
+
+    assert parallelism.outer_workers == 3
+    assert parallelism.xgb_threads == 8
+    assert args.benchmark is True
+    assert args.benchmark_folds == 2
+
+
+def test_rank_ndcg_benchmark_output_has_cpu_and_timing_fields(monkeypatch, capsys):
+    args = ablation_script.parse_args(
+        ["--benchmark", "--cpu-budget", "24", "--benchmark-folds", "1"]
+    )
+    calls = []
+    task_orders = []
+
+    def fake_run_ablation_specs(data, specs, **kwargs):
+        calls.append(kwargs)
+        task_orders.append([spec.name for spec in specs])
+        return [SimpleNamespace(report={"folds": [{}]}) for _ in specs]
+
+    monkeypatch.setattr(
+        ablation_script,
+        "run_rank_ndcg_ablation_specs",
+        fake_run_ablation_specs,
+    )
+
+    results = ablation_script._run_benchmark(pd.DataFrame({"Close": [1.0]}), args)
+
+    assert len(results) == 5
+    assert all(call["walk_forward_kwargs"]["random_trial_workers"] == 1 for call in calls)
+    assert task_orders == [task_orders[0]] * len(results)
+    assert task_orders[0] == [
+        "all_features",
+        "drop__rolling_signed_volume_20d",
+    ] * 3
+    assert all(result["benchmark_variant_runs"] == 6 for result in results)
+    assert all(result["model_fit_count"] == 6 for result in results)
+    assert all(
+        call["walk_forward_kwargs"] == calls[0]["walk_forward_kwargs"]
+        for call in calls
+    )
+    for field in (
+        "outer_workers",
+        "xgb_threads",
+        "cpu_budget",
+        "model_fit_count",
+        "wall_clock_seconds",
+        "fits_per_minute",
+    ):
+        assert field in results[0]
+    output = capsys.readouterr().out
+    assert "wall_clock_seconds" in output
+    assert "fits_per_minute" in output
 
 
 def test_parse_args_defaults_to_ten_prediction_days():
