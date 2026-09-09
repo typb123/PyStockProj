@@ -288,6 +288,7 @@ def test_rank_ndcg_ablation_runner_uses_walk_forward_for_every_feature_spec(
     def fake_run_walk_forward_models(data, **kwargs):
         calls.append(kwargs)
         return {
+            "folds": [],
             "aggregate": {
                 "fold_count": 5,
                 "top_n": {
@@ -300,7 +301,13 @@ def test_rank_ndcg_ablation_runner_uses_walk_forward_for_every_feature_spec(
                     }
                     for top_n in (5, 10, 20)
                 },
-            }
+            },
+            "population_identity": {
+                "eligibility_feature_columns": list(MODEL_FEATURE_COLUMNS),
+                "embargo_prediction_days": 20,
+                "prepared": {"row_count": 0, "row_digest": "same"},
+                "folds": [],
+            },
         }
 
     monkeypatch.setattr(
@@ -338,6 +345,29 @@ def test_rank_ndcg_ablation_runner_uses_walk_forward_for_every_feature_spec(
     csv_result = pd.read_csv(output_path)
     assert "top_5_fold_win_rate_vs_momentum" in csv_result.columns
     assert "top_20_average_model_minus_universe" in csv_result.columns
+
+
+def test_rank_ndcg_ablation_cli_selects_only_requested_leave_one_out_feature():
+    args = ablation_script.parse_args(
+        [
+            "--mode",
+            "leave-one-out",
+            "--drop-feature",
+            "rolling_signed_volume_20d",
+            "--model-seed",
+            "137",
+        ]
+    )
+    specs = build_rank_ndcg_feature_ablation_specs(
+        mode=args.mode,
+        drop_features=args.drop_feature,
+    )
+
+    assert [spec.name for spec in specs] == [
+        "all_features",
+        "drop__rolling_signed_volume_20d",
+    ]
+    assert args.model_seed == 137
 
 
 def test_parse_args_defaults_to_ten_prediction_days():

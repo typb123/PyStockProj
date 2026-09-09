@@ -1,6 +1,7 @@
 """Expanding-window walk-forward helpers for Top-N model diagnostics."""
 
 from collections import Counter
+import hashlib
 
 import numpy as np
 import pandas as pd
@@ -16,6 +17,24 @@ DEFAULT_WALK_FORWARD_VALIDATION_YEARS = 1
 DEFAULT_WALK_FORWARD_TEST_YEARS = 1
 DEFAULT_WALK_FORWARD_STEP_YEARS = 1
 DEFAULT_WALK_FORWARD_TOP_N_BUCKETS = ("top_5", "top_10", "top_20")
+
+# These fields identify the candidate population and labels independently of
+# which subset of model columns is used to fit a particular experiment.
+POPULATION_IDENTITY_COLUMNS = (
+    "_source_index",
+    "Ticker",
+    "prediction_date",
+    "forward_end_date",
+    "benchmark_forward_end_date",
+    "raw_forward_return",
+    "benchmark_forward_return",
+    "excess_forward_return",
+    "targetReturns",
+    "beat_benchmark_target",
+    "excess_return_rank_pct_by_date",
+    "top_quintile_target",
+    "ranking_train_sample",
+)
 
 
 def build_expanding_yearly_walk_forward_folds(
@@ -102,7 +121,72 @@ def build_walk_forward_split(
             "validation": _date_range_for_frame(validation_df),
             "test": _date_range_for_frame(test_df),
         },
+        "population_identity": {
+            "train": build_model_population_identity(train_df),
+            "validation": build_model_population_identity(validation_df),
+            "test": build_model_population_identity(test_df),
+        },
         "scaler": scaler,
+    }
+
+
+def build_model_population_identity(frame):
+    """Return a compact, deterministic identity for eligible modeling rows.
+
+    The identity deliberately excludes model feature values.  It instead hashes
+    row provenance, candidate/date membership, and target/ranking-label fields,
+    allowing feature-subset runs to prove they evaluated the same population.
+    """
+    available_columns = [
+        column for column in POPULATION_IDENTITY_COLUMNS if column in frame.columns
+    ]
+    identity_frame = frame[available_columns].copy()
+    row_hashes = pd.util.hash_pandas_object(
+        identity_frame,
+        index=False,
+        categorize=True,
+    ).to_numpy(dtype=np.uint64)
+    digest = hashlib.sha256(row_hashes.tobytes()).hexdigest()
+    return {
+        "row_count": int(len(identity_frame)),
+        "prediction_date_count": int(
+            identity_frame["prediction_date"].nunique()
+            if "prediction_date" in identity_frame
+            else 0
+        ),
+        "ticker_count": int(
+            identity_frame["Ticker"].nunique() if "Ticker" in identity_frame else 0
+        ),
+        "identity_columns": available_columns,
+        "row_digest": digest,
+    }
+
+
+def build_walk_forward_fold_population_identity(fold, split):
+    """Capture split membership after the fold's embargo has been applied."""
+    split_identity = split.get("population_identity")
+    if split_identity is None:
+        split_identity = {
+            split_name: build_model_population_identity(metadata)
+            for split_name, metadata in split.get("split_metadata", {}).items()
+        }
+
+    split_date_ranges = split.get("split_date_ranges", {})
+    return {
+        "fold_index": int(fold["fold_index"]),
+        "train_date_range": split_date_ranges.get(
+            "train",
+            fold["train_date_range"],
+        ),
+        "validation_date_range": split_date_ranges.get(
+            "validation",
+            fold["validation_date_range"],
+        ),
+        "test_date_range": split_date_ranges.get(
+            "test",
+            fold["test_date_range"],
+        ),
+        "splits": split_identity,
     }
 
 

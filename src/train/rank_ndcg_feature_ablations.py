@@ -2,15 +2,38 @@
 
 from __future__ import annotations
 
+import hashlib
 import math
 import re
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Iterable
 
 import numpy as np
 import pandas as pd
 
 from src.features.feature_contract import MODEL_FEATURE_COLUMNS, MODEL_FEATURE_GROUPS
+
+
+FEATURE_ABLATION_MODE_GROUPS = "groups"
+FEATURE_ABLATION_MODE_LEAVE_ONE_OUT = "leave-one-out"
+FEATURE_ABLATION_MODES = (
+    FEATURE_ABLATION_MODE_GROUPS,
+    FEATURE_ABLATION_MODE_LEAVE_ONE_OUT,
+)
+TOP_N_VALUES = (5, 10, 20)
+PAIRED_FOLD_METRICS = (
+    "model_excess",
+    "model_minus_momentum",
+    "model_minus_universe",
+)
+PAIRED_AGGREGATE_METRICS = (
+    "average_model_excess",
+    "average_model_minus_momentum",
+    "fold_win_rate_vs_momentum",
+    "average_model_minus_universe",
+    "fold_win_rate_vs_universe",
+)
 
 
 @dataclass(frozen=True)
@@ -21,6 +44,7 @@ class FeatureAblationSpec:
     feature_columns: list[str]
     removed_groups: str = ""
     included_groups: str = ""
+    removed_features: tuple[str, ...] = ()
 
 
 def _without(features: list[str], removed_features: set[str]) -> list[str]:
@@ -31,8 +55,81 @@ def _only(features: list[str], included_features: set[str]) -> list[str]:
     return [feature for feature in features if feature in included_features]
 
 
-def build_rank_ndcg_feature_ablation_specs() -> list[FeatureAblationSpec]:
+def _all_features_baseline_spec() -> FeatureAblationSpec:
+    return FeatureAblationSpec(
+        name="all_features",
+        feature_columns=list(MODEL_FEATURE_COLUMNS),
+        included_groups="all",
+    )
+
+
+def _resolve_requested_drop_features(
+    drop_features: Iterable[str] | None,
+) -> list[str]:
+    """Validate requested LOFO removals and order them by the feature contract."""
+    all_features = list(MODEL_FEATURE_COLUMNS)
+    if drop_features is None:
+        return all_features
+
+    requested_features = list(drop_features)
+    unknown_features = sorted(set(requested_features).difference(all_features))
+    if unknown_features:
+        raise ValueError(
+            "drop_features may only include MODEL_FEATURE_COLUMNS. "
+            f"Invalid entries: {unknown_features}"
+        )
+    duplicate_features = sorted(
+        {
+            feature
+            for feature in requested_features
+            if requested_features.count(feature) > 1
+        }
+    )
+    if duplicate_features:
+        raise ValueError(
+            f"drop_features contains duplicates: {duplicate_features}"
+        )
+    requested_set = set(requested_features)
+    return [feature for feature in all_features if feature in requested_set]
+
+
+def build_leave_one_feature_out_ablation_specs(
+    drop_features: Iterable[str] | None = None,
+) -> list[FeatureAblationSpec]:
+    """Build a full baseline plus one ordered, single-feature removal per spec.
+
+    Passing ``drop_features`` limits the variants without changing the baseline.
+    An omitted selection generates all removals in feature-contract order.
+    """
+    all_features = list(MODEL_FEATURE_COLUMNS)
+    selected_features = _resolve_requested_drop_features(drop_features)
+    specs = [_all_features_baseline_spec()]
+    specs.extend(
+        FeatureAblationSpec(
+            name=f"drop__{feature}",
+            feature_columns=_without(all_features, {feature}),
+            removed_features=(feature,),
+        )
+        for feature in selected_features
+    )
+    return specs
+
+
+def build_rank_ndcg_feature_ablation_specs(
+    mode: str = FEATURE_ABLATION_MODE_GROUPS,
+    drop_features: Iterable[str] | None = None,
+) -> list[FeatureAblationSpec]:
     """Build the initial controlled feature-group ablation grid."""
+    if mode not in FEATURE_ABLATION_MODES:
+        raise ValueError(
+            f"Unsupported ablation mode {mode!r}. "
+            f"Expected one of {', '.join(FEATURE_ABLATION_MODES)}."
+        )
+    if mode == FEATURE_ABLATION_MODE_LEAVE_ONE_OUT:
+        return build_leave_one_feature_out_ablation_specs(drop_features)
+    if drop_features is not None:
+        raise ValueError("drop_features is only supported in leave-one-out mode.")
+
     all_features = list(MODEL_FEATURE_COLUMNS)
     groups = MODEL_FEATURE_GROUPS
     raw_ohlc = {"open_to_close", "high_to_close", "low_to_close"}
@@ -77,11 +174,7 @@ def build_rank_ndcg_feature_ablation_specs() -> list[FeatureAblationSpec]:
     )
 
     return [
-        FeatureAblationSpec(
-            name="all_features",
-            feature_columns=all_features,
-            included_groups="all",
-        ),
+        _all_features_baseline_spec(),
         FeatureAblationSpec(
             name="drop_raw_ohlc",
             feature_columns=_without(all_features, raw_ohlc),
@@ -151,12 +244,182 @@ def _numeric(value):
         return np.nan
 
 
+def assert_matching_ablation_population(
+    baseline_report: dict,
+    ablation_report: dict,
+) -> None:
+    """Fail when two reports did not use the same eligible walk-forward rows."""
+    baseline_identity = baseline_report.get("population_identity")
+    ablation_identity = ablation_report.get("population_identity")
+    if baseline_identity is None or ablation_identity is None:
+        raise ValueError(
+            "Baseline and ablation reports must include population_identity."
+        )
+    if baseline_identity != ablation_identity:
+        raise ValueError(
+            "Baseline and ablation population identities differ. "
+            "Feature-ablation comparisons require identical eligible rows, "
+            "labels, folds, and embargoed split membership."
+        )
+
+
+def _paired_metric_delta(ablated_value, baseline_value):
+    """Return ablated minus baseline, preserving unavailable values as NaN."""
+    ablated_value = _numeric(ablated_value)
+    baseline_value = _numeric(baseline_value)
+    if math.isnan(ablated_value) or math.isnan(baseline_value):
+        return np.nan
+    return ablated_value - baseline_value
+
+
+def _paired_fold_win_loss_tie(deltas: list[float]) -> dict:
+    """Count ablation wins/losses/ties using the ablated-minus-baseline delta."""
+    finite_deltas = [delta for delta in deltas if not math.isnan(_numeric(delta))]
+    return {
+        "ablation_win_count": int(sum(delta > 0.0 for delta in finite_deltas)),
+        "baseline_win_count": int(sum(delta < 0.0 for delta in finite_deltas)),
+        "tie_count": int(sum(delta == 0.0 for delta in finite_deltas)),
+        "evaluated_fold_count": int(len(finite_deltas)),
+    }
+
+
+def build_paired_ablation_report(
+    baseline_report: dict,
+    ablation_report: dict,
+    *,
+    baseline_name: str = "all_features",
+    ablation_name: str,
+) -> dict:
+    """Pair an ablation against the full baseline without collapsing fold data.
+
+    Every delta follows ``ablated - baseline``: positive values mean removing
+    the feature improved the measured metric, and negative values mean it hurt.
+    """
+    assert_matching_ablation_population(baseline_report, ablation_report)
+
+    baseline_folds = {
+        int(fold["fold_index"]): fold for fold in baseline_report.get("folds", [])
+    }
+    ablation_folds = {
+        int(fold["fold_index"]): fold for fold in ablation_report.get("folds", [])
+    }
+    if baseline_folds.keys() != ablation_folds.keys():
+        raise ValueError("Baseline and ablation reports have different fold indexes.")
+
+    paired_top_n = {}
+    for top_n in TOP_N_VALUES:
+        bucket_name = f"top_{top_n}"
+        paired_folds = []
+        metric_deltas = {metric_name: [] for metric_name in PAIRED_FOLD_METRICS}
+        for fold_index in sorted(baseline_folds):
+            baseline_metrics = baseline_folds[fold_index].get("top_n", {}).get(
+                bucket_name,
+                {},
+            )
+            ablation_metrics = ablation_folds[fold_index].get("top_n", {}).get(
+                bucket_name,
+                {},
+            )
+            deltas = {
+                metric_name: _paired_metric_delta(
+                    ablation_metrics.get(metric_name),
+                    baseline_metrics.get(metric_name),
+                )
+                for metric_name in PAIRED_FOLD_METRICS
+            }
+            for metric_name, delta in deltas.items():
+                metric_deltas[metric_name].append(delta)
+            paired_folds.append(
+                {
+                    "fold_index": fold_index,
+                    "baseline": {
+                        metric_name: _numeric(baseline_metrics.get(metric_name))
+                        for metric_name in PAIRED_FOLD_METRICS
+                    },
+                    "ablated": {
+                        metric_name: _numeric(ablation_metrics.get(metric_name))
+                        for metric_name in PAIRED_FOLD_METRICS
+                    },
+                    "delta": deltas,
+                }
+            )
+
+        baseline_aggregate = baseline_report.get("aggregate", {}).get(
+            "top_n",
+            {},
+        ).get(bucket_name, {})
+        ablation_aggregate = ablation_report.get("aggregate", {}).get(
+            "top_n",
+            {},
+        ).get(bucket_name, {})
+        paired_top_n[bucket_name] = {
+            "baseline": {
+                metric_name: _numeric(baseline_aggregate.get(metric_name))
+                for metric_name in PAIRED_AGGREGATE_METRICS
+            },
+            "ablated": {
+                metric_name: _numeric(ablation_aggregate.get(metric_name))
+                for metric_name in PAIRED_AGGREGATE_METRICS
+            },
+            "delta": {
+                metric_name: _paired_metric_delta(
+                    ablation_aggregate.get(metric_name),
+                    baseline_aggregate.get(metric_name),
+                )
+                for metric_name in PAIRED_AGGREGATE_METRICS
+            },
+            "fold_win_loss_tie": {
+                metric_name: _paired_fold_win_loss_tie(deltas)
+                for metric_name, deltas in metric_deltas.items()
+            },
+            "folds": paired_folds,
+        }
+
+    return {
+        "baseline_name": baseline_name,
+        "ablation_name": ablation_name,
+        "delta_convention": "ablated_minus_baseline",
+        "population_identity": baseline_report["population_identity"],
+        "top_n": paired_top_n,
+    }
+
+
+def flatten_paired_ablation_fold_rows(paired_reports: Iterable[dict]) -> list[dict]:
+    """Flatten paired per-fold metrics for an inspectable companion CSV."""
+    rows = []
+    for paired_report in paired_reports:
+        for top_n in TOP_N_VALUES:
+            bucket_name = f"top_{top_n}"
+            for paired_fold in paired_report.get("top_n", {}).get(
+                bucket_name,
+                {},
+            ).get("folds", []):
+                row = {
+                    "baseline_name": paired_report["baseline_name"],
+                    "ablation_name": paired_report["ablation_name"],
+                    "delta_convention": paired_report["delta_convention"],
+                    "top_n": top_n,
+                    "fold_index": paired_fold["fold_index"],
+                }
+                for metric_name in PAIRED_FOLD_METRICS:
+                    row[f"baseline_{metric_name}"] = paired_fold["baseline"][
+                        metric_name
+                    ]
+                    row[f"ablated_{metric_name}"] = paired_fold["ablated"][
+                        metric_name
+                    ]
+                    row[f"delta_{metric_name}"] = paired_fold["delta"][metric_name]
+                rows.append(row)
+    return rows
+
+
 def extract_ablation_result_row(
     report: dict,
     spec: FeatureAblationSpec,
     prediction_days: int,
     period: str,
     universe: str,
+    paired_report: dict | None = None,
 ) -> dict:
     """Extract a flat CSV-ready row from one walk-forward aggregate report."""
     aggregate = report.get("aggregate", {})
@@ -172,9 +435,11 @@ def extract_ablation_result_row(
         "prediction_days": int(prediction_days),
         "period": period,
         "universe": universe,
+        "model_seed": report.get("model_seed"),
         "feature_count": len(spec.feature_columns),
         "removed_groups": spec.removed_groups,
         "included_groups": spec.included_groups,
+        "removed_features": ",".join(spec.removed_features),
         "evaluated_fold_count": evaluated_fold_count,
     }
 
@@ -190,6 +455,28 @@ def extract_ablation_result_row(
             row[f"top_{top_n}_{metric_name}"] = _numeric(
                 bucket.get(metric_name)
             )
+
+    if paired_report is not None:
+        row["comparison_baseline_name"] = paired_report["baseline_name"]
+        row["delta_convention"] = paired_report["delta_convention"]
+        for top_n in TOP_N_VALUES:
+            bucket_name = f"top_{top_n}"
+            paired_bucket = paired_report.get("top_n", {}).get(bucket_name, {})
+            for metric_name in PAIRED_AGGREGATE_METRICS:
+                row[f"baseline_top_{top_n}_{metric_name}"] = _numeric(
+                    paired_bucket.get("baseline", {}).get(metric_name)
+                )
+                row[f"delta_top_{top_n}_{metric_name}"] = _numeric(
+                    paired_bucket.get("delta", {}).get(metric_name)
+                )
+            for metric_name, counts in paired_bucket.get(
+                "fold_win_loss_tie",
+                {},
+            ).items():
+                for count_name, count in counts.items():
+                    row[
+                        f"top_{top_n}_{metric_name}_{count_name}"
+                    ] = count
 
     return row
 
@@ -215,6 +502,8 @@ def format_ablation_table(results: list[dict]) -> str:
         "top_10_average_model_minus_momentum": "top10_avg_minus_mom",
         "top_5_fold_win_rate_vs_momentum": "top5_win_vs_mom",
         "top_10_fold_win_rate_vs_momentum": "top10_win_vs_mom",
+        "delta_top_5_average_model_excess": "top5_delta_excess",
+        "delta_top_10_average_model_excess": "top10_delta_excess",
     }
     table = pd.DataFrame(results).reindex(columns=display_columns).copy()
     for column in list(display_columns)[2:]:
@@ -227,11 +516,51 @@ def _safe_filename_part(value: str) -> str:
     return re.sub(r"[^A-Za-z0-9_.-]+", "_", value).strip("_")
 
 
-def build_output_path(prediction_days: int, period: str, universe: str) -> Path:
-    """Return the default CSV path for one ablation run."""
+def _selection_filename_part(drop_features: Iterable[str] | None) -> str:
+    """Return a concise, contract-ordered identifier for focused LOFO runs."""
+    if drop_features is None:
+        return ""
+
+    requested_set = set(drop_features)
+    selected_features = [
+        feature for feature in MODEL_FEATURE_COLUMNS if feature in requested_set
+    ]
+    if len(selected_features) == 1:
+        return f"_drop_{_safe_filename_part(selected_features[0])}"
+    if not selected_features:
+        return ""
+
+    selection_digest = hashlib.sha256(
+        "|".join(selected_features).encode("utf-8")
+    ).hexdigest()[:8]
+    return f"_drops_{len(selected_features)}_{selection_digest}"
+
+
+def build_output_path(
+    prediction_days: int,
+    period: str,
+    universe: str,
+    *,
+    mode: str = FEATURE_ABLATION_MODE_GROUPS,
+    model_seed: int | None = None,
+    drop_features: Iterable[str] | None = None,
+) -> Path:
+    """Return a collision-resistant default CSV path for one ablation run."""
+    seed_part = "" if model_seed is None else f"_seed_{int(model_seed)}"
+    selection_part = (
+        _selection_filename_part(drop_features)
+        if mode == FEATURE_ABLATION_MODE_LEAVE_ONE_OUT
+        else ""
+    )
     filename = (
         "rank_ndcg_walk_forward_feature_ablations_"
         f"{prediction_days}d_{_safe_filename_part(period)}_"
-        f"{_safe_filename_part(universe)}.csv"
+        f"{_safe_filename_part(universe)}_{_safe_filename_part(mode)}"
+        f"{selection_part}{seed_part}.csv"
     )
     return Path("reports") / filename
+
+
+def build_paired_fold_output_path(output_path: Path) -> Path:
+    """Return the companion CSV path that keeps paired fold metrics intact."""
+    return output_path.with_name(f"{output_path.stem}_paired_folds.csv")

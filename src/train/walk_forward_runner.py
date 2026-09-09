@@ -15,7 +15,9 @@ from src.train.evaluation.walk_forward import (
     DEFAULT_WALK_FORWARD_TEST_YEARS,
     DEFAULT_WALK_FORWARD_VALIDATION_YEARS,
     build_expanding_yearly_walk_forward_folds,
+    build_model_population_identity,
     build_walk_forward_aggregate_summary,
+    build_walk_forward_fold_population_identity,
     build_walk_forward_split,
 )
 from src.train.model_training import (
@@ -62,8 +64,14 @@ def run_walk_forward_models(
     regressor_params: dict | None = None,
     target_mode: str = TARGET_MODE_EXCESS_RETURN,
     feature_columns_override: list[str] | None = None,
+    model_seed: int | None = None,
 ) -> dict:
-    """Run expanding-window walk-forward Top-N diagnostics for one horizon."""
+    """Run expanding-window walk-forward Top-N diagnostics for one horizon.
+
+    Model feature overrides are applied only after ``prepare_model_frame`` has
+    filtered rows with the full current feature contract.  This keeps all
+    feature-ablation variants on the same eligible population.
+    """
     validate_walk_forward_target_mode(target_mode)
     requested_feature_columns = (
         resolve_model_feature_columns(feature_columns_override)
@@ -100,6 +108,7 @@ def run_walk_forward_models(
         )
 
     fold_reports = []
+    fold_population_identities = []
     regressor_candidate_configs = (
         build_xgboost_regressor_candidate_configs(
             regressor_params or XG_PARAMS_REGRESSOR
@@ -127,6 +136,7 @@ def run_walk_forward_models(
                 prediction_days=prediction_days,
                 random_trials=random_trials,
                 random_trial_workers=random_trial_workers,
+                model_seed=model_seed,
             )
         else:
             selection_report, basket_backtest_report = (
@@ -146,14 +156,24 @@ def run_walk_forward_models(
             basket_backtest_report,
         )
         fold_reports.append(fold_report)
+        fold_population_identities.append(
+            build_walk_forward_fold_population_identity(fold, split)
+        )
         logging.info(format_walk_forward_fold_summary(fold_report))
 
     aggregate_summary = build_walk_forward_aggregate_summary(fold_reports)
     return {
         "prediction_days": int(prediction_days),
         "target_mode": target_mode,
+        "model_seed": None if model_seed is None else int(model_seed),
         "folds": fold_reports,
         "aggregate": aggregate_summary,
+        "population_identity": {
+            "eligibility_feature_columns": list(prepared_feature_columns),
+            "embargo_prediction_days": int(prediction_days),
+            "prepared": build_model_population_identity(prepared_frame),
+            "folds": fold_population_identities,
+        },
     }
 
 
@@ -194,6 +214,7 @@ def _run_rank_ndcg_walk_forward_fold(
     prediction_days=PREDICTION_DAYS,
     random_trials=100,
     random_trial_workers=8,
+    model_seed=None,
 ):
     """Train and evaluate one grouped Rank-NDCG walk-forward fold."""
     train_metadata = _require_rank_ndcg_metadata(split["split_metadata"], "train")
@@ -220,6 +241,8 @@ def _run_rank_ndcg_walk_forward_fold(
         logging.info(f"Rank-NDCG validation eval_set unavailable: {error}")
 
     ranker_params = dict(XG_PARAMS_RANKER)
+    if model_seed is not None:
+        ranker_params["random_state"] = int(model_seed)
     if "eval_set" not in fit_kwargs:
         ranker_params.pop("early_stopping_rounds", None)
     ranker = XGBRanker(**ranker_params)
