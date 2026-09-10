@@ -16,7 +16,6 @@ from src.train.evaluation.basic_reports import (
 from src.train.evaluation.top_n import (
     build_model_only_top_n_basket_backtest_report,
     build_probability_ranked_top_n_selection_reports,
-    prepare_random_top_n_evaluation_state,
     build_top_n_basket_backtest_report,
     build_top_n_ranked_selection_report,
     build_top_n_selection_reports,
@@ -40,7 +39,6 @@ __all__ = [
     "build_validation_selected_threshold_report",
     "build_model_only_top_n_basket_backtest_report",
     "build_probability_ranked_top_n_selection_reports",
-    "prepare_random_top_n_evaluation_state",
     "build_same_date_ranking_diagnostics",
     "build_same_date_ranking_diagnostics_with_baselines",
     "build_top_n_basket_backtest_report",

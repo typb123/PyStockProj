@@ -1,9 +1,5 @@
 """Public Top-N ranked-selection and basket-backtest orchestration."""
 
-from copy import deepcopy
-import hashlib
-import time
-
 import numpy as np
 import pandas as pd
 
@@ -147,8 +143,6 @@ def build_top_n_selection_reports(
     prediction_days=None,
     bootstrap_trials=500,
     bootstrap_seed=42,
-    prepared_evaluation_state=None,
-    include_phase_timings=False,
 ):
     """Build regressor-ranked Top-N reports using predicted excess return."""
     return _build_top_n_selection_reports_for_score(
@@ -163,48 +157,7 @@ def build_top_n_selection_reports(
         prediction_days=prediction_days,
         bootstrap_trials=bootstrap_trials,
         bootstrap_seed=bootstrap_seed,
-        prepared_evaluation_state=prepared_evaluation_state,
-        include_phase_timings=include_phase_timings,
     )
-
-
-def prepare_random_top_n_evaluation_state(
-    split_metadata,
-    top_n_values=(5, 10, 20),
-    random_seed=42,
-    random_trials=100,
-    prediction_days=None,
-):
-    """Precompute model-independent random Top-N summaries for one test fold."""
-    if random_trials < 1:
-        raise ValueError("random_trials must be at least 1.")
-    metadata = _evaluation_metadata(split_metadata)
-    grouped_metadata = list(metadata.groupby("prediction_date", sort=True))
-    started_at = time.perf_counter()
-    random_baselines = {}
-    for top_n in top_n_values:
-        selected_count_by_date = {
-            prediction_date: min(int(top_n), len(date_group))
-            for prediction_date, date_group in grouped_metadata
-        }
-        random_baselines[f"top_{top_n}"] = _random_top_n_selection_reports(
-            grouped_metadata,
-            selected_count_by_date,
-            random_seed=random_seed,
-            random_trials=random_trials,
-            # Context construction runs in the parent before outer workers.
-            # Keep the deterministic legacy serial order and avoid a new pool.
-            random_trial_workers=1,
-        )
-    return {
-        "identity": _evaluation_input_identity(metadata),
-        "top_n_values": tuple(int(value) for value in top_n_values),
-        "random_seed": int(random_seed),
-        "random_trials": int(random_trials),
-        "prediction_days": None if prediction_days is None else int(prediction_days),
-        "random_baselines": random_baselines,
-        "preparation_seconds": time.perf_counter() - started_at,
-    }
 
 
 def build_probability_ranked_top_n_selection_reports(
@@ -247,8 +200,6 @@ def _build_top_n_selection_reports_for_score(
     prediction_days=None,
     bootstrap_trials=500,
     bootstrap_seed=42,
-    prepared_evaluation_state=None,
-    include_phase_timings=False,
 ):
     """Build ranked-selection and basket-backtest Top-N reports for a score column."""
     if random_trials < 1:
@@ -258,12 +209,15 @@ def _build_top_n_selection_reports_for_score(
     if bootstrap_trials < 1:
         raise ValueError("bootstrap_trials must be at least 1.")
 
-    setup_started_at = time.perf_counter()
-    raw_metadata = split_metadata.copy()
+    metadata = split_metadata.copy()
     ranking_scores = np.asarray(ranking_scores, dtype=float)
-    _validate_ranked_selection_inputs(raw_metadata, ranking_scores)
-    raw_metadata[score_column] = ranking_scores
-    metadata = _evaluation_metadata(raw_metadata)
+    _validate_ranked_selection_inputs(metadata, ranking_scores)
+
+    metadata[score_column] = ranking_scores
+    metadata = metadata[metadata["Ticker"] != "SPY"].copy()
+    metadata[_PREDICTION_YEAR_COLUMN] = _prediction_year_strings(
+        metadata["prediction_date"]
+    )
     momentum_score_column = _resolve_momentum_score_column(
         metadata,
         momentum_score_column,
@@ -279,31 +233,12 @@ def _build_top_n_selection_reports_for_score(
     basket_backtest_report = {}
     basket_backtest_by_year_report = {}
     grouped_metadata_by_year = _grouped_metadata_by_year(grouped_metadata)
-    universe_started_at = time.perf_counter()
     universe_ranked_stats = _universe_ranked_selection_stats(grouped_metadata)
     universe_date_stats = _basket_backtest_date_stats(
         [date_group for _, date_group in grouped_metadata]
     )
     universe_basket_stats = _summarize_basket_date_stats(universe_date_stats)
     benchmark_basket_stats = _benchmark_basket_backtest_stats(grouped_metadata)
-    universe_baseline_seconds = time.perf_counter() - universe_started_at
-    phase_timings = {
-        "evaluation_setup_seconds": time.perf_counter() - setup_started_at,
-        "model_top_n_seconds": 0.0,
-        "momentum_baseline_seconds": 0.0,
-        "universe_baseline_seconds": universe_baseline_seconds,
-        "random_baseline_seconds": 0.0,
-        "bootstrap_seconds": 0.0,
-        "report_assembly_seconds": 0.0,
-    }
-    _validate_prepared_evaluation_state(
-        prepared_evaluation_state,
-        metadata.drop(columns=[score_column]),
-        top_n_values,
-        random_seed,
-        random_trials,
-        prediction_days,
-    )
 
     for top_n in top_n_values:
         key = f"top_{top_n}"
@@ -311,40 +246,22 @@ def _build_top_n_selection_reports_for_score(
             prediction_date: min(int(top_n), len(date_group))
             for prediction_date, date_group in grouped_metadata
         }
-        model_started_at = time.perf_counter()
         model_selected_groups = _select_top_n_by_score(
             grouped_metadata,
             selected_count_by_date,
             score_column,
         )
-        model_date_stats = _basket_backtest_date_stats(model_selected_groups)
-        model_ranked_stats = _ranked_selection_stats(
-            model_selected_groups,
-            grouped_metadata,
-            score_column=score_column,
-        )
-        phase_timings["model_top_n_seconds"] += time.perf_counter() - model_started_at
-        random_started_at = time.perf_counter()
-        if prepared_evaluation_state is None:
-            random_reports = _random_top_n_selection_reports(
-                grouped_metadata,
-                selected_count_by_date,
-                random_seed=random_seed,
-                random_trials=random_trials,
-                random_trial_workers=random_trial_workers,
-            )
-        else:
-            random_reports = prepared_evaluation_state["random_baselines"][key]
         (
             random_ranked_stats,
             random_basket_stats,
             random_basket_by_year_stats,
-        ) = deepcopy(random_reports)
-        if prepared_evaluation_state is None:
-            phase_timings["random_baseline_seconds"] += (
-                time.perf_counter() - random_started_at
-            )
-        momentum_started_at = time.perf_counter()
+        ) = _random_top_n_selection_reports(
+            grouped_metadata,
+            selected_count_by_date,
+            random_seed=random_seed,
+            random_trials=random_trials,
+            random_trial_workers=random_trial_workers,
+        )
         momentum_selected_groups = _select_available_top_n_groups(
             grouped_metadata,
             selected_count_by_date,
@@ -357,16 +274,18 @@ def _build_top_n_selection_reports_for_score(
             relative_momentum_score_column,
             metadata_columns,
         )
+        model_date_stats = _basket_backtest_date_stats(model_selected_groups)
         momentum_date_stats = _available_basket_date_stats(momentum_selected_groups)
         relative_momentum_date_stats = _available_basket_date_stats(
             relative_momentum_selected_groups
         )
-        phase_timings["momentum_baseline_seconds"] += (
-            time.perf_counter() - momentum_started_at
-        )
 
         ranked_selection_report[key] = {
-            "model": model_ranked_stats,
+            "model": _ranked_selection_stats(
+                model_selected_groups,
+                grouped_metadata,
+                score_column=score_column,
+            ),
             "random_baseline": random_ranked_stats,
             "momentum_baseline": _combined_momentum_ranked_selection_stats(
                 momentum_selected_groups,
@@ -382,17 +301,6 @@ def _build_top_n_selection_reports_for_score(
             ),
             "universe": universe_ranked_stats,
         }
-        bootstrap_started_at = time.perf_counter()
-        bootstrap_confidence_intervals = _bootstrap_basket_confidence_intervals(
-            model_date_stats,
-            momentum_date_stats=momentum_date_stats,
-            relative_momentum_date_stats=relative_momentum_date_stats,
-            universe_date_stats=universe_date_stats,
-            bootstrap_trials=bootstrap_trials,
-            bootstrap_seed=bootstrap_seed,
-        )
-        phase_timings["bootstrap_seconds"] += time.perf_counter() - bootstrap_started_at
-        assembly_started_at = time.perf_counter()
         basket_backtest_report[key] = {
             "model": _summarize_basket_date_stats(model_date_stats),
             "random_baseline": random_basket_stats,
@@ -406,7 +314,14 @@ def _build_top_n_selection_reports_for_score(
             ),
             "universe": universe_basket_stats,
             "benchmark": benchmark_basket_stats,
-            "bootstrap_confidence_intervals": bootstrap_confidence_intervals,
+            "bootstrap_confidence_intervals": _bootstrap_basket_confidence_intervals(
+                model_date_stats,
+                momentum_date_stats=momentum_date_stats,
+                relative_momentum_date_stats=relative_momentum_date_stats,
+                universe_date_stats=universe_date_stats,
+                bootstrap_trials=bootstrap_trials,
+                bootstrap_seed=bootstrap_seed,
+            ),
         }
         basket_backtest_by_year_report[key] = _build_basket_backtest_by_year_report(
             grouped_metadata_by_year,
@@ -417,64 +332,12 @@ def _build_top_n_selection_reports_for_score(
             relative_momentum_score_column,
             random_basket_by_year_stats,
         )
-        phase_timings["report_assembly_seconds"] += (
-            time.perf_counter() - assembly_started_at
-        )
 
-    report = {
+    return {
         "ranked_selection": ranked_selection_report,
         "basket_backtest": basket_backtest_report,
         "basket_backtest_by_year": basket_backtest_by_year_report,
     }
-    if include_phase_timings:
-        report["phase_timings"] = phase_timings
-    return report
-
-
-def _evaluation_metadata(split_metadata):
-    """Normalize the exact model-independent candidate input used by Top-N."""
-    metadata = split_metadata.copy()
-    _validate_ranked_selection_inputs(metadata, np.zeros(len(metadata)))
-    metadata = metadata[metadata["Ticker"] != "SPY"].copy()
-    metadata[_PREDICTION_YEAR_COLUMN] = _prediction_year_strings(
-        metadata["prediction_date"]
-    )
-    return metadata
-
-
-def _evaluation_input_identity(metadata):
-    """Hash ordered candidate identity and every realized input used by baselines."""
-    row_hashes = pd.util.hash_pandas_object(
-        metadata, index=False, categorize=True
-    ).to_numpy(dtype=np.uint64)
-    return {
-        "row_count": int(len(metadata)),
-        "columns": list(metadata.columns),
-        "ordered_row_digest": hashlib.sha256(row_hashes.tobytes()).hexdigest(),
-    }
-
-
-def _validate_prepared_evaluation_state(
-    state,
-    metadata,
-    top_n_values,
-    random_seed,
-    random_trials,
-    prediction_days,
-):
-    """Reject cached random summaries unless their full evaluation inputs match."""
-    if state is None:
-        return
-    expected = {
-        "identity": _evaluation_input_identity(metadata),
-        "top_n_values": tuple(int(value) for value in top_n_values),
-        "random_seed": int(random_seed),
-        "random_trials": int(random_trials),
-        "prediction_days": None if prediction_days is None else int(prediction_days),
-    }
-    actual = {key: state.get(key) for key in expected}
-    if actual != expected:
-        raise ValueError("Prepared Top-N evaluation state does not match inputs/settings.")
 
 
 def _prediction_year_strings(prediction_dates):

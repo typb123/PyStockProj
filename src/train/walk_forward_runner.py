@@ -11,10 +11,7 @@ from xgboost import XGBRanker
 from src.config import PREDICTION_DAYS, XG_PARAMS_REGRESSOR
 from src.data.data_prep import DataPreparator
 from src.data.training_data import validate_input_data
-from src.train.evaluation import (
-    build_top_n_selection_reports,
-    prepare_random_top_n_evaluation_state,
-)
+from src.train.evaluation import build_top_n_selection_reports
 from src.train.evaluation.walk_forward import (
     DEFAULT_WALK_FORWARD_MIN_TRAIN_YEARS,
     DEFAULT_WALK_FORWARD_TEST_YEARS,
@@ -137,8 +134,6 @@ def prepare_rank_ndcg_walk_forward_context(
     validation_years: int = DEFAULT_WALK_FORWARD_VALIDATION_YEARS,
     test_years: int = DEFAULT_WALK_FORWARD_TEST_YEARS,
     max_folds: int | None = None,
-    random_trials: int = 100,
-    random_seed: int = 42,
 ) -> dict:
     """Prepare immutable-in-practice Rank-NDCG state shared by feature variants.
 
@@ -170,7 +165,6 @@ def prepare_rank_ndcg_walk_forward_context(
 
     prepared_folds = []
     fold_population_identities = []
-    evaluation_preparation_seconds = 0.0
     for fold in folds:
         # StandardScaler is feature-wise: fitting this full-contract scaler on
         # training rows is exactly equivalent to fitting it again on any subset.
@@ -211,20 +205,8 @@ def prepare_rank_ndcg_walk_forward_context(
                 "metadata": metadata,
                 "identity": _rank_population_identity(metadata, labels, qid),
             }
-        evaluation_state = prepare_random_top_n_evaluation_state(
-            split["split_metadata"]["test"],
-            random_trials=random_trials,
-            random_seed=random_seed,
-            prediction_days=prediction_days,
-        )
-        evaluation_preparation_seconds += evaluation_state["preparation_seconds"]
         prepared_folds.append(
-            {
-                "fold": fold,
-                "split": split,
-                "rank_populations": rank_populations,
-                "evaluation_state": evaluation_state,
-            }
+            {"fold": fold, "split": split, "rank_populations": rank_populations}
         )
         fold_population_identities.append(
             build_walk_forward_fold_population_identity(fold, split)
@@ -243,10 +225,6 @@ def prepare_rank_ndcg_walk_forward_context(
             "folds": fold_population_identities,
         },
         "context_preparation_seconds": time.perf_counter() - started_at,
-        "evaluation_preparation_seconds": evaluation_preparation_seconds,
-        "model_context_preparation_seconds": (
-            time.perf_counter() - started_at - evaluation_preparation_seconds
-        ),
     }
 
 
@@ -304,10 +282,9 @@ def run_rank_ndcg_walk_forward_from_context(
             model_seed=model_seed,
             xgb_threads=xgb_threads,
             prepared_rank_populations=prepared_fold["rank_populations"],
-            prepared_evaluation_state=prepared_fold["evaluation_state"],
         )
         for name, value in selection_report.pop("phase_timings", {}).items():
-            phase_timings[name] = phase_timings.get(name, 0.0) + value
+            phase_timings[name] += value
         fold_reports.append(
             build_walk_forward_report_for_split(
                 fold, split, selection_report, basket_backtest_report
@@ -525,7 +502,6 @@ def _run_rank_ndcg_walk_forward_fold(
     model_seed=None,
     xgb_threads=None,
     prepared_rank_populations=None,
-    prepared_evaluation_state=None,
 ):
     """Train and evaluate one grouped Rank-NDCG walk-forward fold."""
     train_metadata = _require_rank_ndcg_metadata(split["split_metadata"], "train")
@@ -583,17 +559,12 @@ def _run_rank_ndcg_walk_forward_fold(
     ranking_test_scores = ranker.predict(x_test)
     prediction_seconds = time.perf_counter() - prediction_started_at
     evaluation_started_at = time.perf_counter()
-    evaluation_kwargs = {
-        "prediction_days": prediction_days,
-        "random_trials": random_trials,
-        "random_trial_workers": random_trial_workers,
-    }
-    if prepared_evaluation_state is not None:
-        evaluation_kwargs["prepared_evaluation_state"] = prepared_evaluation_state
     rank_ndcg_reports = log_rank_ndcg_test_report(
         test_metadata,
         ranking_test_scores,
-        **evaluation_kwargs,
+        prediction_days=prediction_days,
+        random_trials=random_trials,
+        random_trial_workers=random_trial_workers,
     )
     evaluation_seconds = time.perf_counter() - evaluation_started_at
     selection_report = {
@@ -605,7 +576,6 @@ def _run_rank_ndcg_walk_forward_fold(
             "model_fit_seconds": fit_seconds,
             "prediction_seconds": prediction_seconds,
             "evaluation_seconds": evaluation_seconds,
-            **rank_ndcg_reports.get("evaluation_phase_timings", {}),
         },
     }
     return selection_report, rank_ndcg_reports["basket_backtest"]
