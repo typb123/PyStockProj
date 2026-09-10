@@ -32,7 +32,6 @@ from src.train.rank_ndcg_feature_ablations import (
     validate_ablation_parallelism,
 )
 from src.train.walk_forward_runner import (
-    prepare_rank_ndcg_walk_forward_context,
     run_walk_forward_models,
 )
 
@@ -170,11 +169,6 @@ def _run_benchmark(data, args):
     """Benchmark bounded process/thread configurations on recent focused folds."""
     benchmark_results = []
     benchmark_specs = _benchmark_specs()
-    prepared_context = prepare_rank_ndcg_walk_forward_context(
-        data,
-        prediction_days=args.prediction_days,
-        max_folds=args.benchmark_folds,
-    )
     for parallelism in build_benchmark_parallelism_configs(args.cpu_budget):
         print(
             "Benchmarking "
@@ -201,7 +195,6 @@ def _run_benchmark(data, args):
                 "max_folds": args.benchmark_folds,
             },
             serial_runner=run_walk_forward_models,
-            prepared_context=prepared_context,
         )
         wall_clock_seconds = time.perf_counter() - started_at
         model_fit_count = sum(len(run.report.get("folds", [])) for run in runs)
@@ -247,10 +240,6 @@ def main(argv=None) -> list[dict]:
         mode=args.mode,
         drop_features=args.drop_feature,
     )
-    prepared_context = prepare_rank_ndcg_walk_forward_context(
-        data,
-        prediction_days=args.prediction_days,
-    )
 
     results = []
     paired_reports = []
@@ -280,7 +269,6 @@ def main(argv=None) -> list[dict]:
             "model_seed": args.model_seed,
         },
         serial_runner=run_walk_forward_models,
-        prepared_context=prepared_context,
     )
 
     for run in runs:

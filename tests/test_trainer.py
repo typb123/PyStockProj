@@ -278,7 +278,6 @@ def test_rank_ndcg_ablation_runner_uses_walk_forward_for_every_feature_spec(
     tmp_path,
 ):
     calls = []
-    received_spec_names = []
     specs = build_rank_ndcg_feature_ablation_specs()
 
     monkeypatch.setattr(
@@ -287,18 +286,9 @@ def test_rank_ndcg_ablation_runner_uses_walk_forward_for_every_feature_spec(
         lambda *args, **kwargs: pd.DataFrame({"Close": [1.0]}),
     )
 
-    prepared_context = {"context_kind": "rank_ndcg_walk_forward"}
-    monkeypatch.setattr(
-        ablation_script,
-        "prepare_rank_ndcg_walk_forward_context",
-        lambda *args, **kwargs: prepared_context,
-    )
-
-    def fake_run_ablation_specs(data, received_specs, **kwargs):
+    def fake_run_walk_forward_models(data, **kwargs):
         calls.append(kwargs)
-        received_spec_names.extend(spec.name for spec in received_specs)
-        return [
-            SimpleNamespace(spec=spec, report={
+        return {
             "folds": [],
             "aggregate": {
                 "fold_count": 5,
@@ -319,14 +309,12 @@ def test_rank_ndcg_ablation_runner_uses_walk_forward_for_every_feature_spec(
                 "prepared": {"row_count": 0, "row_digest": "same"},
                 "folds": [],
             },
-            })
-            for spec in received_specs
-        ]
+        }
 
     monkeypatch.setattr(
         ablation_script,
-        "run_rank_ndcg_ablation_specs",
-        fake_run_ablation_specs,
+        "run_walk_forward_models",
+        fake_run_walk_forward_models,
     )
     output_path = tmp_path / "ablation.csv"
 
@@ -343,14 +331,16 @@ def test_rank_ndcg_ablation_runner_uses_walk_forward_for_every_feature_spec(
         ]
     )
 
-    assert len(calls) == 1
-    assert calls[0]["prepared_context"] is prepared_context
-    assert received_spec_names == [spec.name for spec in specs]
-    assert (
-        calls[0]["walk_forward_kwargs"]["target_mode"]
+    assert len(calls) == len(specs)
+    assert [call["feature_columns_override"] for call in calls] == [
+        spec.feature_columns for spec in specs
+    ]
+    assert all(
+        call["target_mode"]
         == training_contract.TARGET_MODE_CROSS_SECTIONAL_RANK_NDCG
+        for call in calls
     )
-    assert calls[0]["walk_forward_kwargs"]["random_trial_workers"] == 8
+    assert all(call["random_trial_workers"] == 8 for call in calls)
     assert results[0]["evaluated_fold_count"] == 5
     assert results[0]["top_10_average_model_minus_momentum"] == 0.001
     csv_result = pd.read_csv(output_path)
@@ -418,11 +408,6 @@ def test_rank_ndcg_benchmark_output_has_cpu_and_timing_fields(monkeypatch, capsy
         ablation_script,
         "run_rank_ndcg_ablation_specs",
         fake_run_ablation_specs,
-    )
-    monkeypatch.setattr(
-        ablation_script,
-        "prepare_rank_ndcg_walk_forward_context",
-        lambda *args, **kwargs: {"context_kind": "rank_ndcg_walk_forward"},
     )
 
     results = ablation_script._run_benchmark(pd.DataFrame({"Close": [1.0]}), args)

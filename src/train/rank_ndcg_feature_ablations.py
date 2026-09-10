@@ -18,10 +18,7 @@ import pandas as pd
 from threadpoolctl import threadpool_info, threadpool_limits
 
 from src.features.feature_contract import MODEL_FEATURE_COLUMNS, MODEL_FEATURE_GROUPS
-from src.train.walk_forward_runner import (
-    run_rank_ndcg_walk_forward_from_context,
-    run_walk_forward_models,
-)
+from src.train.walk_forward_runner import run_walk_forward_models
 
 
 FEATURE_ABLATION_MODE_GROUPS = "groups"
@@ -74,7 +71,6 @@ class AblationRun:
 
 
 _ABLATION_WORKER_DATA: pd.DataFrame | None = None
-_ABLATION_WORKER_CONTEXT: dict | None = None
 
 
 @dataclass(frozen=True)
@@ -129,22 +125,20 @@ def build_benchmark_parallelism_configs(
     ]
 
 
-def _initialize_ablation_worker(data: pd.DataFrame | None, prepared_context=None) -> None:
-    """Store one fetched frame or frozen Rank-NDCG context per worker."""
-    global _ABLATION_WORKER_DATA, _ABLATION_WORKER_CONTEXT
+def _initialize_ablation_worker(data: pd.DataFrame) -> None:
+    """Store fetched market data once per outer process worker."""
+    global _ABLATION_WORKER_DATA
     _ABLATION_WORKER_DATA = data
-    _ABLATION_WORKER_CONTEXT = prepared_context
 
 
 def _run_one_ablation(
-    data: pd.DataFrame | None,
+    data: pd.DataFrame,
     index: int,
     spec: FeatureAblationSpec,
     walk_forward_kwargs: dict,
     runner: Callable[..., dict],
     blas_threads: int | None = None,
     collect_worker_diagnostics: bool = False,
-    prepared_context: dict | None = None,
 ) -> AblationRun:
     """Run one independent variant and record its complete wall-clock duration."""
     started_at = time.perf_counter()
@@ -154,20 +148,11 @@ def _run_one_ablation(
         else nullcontext()
     )
     with blas_context:
-        if prepared_context is not None:
-            report = run_rank_ndcg_walk_forward_from_context(
-                prepared_context,
-                feature_columns_override=spec.feature_columns,
-                **walk_forward_kwargs,
-            )
-        else:
-            if data is None:
-                raise RuntimeError("Ablation run requires data when no context is supplied.")
-            report = runner(
-                data.copy(),
-                feature_columns_override=spec.feature_columns,
-                **walk_forward_kwargs,
-            )
+        report = runner(
+            data.copy(),
+            feature_columns_override=spec.feature_columns,
+            **walk_forward_kwargs,
+        )
         native_threadpools = (
             _native_threadpool_summary() if collect_worker_diagnostics else None
         )
@@ -194,9 +179,9 @@ def _native_threadpool_summary() -> list[dict]:
 
 
 def _run_one_ablation_worker(task) -> AblationRun:
-    """Run a task using the process-local frame or frozen context."""
-    if _ABLATION_WORKER_DATA is None and _ABLATION_WORKER_CONTEXT is None:
-        raise RuntimeError("Ablation worker was not initialized with run state.")
+    """Run a task using the process-local market-data copy."""
+    if _ABLATION_WORKER_DATA is None:
+        raise RuntimeError("Ablation worker was not initialized with market data.")
     (
         index,
         spec,
@@ -212,7 +197,6 @@ def _run_one_ablation_worker(task) -> AblationRun:
         run_walk_forward_models,
         blas_threads,
         collect_worker_diagnostics,
-        _ABLATION_WORKER_CONTEXT,
     )
 
 
@@ -226,14 +210,12 @@ def run_rank_ndcg_ablation_specs(
     walk_forward_kwargs: dict,
     serial_runner: Callable[..., dict] | None = None,
     collect_worker_diagnostics: bool = False,
-    prepared_context: dict | None = None,
 ) -> list[AblationRun]:
     """Run ordered ablation specs serially or in a bounded outer process pool.
 
-    Outer workers receive either fetched data or one prepared Rank-NDCG context
-    through their initializer, never fetch independently, and force Top-N random
-    trial work to serial execution to avoid a nested process-pool beneath
-    multi-threaded XGBoost fitting.
+    Outer workers receive the fetched frame through their initializer, never
+    fetch independently, and force Top-N random trial work to serial execution
+    to avoid a nested process-pool beneath multi-threaded XGBoost fitting.
     """
     parallelism = validate_ablation_parallelism(
         outer_workers,
@@ -262,7 +244,6 @@ def run_rank_ndcg_ablation_specs(
                 runner,
                 blas_threads,
                 collect_worker_diagnostics,
-                prepared_context,
             )
             for index, spec in indexed_specs
         ]
@@ -282,7 +263,7 @@ def run_rank_ndcg_ablation_specs(
         max_workers=parallelism.outer_workers,
         mp_context=mp_context,
         initializer=_initialize_ablation_worker,
-        initargs=(None if prepared_context is not None else data, prepared_context),
+        initargs=(data,),
     ) as executor:
         runs = list(executor.map(_run_one_ablation_worker, tasks))
     return sorted(runs, key=lambda run: run.index)
