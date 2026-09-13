@@ -3,7 +3,11 @@
 ## Purpose, scope, and optimization objective
 
 Scope: execution and performance design for Rank-NDCG walk-forward feature ablations.
-Reference machine: i7-13700K, 24 logical CPUs, approximately 23 GiB RAM, WSL2.
+Reference machine: i7-13700K, 24 logical CPUs, approximately 23 GiB RAM
+available to WSL2.
+
+See [Performance and Parallelism](PERFORMANCE_AND_PARALLELISM.md) for project-wide
+performance guidance, resource budgeting, and the measured worker-scaling summary.
 
 The intended large research workload is a full matched LOFO campaign across
 all retained features, both horizons, and multiple model seeds.
@@ -12,9 +16,9 @@ The primary optimization goal is end-to-end campaign wall time while preserving
 scientific equivalence and bounded memory use. High CPU utilization and reduced
 aggregate computation are not sufficient objectives.
 
-Available profiling points to evaluation, particularly repeated random-baseline
-work, as a larger cost than fitting. Reconfirm the bottleneck on representative
-campaigns before optimizing.
+Random-baseline evaluation now uses local per-date numeric arrays instead of
+repeated pandas trial work. Re-profile representative campaigns before choosing
+the next optimization; the previous bottleneck profile is no longer the baseline.
 
 Prefer local computational improvements or bounded reuse of redundant evaluation
 work before adding substantially more scheduling complexity.
@@ -36,6 +40,8 @@ Candidates below are options, not a committed implementation roadmap.
 - `outer_workers * xgb_threads <= cpu_budget` is enforced per invocation.
 - With multiple outer workers, BLAS threads are limited to one and random
   baseline trials run serially within each worker.
+- Random input arrays are prepared locally per evaluation and reused across
+  trials and Top-Ns, preserving RNG ordering and statistical semantics.
 - With one outer worker, the requested random-trial worker count is preserved.
   That separate pool does not explicitly select `spawn`; use one random-trial
   worker for serial comparisons without another process pool.
@@ -43,6 +49,11 @@ Candidates below are options, not a committed implementation roadmap.
 This baseline avoids fork/native-thread deadlocks in the outer pool and the
 previous multiplication of retained expanding-fold state across spawned workers.
 It does not guarantee acceptable memory use at arbitrary worker counts.
+
+Six outer workers with four XGBoost threads each (6×4) is currently the best
+measured configuration for the representative 12-variant campaigns on this
+machine. It was fastest at both 10d and 20d with no observed swap. This remains
+workload- and hardware-specific rather than a permanent project constant.
 
 ## Known limitations
 
@@ -61,7 +72,6 @@ It does not guarantee acceptable memory use at arbitrary worker counts.
 
 | Option | Reason to consider / constraint |
 | --- | --- |
-| Local array-oriented random baseline | Reduce repeated pandas work; computational optimization, not parallelization. |
 | Local copy/date/reduction improvements | Remove redundant work while preserving existing outputs. |
 | Bounded concurrent seed/horizon jobs | Expose independent tasks; budget total workers, threads, and RAM across jobs. |
 | Bounded worker-local random-summary cache | Larger LOFO campaigns may reuse final summaries; retain no prepared folds or trial histories. |

@@ -552,10 +552,32 @@ The reported 10d/20d results above are provisional pending retraining and a
 max-history walk-forward rerun for both horizons. The headline figures have not
 yet been updated.
 
-### 9/9/26 Feature-ablation methodology
+## 9/9/26 Feature-ablation methodology
 
 Added a matched leave-one-feature-out Rank-NDCG evaluation path. Baseline and ablated variants use identical eligible populations and walk-forward folds, matched model seeds, and paired per-fold comparisons. The ablation runner supports controlled parallel execution and benchmarked CPU/thread configurations for faster research runs.
 
 Initial targeted ablation tested `rolling_signed_volume_20d` across both 10d and 20d horizons with seeds 42, 137, and 271 over all 28 walk-forward folds. Its incremental contribution was not stable across seeds, horizons, or folds. Robust fold-level summaries were near neutral overall, while Top-5 results slightly favored removing the feature. A small number of outlier folds explained much of the apparent benefit from keeping it, and no convincing time/regime-specific pattern emerged.
 
 **Decision:** remove `rolling_signed_volume_20d` and proceed with a 37-feature contract.
+
+### Rank-NDCG ablation performance optimization
+
+The ablation execution path was profiled and optimized to make full matched LOFO
+campaigns practical on the reference i7-13700K / WSL2 machine.
+
+The main optimization replaced pandas-heavy random-baseline trial evaluation
+with local per-date numeric arrays while preserving RNG ordering, sampled
+positions, weighting, missing-value behavior, medians, by-year semantics, and
+report structure. On the representative workload, the random-baseline phase
+improved by about 8.6× and two-variant end-to-end wall time was roughly halved.
+
+Worker/thread tuning was then measured on representative 12-variant, 28-fold
+campaigns. At 10d, wall time fell from 552.7 s at 4 outer workers × 6 XGBoost
+threads to 449.1 s at 6 × 4. At 20d, wall time fell from 529.4 s at 4 × 6 to
+425.0 s at 6 × 4. No swap was observed in either 6 × 4 run.
+
+The generated paired-fold outputs were mechanically identical between 4 × 6 and
+6 × 4 for both horizons; the 10d summary outputs were also identical. Therefore
+6 outer workers × 4 XGBoost threads is the current preferred configuration for
+full LOFO campaigns on this machine. This is a workload- and hardware-specific
+choice, not a permanent project constant.
