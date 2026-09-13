@@ -10,6 +10,7 @@ from src.train.evaluation.baselines import (
     _combined_relative_momentum_basket_backtest_stats,
     _combined_relative_momentum_ranked_selection_stats,
     _random_top_n_selection_reports,
+    _prepare_random_trial_input,
     _resolve_momentum_score_column,
     _resolve_relative_momentum_score_column,
     _universe_ranked_selection_stats,
@@ -243,6 +244,10 @@ def _build_top_n_selection_reports_for_score(
     )
     universe_basket_stats = _summarize_basket_date_stats(universe_date_stats)
     benchmark_basket_stats = _benchmark_basket_backtest_stats(grouped_metadata)
+    # Preparation is deliberately inside the random-baseline phase timing: it
+    # replaces work that previously occurred within every random trial.
+    with phase_timing(phase_timing_collector, "random_baseline_evaluation"):
+        random_trial_input = _prepare_random_trial_input(grouped_metadata)
 
     for top_n in top_n_values:
         key = f"top_{top_n}"
@@ -266,6 +271,7 @@ def _build_top_n_selection_reports_for_score(
                 random_seed=random_seed,
                 random_trials=random_trials,
                 random_trial_workers=random_trial_workers,
+                prepared_input=random_trial_input,
             )
         momentum_selected_groups = _select_available_top_n_groups(
             grouped_metadata,

@@ -1,12 +1,12 @@
 """Random, momentum, universe, and benchmark baseline helpers."""
 
 from concurrent.futures import ProcessPoolExecutor
+from dataclasses import dataclass
 
 import numpy as np
 import pandas as pd
 
 from src.train.evaluation.basket_backtest import (
-    _basket_backtest_date_stats,
     _basket_backtest_stats,
     _empty_basket_backtest_stats,
     _summarize_basket_date_stats,
@@ -17,6 +17,31 @@ from src.train.evaluation.ranked_selection import (
     _select_top_n_by_score,
 )
 from src.train.evaluation.validation import _mean_or_nan, _up_rate_or_nan
+
+
+@dataclass(frozen=True)
+class _RandomDateArrays:
+    """One ordered candidate date group prepared for random trial sampling."""
+
+    prediction_year: str
+    raw_forward_return: np.ndarray
+    benchmark_forward_return: np.ndarray
+    excess_forward_return: np.ndarray
+    beat_benchmark_target: np.ndarray
+    universe_raw_forward_return: float
+
+
+@dataclass(frozen=True)
+class _RandomTrialOutcome:
+    """Compact per-trial summaries reused for overall and by-year reports."""
+
+    ranked_stats: dict
+    basket_stats: dict
+    prediction_years: tuple[str, ...]
+    basket_raw_returns: np.ndarray
+    basket_benchmark_returns: np.ndarray
+    basket_excess_returns: np.ndarray
+    selected_counts: np.ndarray
 
 
 def _random_top_n_selection_stats(
@@ -43,6 +68,7 @@ def _random_top_n_selection_reports(
     random_seed,
     random_trials,
     random_trial_workers=4,
+    prepared_input: tuple[_RandomDateArrays, ...] | None = None,
 ):
     """Build overall and by-year random baselines from one random trial run."""
     if random_trial_workers < 1:
@@ -54,12 +80,10 @@ def _random_top_n_selection_reports(
         random_seed,
         random_trials,
         random_trial_workers,
+        prepared_input=prepared_input,
     )
-    ranked_trial_stats = [trial["ranked_stats"] for trial in trial_results]
-    basket_trial_stats = [
-        _summarize_basket_date_stats(trial["basket_date_stats"])
-        for trial in trial_results
-    ]
+    ranked_trial_stats = [trial.ranked_stats for trial in trial_results]
+    basket_trial_stats = [trial.basket_stats for trial in trial_results]
 
     ranked_stats = _average_random_trial_stats(
         ranked_trial_stats,
@@ -70,7 +94,7 @@ def _random_top_n_selection_reports(
     basket_stats["random_seed"] = int(random_seed)
     basket_stats["random_trials"] = int(random_trials)
     basket_by_year_stats = _average_random_basket_trial_stats_by_year(
-        [trial["basket_date_stats"] for trial in trial_results],
+        trial_results,
         random_seed,
         random_trials,
     )
@@ -83,9 +107,19 @@ def _random_top_n_selection_trial_results(
     random_seed,
     random_trials,
     random_trial_workers,
+    prepared_input: tuple[_RandomDateArrays, ...] | None = None,
 ):
     """Generate per-trial random selections through the centralized worker path."""
     trial_seeds = _random_trial_seeds(random_seed, random_trials)
+    prepared_input = (
+        _prepare_random_trial_input(grouped_metadata)
+        if prepared_input is None
+        else prepared_input
+    )
+    selected_counts = tuple(
+        selected_count_by_date[prediction_date]
+        for prediction_date, _ in grouped_metadata
+    )
     if random_trial_workers > 1 and random_trials > 1:
         worker_count = min(int(random_trial_workers), int(random_trials))
         seed_chunks = np.array_split(
@@ -94,8 +128,8 @@ def _random_top_n_selection_trial_results(
         )
         tasks = [
             (
-                grouped_metadata,
-                selected_count_by_date,
+                prepared_input,
+                selected_counts,
                 [int(seed) for seed in seed_chunk],
             )
             for seed_chunk in seed_chunks
@@ -112,9 +146,7 @@ def _random_top_n_selection_trial_results(
 
     return [
         _random_top_n_selection_trial_result(
-            grouped_metadata,
-            selected_count_by_date,
-            trial_seed,
+            prepared_input, selected_counts, trial_seed
         )
         for trial_seed in trial_seeds
     ]
@@ -139,56 +171,182 @@ def _random_trial_seeds(random_seed, random_trials):
 
 def _random_top_n_selection_results_worker(args):
     """Run a chunk of random Top-N trials inside a process-pool worker."""
-    grouped_metadata, selected_count_by_date, trial_seeds = args
+    prepared_input, selected_counts, trial_seeds = args
 
     return [
         _random_top_n_selection_trial_result(
-            grouped_metadata,
-            selected_count_by_date,
-            trial_seed,
+            prepared_input, selected_counts, trial_seed
         )
         for trial_seed in trial_seeds
     ]
 
 
 def _random_top_n_selection_trial_result(
-    grouped_metadata,
-    selected_count_by_date,
+    prepared_input,
+    selected_counts,
     trial_seed,
 ):
-    """Run one random Top-N trial and keep reusable selected-date outcomes."""
-    selected_groups = _select_random_trial_groups(
-        grouped_metadata,
-        selected_count_by_date,
-        trial_seed,
-    )
-    return {
-        "ranked_stats": _ranked_selection_stats(selected_groups, grouped_metadata),
-        "basket_date_stats": _basket_backtest_date_stats(selected_groups),
-    }
-
-
-def _select_random_trial_groups(
-    grouped_metadata,
-    selected_count_by_date,
-    trial_seed,
-):
-    """Select random rows per prediction date for one baseline trial."""
+    """Run one random trial with the legacy RNG sequence and array reductions."""
     rng = np.random.default_rng(trial_seed)
-    selected_groups = []
-    for prediction_date, date_group in grouped_metadata:
-        selected_count = selected_count_by_date[prediction_date]
+    selected_raw_means = []
+    selected_benchmark_means = []
+    selected_excess_means = []
+    selected_raw_values = []
+    selected_excess_values = []
+    selected_beat_targets = []
+    prediction_years = []
+    selected_counts_by_date = []
+
+    for date_arrays, selected_count in zip(prepared_input, selected_counts):
         if selected_count == 0:
             continue
-
+        # Even a full selection must advance the per-trial generator exactly as
+        # before so later date samples remain identical.
         selected_positions = rng.choice(
-            len(date_group),
+            len(date_arrays.raw_forward_return),
             size=selected_count,
             replace=False,
         )
-        selected_groups.append(date_group.iloc[selected_positions])
+        selected_raw = date_arrays.raw_forward_return[selected_positions]
+        selected_benchmark = date_arrays.benchmark_forward_return[selected_positions]
+        selected_excess = date_arrays.excess_forward_return[selected_positions]
+        selected_beat = date_arrays.beat_benchmark_target[selected_positions]
 
-    return selected_groups
+        selected_raw_mean = _pandas_skipna_mean(selected_raw)
+        selected_raw_means.append(selected_raw_mean)
+        selected_benchmark_means.append(_pandas_skipna_mean(selected_benchmark))
+        selected_excess_means.append(_pandas_skipna_mean(selected_excess))
+        selected_raw_values.append(selected_raw)
+        selected_excess_values.append(selected_excess)
+        selected_beat_targets.append(selected_beat)
+        prediction_years.append(date_arrays.prediction_year)
+        selected_counts_by_date.append(selected_count)
+
+    if not selected_raw_means:
+        return _RandomTrialOutcome(
+            ranked_stats=_empty_ranked_selection_stats(),
+            basket_stats=_empty_basket_backtest_stats(),
+            prediction_years=(),
+            basket_raw_returns=np.asarray([]),
+            basket_benchmark_returns=np.asarray([]),
+            basket_excess_returns=np.asarray([]),
+            selected_counts=np.asarray([]),
+        )
+
+    selected_raw_means = np.asarray(selected_raw_means)
+    selected_benchmark_means = np.asarray(selected_benchmark_means)
+    selected_excess_means = np.asarray(selected_excess_means)
+    # Preserve the legacy private-helper alignment behavior for mixed zero and
+    # nonzero selections: its selected-group list was zipped to the first N
+    # candidate date groups. Normal Top-N production paths select every date.
+    ranked_reference_dates = prepared_input[: len(selected_raw_means)]
+    universe_raw_means = np.asarray(
+        [
+            date_arrays.universe_raw_forward_return
+            for date_arrays in ranked_reference_dates
+        ]
+    )
+    candidate_counts = np.asarray(
+        [len(date_arrays.raw_forward_return) for date_arrays in ranked_reference_dates],
+        dtype=float,
+    )
+    selected_raw_values = np.concatenate(selected_raw_values)
+    selected_excess_values = np.concatenate(selected_excess_values)
+    selected_beat_targets = np.concatenate(selected_beat_targets)
+    selected_counts_by_date = np.asarray(selected_counts_by_date)
+
+    ranked_stats = {
+        "date_count": int(len(selected_raw_means)),
+        "selected_row_count": int(len(selected_raw_values)),
+        "average_selected_raw_forward_return": _mean_or_nan(selected_raw_means),
+        "average_selected_benchmark_forward_return": _mean_or_nan(
+            selected_benchmark_means
+        ),
+        "average_selected_excess_return_vs_benchmark": _mean_or_nan(
+            selected_excess_means
+        ),
+        "beat_benchmark_rate": _mean_or_nan(selected_beat_targets),
+        "average_equal_weight_universe_forward_return": _mean_or_nan(
+            universe_raw_means
+        ),
+        "average_selected_return_minus_universe_return": _mean_or_nan(
+            selected_raw_means - universe_raw_means
+        ),
+        "median_selected_excess_return_vs_benchmark": float(
+            np.median(selected_excess_values)
+        ),
+        "positive_raw_return_rate": _up_rate_or_nan(selected_raw_values),
+        "average_number_of_candidates_per_date": _mean_or_nan(candidate_counts),
+    }
+    basket_stats = _array_basket_stats(
+        selected_raw_means,
+        selected_benchmark_means,
+        selected_excess_means,
+        selected_counts_by_date,
+    )
+    return _RandomTrialOutcome(
+        ranked_stats=ranked_stats,
+        basket_stats=basket_stats,
+        prediction_years=tuple(prediction_years),
+        basket_raw_returns=selected_raw_means,
+        basket_benchmark_returns=selected_benchmark_means,
+        basket_excess_returns=selected_excess_means,
+        selected_counts=selected_counts_by_date,
+    )
+
+
+def _prepare_random_trial_input(grouped_metadata) -> tuple[_RandomDateArrays, ...]:
+    """Extract ordered date-local arrays once for all random trials and Top-Ns."""
+    prepared_dates = []
+    for _, date_group in grouped_metadata:
+        raw_forward_return = date_group["raw_forward_return"].to_numpy(copy=False)
+        prepared_dates.append(
+            _RandomDateArrays(
+                prediction_year=str(
+                    pd.to_datetime(
+                        date_group["prediction_date"].iloc[0], errors="raise"
+                    ).year
+                ),
+                raw_forward_return=raw_forward_return,
+                benchmark_forward_return=date_group[
+                    "benchmark_forward_return"
+                ].to_numpy(copy=False),
+                excess_forward_return=date_group["excess_forward_return"].to_numpy(
+                    copy=False
+                ),
+                beat_benchmark_target=date_group["beat_benchmark_target"].to_numpy(
+                    copy=False
+                ),
+                universe_raw_forward_return=_pandas_skipna_mean(raw_forward_return),
+            )
+        )
+    return tuple(prepared_dates)
+
+
+def _pandas_skipna_mean(values):
+    """Match pandas Series.mean()'s NaN-skipping behavior for numeric arrays."""
+    valid_values = np.asarray(values)[pd.notna(values)]
+    if len(valid_values) == 0:
+        return np.nan
+    return float(np.mean(valid_values))
+
+
+def _array_basket_stats(
+    raw_returns,
+    benchmark_returns,
+    excess_returns,
+    selected_counts,
+):
+    """Match basket date-stat summarization without building a DataFrame."""
+    return {
+        "average_basket_raw_return": _mean_or_nan(raw_returns),
+        "average_basket_benchmark_return": _mean_or_nan(benchmark_returns),
+        "average_basket_excess_return": _mean_or_nan(excess_returns),
+        "positive_basket_return_rate": _up_rate_or_nan(raw_returns),
+        "beat_benchmark_rate": _up_rate_or_nan(excess_returns),
+        "average_selected_count": _mean_or_nan(selected_counts),
+        "evaluated_dates": int(len(raw_returns)),
+    }
 
 
 def _combined_momentum_ranked_selection_stats(
@@ -336,28 +494,33 @@ def _average_random_basket_trial_stats(trial_stats):
 
 
 def _average_random_basket_trial_stats_by_year(
-    trial_date_stats,
+    trial_outcomes,
     random_seed,
     random_trials,
 ):
     """Average random basket metrics across trials, grouped by prediction year."""
     years = sorted(
-        {
-            year
-            for date_stats in trial_date_stats
-            for year in _prediction_years_from_date_stats(date_stats)
-        }
+        {year for outcome in trial_outcomes for year in outcome.prediction_years}
     )
     by_year_stats = {}
 
     for year in years:
         trial_stats = []
-        for date_stats in trial_date_stats:
-            year_date_stats = _filter_basket_date_stats_for_year(date_stats, year)
-            if len(year_date_stats) == 0:
+        for outcome in trial_outcomes:
+            year_mask = np.asarray(
+                [outcome_year == year for outcome_year in outcome.prediction_years]
+            )
+            if not np.any(year_mask):
                 trial_stats.append(_empty_basket_backtest_stats())
             else:
-                trial_stats.append(_summarize_basket_date_stats(year_date_stats))
+                trial_stats.append(
+                    _array_basket_stats(
+                        outcome.basket_raw_returns[year_mask],
+                        outcome.basket_benchmark_returns[year_mask],
+                        outcome.basket_excess_returns[year_mask],
+                        outcome.selected_counts[year_mask],
+                    )
+                )
 
         stats = _average_random_basket_trial_stats(trial_stats)
         stats["random_seed"] = int(random_seed)
@@ -365,22 +528,6 @@ def _average_random_basket_trial_stats_by_year(
         by_year_stats[year] = stats
 
     return by_year_stats
-
-
-def _prediction_years_from_date_stats(date_stats):
-    """Return string prediction years represented by per-date basket stats."""
-    if len(date_stats) == 0:
-        return []
-
-    return date_stats["prediction_year"].astype(str)
-
-
-def _filter_basket_date_stats_for_year(date_stats, year):
-    """Select per-date basket rows for a string prediction year."""
-    if len(date_stats) == 0:
-        return date_stats
-
-    return date_stats.loc[date_stats["prediction_year"].astype(str) == str(year)]
 
 
 def _momentum_basket_backtest_stats(
