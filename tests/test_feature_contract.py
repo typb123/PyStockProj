@@ -30,7 +30,6 @@ EXPECTED_MODEL_FEATURE_COLUMNS = [
     "macd_to_close",
     "signal_line_to_close",
     "macd_histogram_to_close",
-    "rolling_signed_volume_20d",
     "vma_10",
     "vma_20",
     "tenkan_sen_to_close",
@@ -60,6 +59,8 @@ EXPECTED_MODEL_FEATURE_COLUMNS = [
 
 def test_model_feature_columns_preserve_expected_order():
     assert MODEL_FEATURE_COLUMNS == EXPECTED_MODEL_FEATURE_COLUMNS
+    assert len(MODEL_FEATURE_COLUMNS) == 37
+    assert "rolling_signed_volume_20d" not in MODEL_FEATURE_COLUMNS
 
 
 def test_model_feature_contract_has_no_duplicates_or_target_overlap():

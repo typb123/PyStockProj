@@ -369,7 +369,7 @@ def build_rank_ndcg_feature_ablation_specs(
             "chikou_lag_close_26_to_close",
         ]
     )
-    volume_scale = {"Volume", "vma_10", "vma_20", "rolling_signed_volume_20d"}
+    volume_scale = {"Volume", "vma_10", "vma_20"}
     minimal_momentum_risk_oscillator = set(
         [
             *groups["absolute_momentum"],
@@ -410,7 +410,7 @@ def build_rank_ndcg_feature_ablation_specs(
         FeatureAblationSpec(
             name="drop_volume_scale",
             feature_columns=_without(all_features, volume_scale),
-            removed_groups="raw_volume,vma,rolling_signed_volume",
+            removed_groups="raw_volume,vma",
         ),
         FeatureAblationSpec(
             name="drop_ichimoku",

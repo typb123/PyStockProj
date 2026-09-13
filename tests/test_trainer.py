@@ -354,7 +354,7 @@ def test_rank_ndcg_ablation_cli_selects_only_requested_leave_one_out_feature():
             "--mode",
             "leave-one-out",
             "--drop-feature",
-            "rolling_signed_volume_20d",
+            "vma_20",
             "--model-seed",
             "137",
         ]
@@ -366,7 +366,7 @@ def test_rank_ndcg_ablation_cli_selects_only_requested_leave_one_out_feature():
 
     assert [spec.name for spec in specs] == [
         "all_features",
-        "drop__rolling_signed_volume_20d",
+        "drop__vma_20",
     ]
     assert args.model_seed == 137
 
@@ -417,7 +417,7 @@ def test_rank_ndcg_benchmark_output_has_cpu_and_timing_fields(monkeypatch, capsy
     assert task_orders == [task_orders[0]] * len(results)
     assert task_orders[0] == [
         "all_features",
-        "drop__rolling_signed_volume_20d",
+        "drop__vma_20",
     ] * 3
     assert all(result["benchmark_variant_runs"] == 6 for result in results)
     assert all(result["model_fit_count"] == 6 for result in results)

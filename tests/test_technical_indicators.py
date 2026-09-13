@@ -9,7 +9,7 @@ from src.features.feature_contract import (
     MODEL_FEATURE_COLUMNS,
 )
 from src.data.data_prep import add_benchmark_relative_momentum
-from src.data.technical_indicators import SIGNED_VOLUME_WINDOW, calculate_data
+from src.data.technical_indicators import calculate_data
 
 
 def test_chikou_features_preserve_lagged_close_timing_without_nominal_scale():
@@ -82,39 +82,28 @@ def test_trailing_momentum_columns_are_past_looking():
     assert np.isclose(result.loc[50, "momentum_50d"], expected_50d)
 
 
-def test_rolling_signed_volume_uses_a_complete_trailing_window():
-    close = np.array(
-        [100.0, 102.0, 101.0, 101.0, 104.0, 103.0, 105.0, 106.0, 104.0,
-         107.0, 108.0, 107.0, 109.0, 110.0, 108.0, 111.0, 112.0, 110.0,
-         113.0, 114.0, 112.0],
-    )
-    volume = np.arange(1_000.0, 1_000.0 + len(close))
+def test_calculate_data_does_not_generate_retired_signed_volume_features():
+    close = np.arange(100.0, 130.0)
     df = pd.DataFrame(
         {
             "Open": close - 0.5,
             "High": close + 1.0,
             "Low": close - 1.0,
             "Close": close,
-            "Volume": volume,
+            "Volume": np.arange(1_000.0, 1_030.0),
         }
     )
 
     result = calculate_data(df)
-    column = f"rolling_signed_volume_{SIGNED_VOLUME_WINDOW}d"
-    expected = np.sum(np.sign(np.diff(close)) * volume[1:])
 
-    assert column in result.columns
-    assert np.isnan(result.loc[SIGNED_VOLUME_WINDOW - 1, column])
-    assert result.loc[SIGNED_VOLUME_WINDOW, column] == expected
+    assert "rolling_signed_volume_20d" not in result.columns
     assert "obv" not in result.columns
 
 
 def test_base_model_features_match_after_history_start_boundary_has_warmed_up():
     """A suffix with enough context must match a longer history at one date.
 
-    The target is deliberately far enough beyond the suffix boundary that the
-    first suffix row's missing prior close cannot enter the 20-session signed-
-    volume window. The long warmup also lets recursive EMA features converge.
+    The long warmup lets recursive EMA features converge before the target date.
     """
     periods = 520
     steps = np.arange(periods, dtype=float)
@@ -144,16 +133,8 @@ def test_base_model_features_match_after_history_start_boundary_has_warmed_up():
         equal_nan=True,
     )
 
-    column = f"rolling_signed_volume_{SIGNED_VOLUME_WINDOW}d"
-    assert long_features.loc[target_date, column] == short_features.loc[target_date, column]
-
-    # This fixture would fail under the old cumulative OBV definition because
-    # every signed-volume observation before the suffix start remains in its sum.
-    legacy_long_obv = (np.sign(history["Close"].diff()) * history["Volume"]).fillna(0).cumsum()
-    legacy_short_obv = (
-        np.sign(short_history["Close"].diff()) * short_history["Volume"]
-    ).fillna(0).cumsum()
-    assert legacy_long_obv.loc[target_date] != legacy_short_obv.loc[target_date]
+    assert "rolling_signed_volume_20d" not in long_features.columns
+    assert "rolling_signed_volume_20d" not in short_features.columns
 
 
 def test_remediated_model_features_are_invariant_to_common_price_scaling():

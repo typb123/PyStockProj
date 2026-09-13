@@ -513,11 +513,11 @@ Aggregate results:
 
 An audit identified a point-in-time data-validity issue in the prior Rank-NDCG research. Yahoo/yfinance historical OHLC data uses retrospective corporate-action adjustment semantics. The prior 39-feature contract contained 20 absolute price-level or price-difference features whose historical values could therefore depend on later splits or dividends. Return-, ratio-, momentum-, volatility-, and most SPY-relative features did not have the same future scale-factor problem, and the audit did not identify corresponding issues in target alignment, chronological splitting, embargoes, SPY matching, or Rank-NDCG query construction.
 
-The implementation now makes Yahoo adjustment semantics explicit, replaces those inputs with price-relative or normalized features in a 38-feature contract, records fetch provenance in artifact bundles, and rejects prior artifact schemas. The previously documented 10d and 20d Rank-NDCG results are retained as provisional pre-remediation historical results and are superseded by the corrected rerun below. Simply switching to `auto_adjust=False` is not sufficient because Yahoo also retrospectively restates historical prices for stock splits.
+The remediation implementation made Yahoo adjustment semantics explicit, replaced those inputs with price-relative or normalized features in an interim 38-feature contract, recorded fetch provenance in artifact bundles, and rejected prior artifact schemas. The previously documented 10d and 20d Rank-NDCG results are retained as provisional pre-remediation historical results and are superseded by the corrected rerun below. Simply switching to `auto_adjust=False` is not sufficient because Yahoo also retrospectively restates historical prices for stock splits.
 
 ### Corrected Rank-NDCG walk-forward rerun
 
-After replacing nominal price-scale-sensitive inputs with scale-invariant features, making the Yahoo adjustment policy explicit, and moving to the 38-feature contract, the canonical max-history Rank-NDCG walk-forward evaluation was rerun for both serving horizons.
+After replacing nominal price-scale-sensitive inputs with scale-invariant features, making the Yahoo adjustment policy explicit, and moving to the interim 38-feature contract, the max-history Rank-NDCG walk-forward evaluation was rerun for both serving horizons.
 
 The corrected runs retained the same 28-fold expanding-window methodology and continued to show positive cross-sectional ranking performance:
 
@@ -538,25 +538,24 @@ received a different value when canonical `period=max` training was compared
 with ranked-watchlist serving, which fetches five years. The first row of an
 isolated history also lacks the preceding close needed to determine its sign.
 
-The feature contract now replaces `obv` with `rolling_signed_volume_20d`: the
-sum of price-direction-signed volume over the trailing 20 completed sessions.
-It requires 20 valid signed-volume observations, so after the input boundary
-has rolled out it has no dependence on how much earlier history was supplied.
-Twenty sessions matches the existing 20-session SMA, volume moving average, and
-Bollinger lookbacks while remaining short enough to represent current volume
-pressure.
+The interim contract replaced `obv` with `rolling_signed_volume_20d`: the sum
+of price-direction-signed volume over the trailing 20 completed sessions. That
+bounded replacement was history-length-safe, but the matched ablation described
+below found its incremental value weak and noisy. It is therefore removed from
+the production/research contract; the current contract has 37 features.
 
-This changes serving feature semantics and artifact schema. Existing saved
-bundles are intentionally incompatible, and the reported canonical 10d/20d
-results above are now provisional pending retraining and a max-history
-walk-forward rerun for both horizons. The headline figures have not yet been
-updated.
+This changes serving feature semantics. Existing 38-feature Rank-NDCG bundles
+are intentionally incompatible because serving requires their persisted ordered
+feature contract to exactly match the current implementation. The artifact
+schema remains v4 because its feature-contract representation is unchanged.
+The reported 10d/20d results above are provisional pending retraining and a
+max-history walk-forward rerun for both horizons. The headline figures have not
+yet been updated.
 
 ### 9/9/26 Feature-ablation methodology
 
-Added a matched leave-one-feature-out Rank-NDCG evaluation path. Baseline and ablated variants use identical eligible populations and walk-forward folds, matched model seeds, and paired per-fold comparisons. The ablation runner now supports controlled parallel execution and benchmarked CPU/thread configurations for faster research runs. No feature-retention conclusions have been drawn yet.
+Added a matched leave-one-feature-out Rank-NDCG evaluation path. Baseline and ablated variants use identical eligible populations and walk-forward folds, matched model seeds, and paired per-fold comparisons. The ablation runner supports controlled parallel execution and benchmarked CPU/thread configurations for faster research runs.
 
+Initial targeted ablation tested `rolling_signed_volume_20d` across both 10d and 20d horizons with seeds 42, 137, and 271 over all 28 walk-forward folds. Its incremental contribution was not stable across seeds, horizons, or folds. Robust fold-level summaries were near neutral overall, while Top-5 results slightly favored removing the feature. A small number of outlier folds explained much of the apparent benefit from keeping it, and no convincing time/regime-specific pattern emerged.
 
-
-
-
+**Decision:** remove `rolling_signed_volume_20d` and proceed with a 37-feature contract.

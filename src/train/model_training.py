@@ -795,7 +795,6 @@ def train_models(
         "sma_20_to_close",
         "macd_to_close",
         "bb_std_to_close",
-        "rolling_signed_volume_20d",
         "dailyReturn",
         "macd_histogram_to_close",
         "vma_20",

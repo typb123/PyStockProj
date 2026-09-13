@@ -52,7 +52,7 @@ def _raw_feature_frame():
     frame.loc[
         (frame["Ticker"] == "AAA")
         & (frame["prediction_date"] == pd.Timestamp("2019-01-01")),
-        "rolling_signed_volume_20d",
+        "vma_20",
     ] = np.nan
     return frame
 
@@ -131,22 +131,22 @@ def test_leave_one_out_specs_have_one_baseline_and_one_ordered_removal_per_featu
 def test_leave_one_out_selection_only_runs_requested_feature_in_contract_order():
     specs = build_rank_ndcg_feature_ablation_specs(
         mode="leave-one-out",
-        drop_features=["rolling_signed_volume_20d"],
+        drop_features=["vma_20"],
     )
 
     assert [spec.name for spec in specs] == [
         "all_features",
-        "drop__rolling_signed_volume_20d",
+        "drop__vma_20",
     ]
     assert specs[1].feature_columns == [
         feature
         for feature in MODEL_FEATURE_COLUMNS
-        if feature != "rolling_signed_volume_20d"
+        if feature != "vma_20"
     ]
 
 
 def test_leave_one_out_selection_is_deterministic_even_when_requested_out_of_order():
-    requested = ["vma_20", "rolling_signed_volume_20d"]
+    requested = ["vma_10", "vma_20"]
     specs = build_rank_ndcg_feature_ablation_specs(
         mode="leave-one-out",
         drop_features=requested,
@@ -315,13 +315,13 @@ def test_default_ablation_output_paths_distinguish_mode_seed_and_lofo_selection(
     lofo_path = build_output_path(
         **common,
         mode="leave-one-out",
-        drop_features=["rolling_signed_volume_20d"],
+        drop_features=["vma_20"],
     )
     seeded_path = build_output_path(**common, mode="groups", model_seed=137)
 
     assert group_path != lofo_path
     assert group_path != seeded_path
-    assert "leave-one-out_drop_rolling_signed_volume_20d" in lofo_path.name
+    assert "leave-one-out_drop_vma_20" in lofo_path.name
     assert "seed_137" in seeded_path.name
 
 
@@ -331,10 +331,10 @@ def test_removed_feature_missing_rows_do_not_reenter_ablation_population():
         raw_data,
         prediction_days=1,
     )
-    feature_without_signed_volume = [
+    feature_without_vma = [
         feature
         for feature in full_features
-        if feature != "rolling_signed_volume_20d"
+        if feature != "vma_20"
     ]
 
     full_split = build_walk_forward_split(
@@ -346,7 +346,7 @@ def test_removed_feature_missing_rows_do_not_reenter_ablation_population():
     ablation_split = build_walk_forward_split(
         prepared_frame,
         _fold(),
-        feature_without_signed_volume,
+        feature_without_vma,
         prediction_days=1,
     )
 
@@ -370,7 +370,7 @@ def test_rank_ndcg_effective_train_and_validation_populations_match_after_filter
     ablation_features = [
         feature
         for feature in full_features
-        if feature != "rolling_signed_volume_20d"
+        if feature != "vma_20"
     ]
     full_split = build_walk_forward_split(
         prepared_frame,
@@ -423,10 +423,10 @@ def test_baseline_and_ablation_reports_have_identical_population_identity(
 ):
     raw_data = _raw_feature_frame()
     full_features = list(MODEL_FEATURE_COLUMNS)
-    feature_without_signed_volume = [
+    feature_without_vma = [
         feature
         for feature in full_features
-        if feature != "rolling_signed_volume_20d"
+        if feature != "vma_20"
     ]
 
     def fake_ranker_fold(*args, **kwargs):
@@ -466,7 +466,7 @@ def test_baseline_and_ablation_reports_have_identical_population_identity(
     )
     ablation_report = walk_forward_runner.run_walk_forward_models(
         raw_data,
-        feature_columns_override=feature_without_signed_volume,
+        feature_columns_override=feature_without_vma,
         **report_kwargs,
     )
 
@@ -579,7 +579,7 @@ def test_paired_delta_uses_ablated_minus_baseline_with_fold_win_loss_tie_counts(
     paired = build_paired_ablation_report(
         baseline_report,
         ablation_report,
-        ablation_name="drop__rolling_signed_volume_20d",
+        ablation_name="drop__vma_20",
     )
 
     top_5 = paired["top_n"]["top_5"]

@@ -394,7 +394,11 @@ def test_bundle_loader_validates_then_loads_matching_serialized_artifacts(
 
     assert loaded.bundle_dir == Path(paths["bundle_dir"])
     assert loaded.manifest["bundle_id"] == Path(paths["bundle_dir"]).name
+    assert loaded.manifest["schema_version"] == artifacts.BUNDLE_SCHEMA_VERSION
+    assert loaded.manifest["feature_contract"]["preprocessor"] == MODEL_FEATURE_COLUMNS
     assert loaded.preprocessor_features == MODEL_FEATURE_COLUMNS
+    assert len(loaded.preprocessor_features) == 37
+    assert "rolling_signed_volume_20d" not in loaded.preprocessor_features
     assert loaded.ranker_features == ["momentum_10d"]
     assert LoadedRanker.loaded_path == Path(paths["ranker"])
 
@@ -454,6 +458,18 @@ def test_missing_current_bundle_fails_without_fallback_or_serialized_load(
                 "feature_contract": {
                     "preprocessor": ["Close"],
                     "models": {"ranker": ["Close"]},
+                }
+            },
+            "feature contract",
+        ),
+        (
+            {
+                "feature_contract": {
+                    "preprocessor": [
+                        *MODEL_FEATURE_COLUMNS,
+                        "rolling_signed_volume_20d",
+                    ],
+                    "models": {"ranker": ["momentum_10d"]},
                 }
             },
             "feature contract",

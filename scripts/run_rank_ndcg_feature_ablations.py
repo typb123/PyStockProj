@@ -158,7 +158,7 @@ def _benchmark_specs():
     """Build the fixed focused workload used by every CPU configuration."""
     focused_specs = build_rank_ndcg_feature_ablation_specs(
         mode="leave-one-out",
-        drop_features=["rolling_signed_volume_20d"],
+        drop_features=["vma_20"],
     )
     # Six fixed slots keep the 6x4 configuration occupied while ensuring all
     # benchmark rows compare the exact same ordered scientific workload.
