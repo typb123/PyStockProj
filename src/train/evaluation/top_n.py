@@ -25,6 +25,7 @@ from src.train.evaluation.ranked_selection import (
     _select_top_n_by_score,
 )
 from src.train.evaluation.validation import _validate_ranked_selection_inputs
+from src.train.phase_timing import phase_timing
 
 
 _PREDICTION_YEAR_COLUMN = "_prediction_year"
@@ -143,6 +144,7 @@ def build_top_n_selection_reports(
     prediction_days=None,
     bootstrap_trials=500,
     bootstrap_seed=42,
+    phase_timing_collector: dict | None = None,
 ):
     """Build regressor-ranked Top-N reports using predicted excess return."""
     return _build_top_n_selection_reports_for_score(
@@ -157,6 +159,7 @@ def build_top_n_selection_reports(
         prediction_days=prediction_days,
         bootstrap_trials=bootstrap_trials,
         bootstrap_seed=bootstrap_seed,
+        phase_timing_collector=phase_timing_collector,
     )
 
 
@@ -200,6 +203,7 @@ def _build_top_n_selection_reports_for_score(
     prediction_days=None,
     bootstrap_trials=500,
     bootstrap_seed=42,
+    phase_timing_collector: dict | None = None,
 ):
     """Build ranked-selection and basket-backtest Top-N reports for a score column."""
     if random_trials < 1:
@@ -251,17 +255,18 @@ def _build_top_n_selection_reports_for_score(
             selected_count_by_date,
             score_column,
         )
-        (
-            random_ranked_stats,
-            random_basket_stats,
-            random_basket_by_year_stats,
-        ) = _random_top_n_selection_reports(
-            grouped_metadata,
-            selected_count_by_date,
-            random_seed=random_seed,
-            random_trials=random_trials,
-            random_trial_workers=random_trial_workers,
-        )
+        with phase_timing(phase_timing_collector, "random_baseline_evaluation"):
+            (
+                random_ranked_stats,
+                random_basket_stats,
+                random_basket_by_year_stats,
+            ) = _random_top_n_selection_reports(
+                grouped_metadata,
+                selected_count_by_date,
+                random_seed=random_seed,
+                random_trials=random_trials,
+                random_trial_workers=random_trial_workers,
+            )
         momentum_selected_groups = _select_available_top_n_groups(
             grouped_metadata,
             selected_count_by_date,

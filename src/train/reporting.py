@@ -695,14 +695,20 @@ def log_rank_ndcg_test_report(
     prediction_days=PREDICTION_DAYS,
     random_trials=100,
     random_trial_workers=4,
+    phase_timing_collector: dict | None = None,
 ):
     """Log Top-N reports that rank candidates by grouped Rank-NDCG score."""
+    top_n_kwargs = {
+        "prediction_days": prediction_days,
+        "random_trials": random_trials,
+        "random_trial_workers": random_trial_workers,
+    }
+    if phase_timing_collector is not None:
+        top_n_kwargs["phase_timing_collector"] = phase_timing_collector
     top_n_selection_reports = build_top_n_selection_reports(
         test_split_metadata,
         ranking_scores,
-        prediction_days=prediction_days,
-        random_trials=random_trials,
-        random_trial_workers=random_trial_workers,
+        **top_n_kwargs,
     )
     ranking_diagnostics = build_same_date_ranking_diagnostics_with_baselines(
         test_split_metadata,

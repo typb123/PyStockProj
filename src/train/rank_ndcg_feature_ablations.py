@@ -5,6 +5,7 @@ from __future__ import annotations
 from concurrent.futures import ProcessPoolExecutor
 from contextlib import nullcontext
 import hashlib
+import json
 import math
 import multiprocessing as mp
 import re
@@ -68,6 +69,7 @@ class AblationRun:
     report: dict
     elapsed_seconds: float
     native_threadpools: list[dict] | None = None
+    phase_timings: dict | None = None
 
 
 _ABLATION_WORKER_DATA: pd.DataFrame | None = None
@@ -139,19 +141,24 @@ def _run_one_ablation(
     runner: Callable[..., dict],
     blas_threads: int | None = None,
     collect_worker_diagnostics: bool = False,
+    collect_phase_timings: bool = False,
 ) -> AblationRun:
     """Run one independent variant and record its complete wall-clock duration."""
     started_at = time.perf_counter()
+    phase_timings = {} if collect_phase_timings else None
     blas_context = (
         threadpool_limits(limits=blas_threads, user_api="blas")
         if blas_threads is not None
         else nullcontext()
     )
     with blas_context:
+        runner_kwargs = dict(walk_forward_kwargs)
+        if phase_timings is not None:
+            runner_kwargs["phase_timing_collector"] = phase_timings
         report = runner(
             data.copy(),
             feature_columns_override=spec.feature_columns,
-            **walk_forward_kwargs,
+            **runner_kwargs,
         )
         native_threadpools = (
             _native_threadpool_summary() if collect_worker_diagnostics else None
@@ -162,6 +169,7 @@ def _run_one_ablation(
         report=report,
         elapsed_seconds=time.perf_counter() - started_at,
         native_threadpools=native_threadpools,
+        phase_timings=phase_timings,
     )
 
 
@@ -188,6 +196,7 @@ def _run_one_ablation_worker(task) -> AblationRun:
         walk_forward_kwargs,
         blas_threads,
         collect_worker_diagnostics,
+        collect_phase_timings,
     ) = task
     return _run_one_ablation(
         _ABLATION_WORKER_DATA,
@@ -197,6 +206,7 @@ def _run_one_ablation_worker(task) -> AblationRun:
         run_walk_forward_models,
         blas_threads,
         collect_worker_diagnostics,
+        collect_phase_timings,
     )
 
 
@@ -210,6 +220,7 @@ def run_rank_ndcg_ablation_specs(
     walk_forward_kwargs: dict,
     serial_runner: Callable[..., dict] | None = None,
     collect_worker_diagnostics: bool = False,
+    collect_phase_timings: bool = False,
 ) -> list[AblationRun]:
     """Run ordered ablation specs serially or in a bounded outer process pool.
 
@@ -244,6 +255,7 @@ def run_rank_ndcg_ablation_specs(
                 runner,
                 blas_threads,
                 collect_worker_diagnostics,
+                collect_phase_timings,
             )
             for index, spec in indexed_specs
         ]
@@ -255,6 +267,7 @@ def run_rank_ndcg_ablation_specs(
             worker_kwargs,
             blas_threads,
             collect_worker_diagnostics,
+            collect_phase_timings,
         )
         for index, spec in indexed_specs
     ]
@@ -267,6 +280,68 @@ def run_rank_ndcg_ablation_specs(
     ) as executor:
         runs = list(executor.map(_run_one_ablation_worker, tasks))
     return sorted(runs, key=lambda run: run.index)
+
+
+def build_phase_timing_report(
+    runs: Iterable[AblationRun],
+    *,
+    parent_phase_timings: dict | None = None,
+    metadata: dict | None = None,
+) -> dict:
+    """Aggregate opt-in worker timings separately from scientific reports."""
+    variant_runs = []
+    aggregate_phase_totals: dict[str, float] = {}
+    aggregate_phase_call_counts: dict[str, int] = {}
+    for run in sorted(runs, key=lambda item: item.index):
+        phase_timings = run.phase_timings or {}
+        phase_totals = {
+            name: float(seconds)
+            for name, seconds in phase_timings.get("phase_totals_seconds", {}).items()
+        }
+        phase_counts = {
+            name: int(count)
+            for name, count in phase_timings.get("phase_call_counts", {}).items()
+        }
+        for name, seconds in phase_totals.items():
+            aggregate_phase_totals[name] = (
+                aggregate_phase_totals.get(name, 0.0) + seconds
+            )
+        for name, count in phase_counts.items():
+            aggregate_phase_call_counts[name] = (
+                aggregate_phase_call_counts.get(name, 0) + count
+            )
+        variant_runs.append(
+            {
+                "index": int(run.index),
+                "ablation_name": run.spec.name,
+                "feature_count": int(len(run.spec.feature_columns)),
+                "wall_clock_seconds": float(run.elapsed_seconds),
+                "phase_totals_seconds": phase_totals,
+                "phase_call_counts": phase_counts,
+            }
+        )
+
+    return {
+        "schema_version": 1,
+        "metadata": dict(metadata or {}),
+        "parent_phase_totals_seconds": {
+            name: float(seconds)
+            for name, seconds in (parent_phase_timings or {}).items()
+        },
+        "aggregate_worker_phase_totals_seconds": aggregate_phase_totals,
+        "aggregate_worker_phase_call_counts": aggregate_phase_call_counts,
+        "variants": variant_runs,
+    }
+
+
+def write_phase_timing_report(path: str | Path, report: dict) -> Path:
+    """Write phase profiling metadata without modifying scientific outputs."""
+    output_path = Path(path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with output_path.open("w", encoding="utf-8") as output_file:
+        json.dump(report, output_file, indent=2, sort_keys=True)
+        output_file.write("\n")
+    return output_path
 
 
 def _without(features: list[str], removed_features: set[str]) -> list[str]:

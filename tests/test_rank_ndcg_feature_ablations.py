@@ -1,5 +1,6 @@
 """Focused tests for Rank-NDCG feature-ablation comparison semantics."""
 
+import json
 import pickle
 
 import numpy as np
@@ -13,12 +14,15 @@ from src.train.rank_ndcg_feature_ablations import (
     FeatureAblationSpec,
     assert_matching_ablation_population,
     build_benchmark_parallelism_configs,
+    build_phase_timing_report,
     build_paired_ablation_report,
     build_output_path,
     build_rank_ndcg_feature_ablation_specs,
     run_rank_ndcg_ablation_specs,
+    write_phase_timing_report,
     validate_ablation_parallelism,
 )
+from src.train.phase_timing import record_phase_timing
 import src.train.model_training as model_training
 import src.train.rank_ndcg_feature_ablations as rank_ndcg_feature_ablations
 import src.train.walk_forward_runner as walk_forward_runner
@@ -307,6 +311,66 @@ def test_outer_worker_initializer_inputs_and_tasks_are_spawn_pickleable():
 
     assert pickle.loads(pickle.dumps(data)).equals(data)
     assert pickle.loads(pickle.dumps(task)) == task
+
+
+def test_opt_in_phase_timings_are_separate_from_scientific_reports(tmp_path):
+    data = pd.DataFrame({"Close": [1.0]})
+    specs = [FeatureAblationSpec("all_features", ["momentum_5d"])]
+    scientific_report = {
+        "aggregate": {"fold_count": 1},
+        "folds": [{"fold_index": 0}],
+    }
+
+    def fake_runner(*args, phase_timing_collector=None, **kwargs):
+        record_phase_timing(phase_timing_collector, "xgboost_fit", 1.25)
+        record_phase_timing(phase_timing_collector, "random_baseline_evaluation", 2.5)
+        return scientific_report
+
+    uninstrumented = run_rank_ndcg_ablation_specs(
+        data,
+        specs,
+        outer_workers=1,
+        xgb_threads=1,
+        cpu_budget=1,
+        walk_forward_kwargs={},
+        serial_runner=fake_runner,
+    )
+    instrumented = run_rank_ndcg_ablation_specs(
+        data,
+        specs,
+        outer_workers=1,
+        xgb_threads=1,
+        cpu_budget=1,
+        walk_forward_kwargs={},
+        serial_runner=fake_runner,
+        collect_phase_timings=True,
+    )
+
+    assert instrumented[0].report == uninstrumented[0].report == scientific_report
+    assert instrumented[0].phase_timings == {
+        "phase_totals_seconds": {
+            "xgboost_fit": 1.25,
+            "random_baseline_evaluation": 2.5,
+        },
+        "phase_call_counts": {
+            "xgboost_fit": 1,
+            "random_baseline_evaluation": 1,
+        },
+    }
+    phase_report = build_phase_timing_report(
+        instrumented,
+        parent_phase_timings={"data_acquisition_and_indicator_generation": 3.0},
+        metadata={"model_seed": 42},
+    )
+    assert phase_report["schema_version"] == 1
+    assert phase_report["metadata"] == {"model_seed": 42}
+    assert phase_report["aggregate_worker_phase_totals_seconds"] == {
+        "xgboost_fit": 1.25,
+        "random_baseline_evaluation": 2.5,
+    }
+    assert phase_report["variants"][0]["ablation_name"] == "all_features"
+    output_path = write_phase_timing_report(tmp_path / "phase_timings.json", phase_report)
+    assert json.loads(output_path.read_text(encoding="utf-8")) == phase_report
 
 
 def test_default_ablation_output_paths_distinguish_mode_seed_and_lofo_selection():

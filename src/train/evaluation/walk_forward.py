@@ -10,6 +10,7 @@ from sklearn.preprocessing import StandardScaler
 from src.config import PREDICTION_DAYS
 from src.data.data_prep import DataPreparator
 from src.train.evaluation.validation import _mean_or_nan
+from src.train.phase_timing import phase_timing
 
 
 DEFAULT_WALK_FORWARD_MIN_TRAIN_YEARS = 5
@@ -87,47 +88,52 @@ def build_walk_forward_split(
     fold,
     feature_columns,
     prediction_days=PREDICTION_DAYS,
+    phase_timing_collector: dict | None = None,
 ):
     """Scale and package one walk-forward train/validation/test split."""
-    frame = _frame_with_prediction_year(prepared_frame)
-    train_df = _rows_for_years(frame, fold["train_years"])
-    validation_df = _rows_for_years(frame, fold["validation_years"])
-    test_df = _rows_for_years(frame, fold["test_years"])
-    train_df = _drop_embargo_tail(train_df, prediction_days)
-    validation_df = _drop_embargo_tail(validation_df, prediction_days)
-    if train_df.empty or validation_df.empty or test_df.empty:
-        raise ValueError("Walk-forward fold contains an empty split.")
+    with phase_timing(phase_timing_collector, "split_row_construction"):
+        frame = _frame_with_prediction_year(prepared_frame)
+        train_df = _rows_for_years(frame, fold["train_years"])
+        validation_df = _rows_for_years(frame, fold["validation_years"])
+        test_df = _rows_for_years(frame, fold["test_years"])
+        train_df = _drop_embargo_tail(train_df, prediction_days)
+        validation_df = _drop_embargo_tail(validation_df, prediction_days)
+        if train_df.empty or validation_df.empty or test_df.empty:
+            raise ValueError("Walk-forward fold contains an empty split.")
 
-    scaler = StandardScaler()
-    x_train = scaler.fit_transform(train_df[feature_columns].values)
-    x_val = scaler.transform(validation_df[feature_columns].values)
-    x_test = scaler.transform(test_df[feature_columns].values)
-    metadata_builder = DataPreparator()
+    with phase_timing(phase_timing_collector, "scaling_feature_preparation"):
+        scaler = StandardScaler()
+        x_train = scaler.fit_transform(train_df[feature_columns].values)
+        x_val = scaler.transform(validation_df[feature_columns].values)
+        x_test = scaler.transform(test_df[feature_columns].values)
 
-    return {
-        "x_train": x_train,
-        "x_val": x_val,
-        "x_test": x_test,
-        "y_train": train_df["targetReturns"].values,
-        "y_val": validation_df["targetReturns"].values,
-        "y_test": test_df["targetReturns"].values,
-        "split_metadata": {
-            "train": metadata_builder._build_split_metadata(train_df),
-            "val": metadata_builder._build_split_metadata(validation_df),
-            "test": metadata_builder._build_split_metadata(test_df),
-        },
-        "split_date_ranges": {
-            "train": _date_range_for_frame(train_df),
-            "validation": _date_range_for_frame(validation_df),
-            "test": _date_range_for_frame(test_df),
-        },
-        "population_identity": {
-            "train": build_model_population_identity(train_df),
-            "validation": build_model_population_identity(validation_df),
-            "test": build_model_population_identity(test_df),
-        },
-        "scaler": scaler,
-    }
+    with phase_timing(phase_timing_collector, "split_metadata_population"):
+        metadata_builder = DataPreparator()
+        split = {
+            "x_train": x_train,
+            "x_val": x_val,
+            "x_test": x_test,
+            "y_train": train_df["targetReturns"].values,
+            "y_val": validation_df["targetReturns"].values,
+            "y_test": test_df["targetReturns"].values,
+            "split_metadata": {
+                "train": metadata_builder._build_split_metadata(train_df),
+                "val": metadata_builder._build_split_metadata(validation_df),
+                "test": metadata_builder._build_split_metadata(test_df),
+            },
+            "split_date_ranges": {
+                "train": _date_range_for_frame(train_df),
+                "validation": _date_range_for_frame(validation_df),
+                "test": _date_range_for_frame(test_df),
+            },
+            "population_identity": {
+                "train": build_model_population_identity(train_df),
+                "validation": build_model_population_identity(validation_df),
+                "test": build_model_population_identity(test_df),
+            },
+            "scaler": scaler,
+        }
+    return split
 
 
 def build_model_population_identity(frame):

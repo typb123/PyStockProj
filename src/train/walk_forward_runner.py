@@ -1,6 +1,7 @@
 """Walk-forward model execution and target-mode dispatch."""
 
 import logging
+import time
 
 import numpy as np
 import pandas as pd
@@ -27,6 +28,7 @@ from src.train.model_training import (
     build_xgboost_regressor_candidate_configs,
     select_xgboost_regressor_by_validation_top_n,
 )
+from src.train.phase_timing import phase_seconds, phase_timing, record_phase_timing
 from src.train.reporting import (
     build_walk_forward_report_for_split,
     format_walk_forward_fold_summary,
@@ -67,6 +69,7 @@ def run_walk_forward_models(
     model_seed: int | None = None,
     xgb_threads: int | None = None,
     max_folds: int | None = None,
+    phase_timing_collector: dict | None = None,
 ) -> dict:
     """Run expanding-window walk-forward Top-N diagnostics for one horizon.
 
@@ -87,22 +90,24 @@ def run_walk_forward_models(
         f"min_train_years={min_train_years}, validation_years={validation_years}, "
         f"test_years={test_years}."
     )
-    data = validate_input_data(data)
-    prepared_frame, prepared_feature_columns = prepare_walk_forward_model_frame(
-        data,
-        prediction_days=prediction_days,
-    )
+    with phase_timing(phase_timing_collector, "variant_model_frame_preparation"):
+        data = validate_input_data(data)
+        prepared_frame, prepared_feature_columns = prepare_walk_forward_model_frame(
+            data,
+            prediction_days=prediction_days,
+        )
     feature_columns = (
         requested_feature_columns
         if requested_feature_columns is not None
         else prepared_feature_columns
     )
-    folds = build_expanding_yearly_walk_forward_folds(
-        prepared_frame,
-        min_train_years=min_train_years,
-        validation_years=validation_years,
-        test_years=test_years,
-    )
+    with phase_timing(phase_timing_collector, "fold_list_construction"):
+        folds = build_expanding_yearly_walk_forward_folds(
+            prepared_frame,
+            min_train_years=min_train_years,
+            validation_years=validation_years,
+            test_years=test_years,
+        )
     if not folds:
         raise ValueError(
             "Not enough prediction years to create walk-forward folds with the "
@@ -132,21 +137,33 @@ def run_walk_forward_models(
             f"validation={fold['validation_date_range']}, "
             f"test={fold['test_date_range']}."
         )
+        split_kwargs = {
+            "prediction_days": prediction_days,
+        }
+        if phase_timing_collector is not None:
+            split_kwargs["phase_timing_collector"] = phase_timing_collector
         split = build_walk_forward_split(
             prepared_frame,
             fold,
             feature_columns,
-            prediction_days=prediction_days,
+            **split_kwargs,
         )
         if target_mode == TARGET_MODE_CROSS_SECTIONAL_RANK_NDCG:
-            selection_report, basket_backtest_report = _run_rank_ndcg_walk_forward_fold(
-                split,
-                feature_columns,
-                prediction_days=prediction_days,
-                random_trials=random_trials,
-                random_trial_workers=random_trial_workers,
-                model_seed=model_seed,
-                xgb_threads=xgb_threads,
+            ranker_kwargs = {
+                "prediction_days": prediction_days,
+                "random_trials": random_trials,
+                "random_trial_workers": random_trial_workers,
+                "model_seed": model_seed,
+                "xgb_threads": xgb_threads,
+            }
+            if phase_timing_collector is not None:
+                ranker_kwargs["phase_timing_collector"] = phase_timing_collector
+            selection_report, basket_backtest_report = (
+                _run_rank_ndcg_walk_forward_fold(
+                    split,
+                    feature_columns,
+                    **ranker_kwargs,
+                )
             )
         else:
             selection_report, basket_backtest_report = (
@@ -159,19 +176,21 @@ def run_walk_forward_models(
                     random_trial_workers=random_trial_workers,
                 )
             )
-        fold_report = build_walk_forward_report_for_split(
-            fold,
-            split,
-            selection_report,
-            basket_backtest_report,
-        )
-        fold_reports.append(fold_report)
-        fold_population_identities.append(
-            build_walk_forward_fold_population_identity(fold, split)
-        )
+        with phase_timing(phase_timing_collector, "fold_reporting_population"):
+            fold_report = build_walk_forward_report_for_split(
+                fold,
+                split,
+                selection_report,
+                basket_backtest_report,
+            )
+            fold_reports.append(fold_report)
+            fold_population_identities.append(
+                build_walk_forward_fold_population_identity(fold, split)
+            )
         logging.info(format_walk_forward_fold_summary(fold_report))
 
-    aggregate_summary = build_walk_forward_aggregate_summary(fold_reports)
+    with phase_timing(phase_timing_collector, "final_aggregate_construction"):
+        aggregate_summary = build_walk_forward_aggregate_summary(fold_reports)
     return {
         "prediction_days": int(prediction_days),
         "target_mode": target_mode,
@@ -226,26 +245,30 @@ def _run_rank_ndcg_walk_forward_fold(
     random_trial_workers=8,
     model_seed=None,
     xgb_threads=None,
+    phase_timing_collector: dict | None = None,
 ):
     """Train and evaluate one grouped Rank-NDCG walk-forward fold."""
-    train_metadata = _require_rank_ndcg_metadata(split["split_metadata"], "train")
-    val_metadata = _require_rank_ndcg_metadata(split["split_metadata"], "val")
-    test_metadata = _require_rank_ndcg_metadata(split["split_metadata"], "test")
-    x_train = pd.DataFrame(split["x_train"], columns=feature_columns)
-    x_val = pd.DataFrame(split["x_val"], columns=feature_columns)
-    x_test = pd.DataFrame(split["x_test"], columns=feature_columns)
+    with phase_timing(phase_timing_collector, "rank_ndcg_feature_frame_preparation"):
+        train_metadata = _require_rank_ndcg_metadata(split["split_metadata"], "train")
+        val_metadata = _require_rank_ndcg_metadata(split["split_metadata"], "val")
+        test_metadata = _require_rank_ndcg_metadata(split["split_metadata"], "test")
+        x_train = pd.DataFrame(split["x_train"], columns=feature_columns)
+        x_val = pd.DataFrame(split["x_val"], columns=feature_columns)
+        x_test = pd.DataFrame(split["x_test"], columns=feature_columns)
 
-    x_train_grouped, y_train_ranker, train_qid, _ = _rank_ndcg_training_data(
-        x_train,
-        train_metadata,
-    )
+    with phase_timing(phase_timing_collector, "rank_ndcg_training_data_preparation"):
+        x_train_grouped, y_train_ranker, train_qid, _ = _rank_ndcg_training_data(
+            x_train,
+            train_metadata,
+        )
     fit_kwargs = {"qid": train_qid, "verbose": False}
     try:
-        x_val_grouped, y_val_ranker, val_qid, _ = _rank_ndcg_training_data(
-            x_val,
-            val_metadata,
-            min_group_count=1,
-        )
+        with phase_timing(phase_timing_collector, "rank_ndcg_training_data_preparation"):
+            x_val_grouped, y_val_ranker, val_qid, _ = _rank_ndcg_training_data(
+                x_val,
+                val_metadata,
+                min_group_count=1,
+            )
         fit_kwargs["eval_set"] = [(x_val_grouped, y_val_ranker)]
         fit_kwargs["eval_qid"] = [val_qid]
     except ValueError as error:
@@ -262,15 +285,38 @@ def _run_rank_ndcg_walk_forward_fold(
     if "eval_set" not in fit_kwargs:
         ranker_params.pop("early_stopping_rounds", None)
     ranker = XGBRanker(**ranker_params)
-    ranker.fit(x_train_grouped, y_train_ranker, **fit_kwargs)
-    ranking_test_scores = ranker.predict(x_test)
+    with phase_timing(phase_timing_collector, "xgboost_fit"):
+        ranker.fit(x_train_grouped, y_train_ranker, **fit_kwargs)
+    with phase_timing(phase_timing_collector, "xgboost_prediction"):
+        ranking_test_scores = ranker.predict(x_test)
+    random_baseline_before = phase_seconds(
+        phase_timing_collector,
+        "random_baseline_evaluation",
+    )
+    evaluation_started_at = time.perf_counter() if phase_timing_collector is not None else None
+    evaluation_kwargs = {
+        "prediction_days": prediction_days,
+        "random_trials": random_trials,
+        "random_trial_workers": random_trial_workers,
+    }
+    if phase_timing_collector is not None:
+        evaluation_kwargs["phase_timing_collector"] = phase_timing_collector
     rank_ndcg_reports = log_rank_ndcg_test_report(
         test_metadata,
         ranking_test_scores,
-        prediction_days=prediction_days,
-        random_trials=random_trials,
-        random_trial_workers=random_trial_workers,
+        **evaluation_kwargs,
     )
+    if phase_timing_collector is not None:
+        evaluation_seconds = time.perf_counter() - evaluation_started_at
+        random_baseline_seconds = (
+            phase_seconds(phase_timing_collector, "random_baseline_evaluation")
+            - random_baseline_before
+        )
+        record_phase_timing(
+            phase_timing_collector,
+            "remaining_evaluation_reporting",
+            max(0.0, evaluation_seconds - random_baseline_seconds),
+        )
     selection_report = {
         "selected_candidate_id": None,
         "selected_candidate_name": "rank_ndcg",

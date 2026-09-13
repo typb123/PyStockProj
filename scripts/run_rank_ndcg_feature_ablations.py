@@ -29,7 +29,9 @@ from src.train.rank_ndcg_feature_ablations import (
     flatten_paired_ablation_fold_rows,
     format_ablation_table,
     run_rank_ndcg_ablation_specs,
+    build_phase_timing_report,
     validate_ablation_parallelism,
+    write_phase_timing_report,
 )
 from src.train.walk_forward_runner import (
     run_walk_forward_models,
@@ -135,6 +137,14 @@ def parse_args(argv=None):
         default=None,
         help="Optional CSV output path. Defaults under reports/.",
     )
+    parser.add_argument(
+        "--profile-output",
+        default=None,
+        help=(
+            "Optional JSON path for opt-in phase timing metadata. Scientific "
+            "reports and CSV output are unchanged."
+        ),
+    )
     return parser.parse_args(argv)
 
 
@@ -225,12 +235,17 @@ def main(argv=None) -> list[dict]:
     parallelism = _resolve_parallelism_args(args)
     use_cache = not args.no_cache
     tickers = get_training_tickers(args.universe)
+    parent_phase_timings = {}
 
     print(
         "Fetching data for "
         f"universe={args.universe}, tickers={len(tickers)}, period={args.period}."
     )
+    acquisition_started_at = time.perf_counter()
     data = prepare_data_parallel(tickers, period=args.period, use_cache=use_cache)
+    parent_phase_timings["data_acquisition_and_indicator_generation"] = (
+        time.perf_counter() - acquisition_started_at
+    )
     if data.empty:
         raise ValueError("No data fetched for ablation run.")
     if args.benchmark:
@@ -269,8 +284,10 @@ def main(argv=None) -> list[dict]:
             "model_seed": args.model_seed,
         },
         serial_runner=run_walk_forward_models,
+        collect_phase_timings=args.profile_output is not None,
     )
 
+    aggregation_started_at = time.perf_counter()
     for run in runs:
         spec = run.spec
         report = run.report
@@ -320,6 +337,39 @@ def main(argv=None) -> list[dict]:
         paired_fold_output_path = build_paired_fold_output_path(output_path)
         pd.DataFrame(paired_fold_rows).to_csv(paired_fold_output_path, index=False)
         print(f"Saved paired fold results to {paired_fold_output_path}")
+    parent_phase_timings["parent_result_aggregation_and_output"] = (
+        time.perf_counter() - aggregation_started_at
+    )
+    if args.profile_output is not None:
+        phase_report = build_phase_timing_report(
+            runs,
+            parent_phase_timings=parent_phase_timings,
+            metadata={
+                "prediction_days": int(args.prediction_days),
+                "period": args.period,
+                "universe": args.universe,
+                "mode": args.mode,
+                "drop_features": list(args.drop_feature or []),
+                "model_seed": args.model_seed,
+                "outer_workers": parallelism.outer_workers,
+                "xgb_threads": parallelism.xgb_threads,
+                "cpu_budget": parallelism.cpu_budget,
+                "random_trials": int(args.random_trials),
+                "random_trial_workers": int(args.random_trial_workers),
+            },
+        )
+        profile_output_path = write_phase_timing_report(
+            args.profile_output,
+            phase_report,
+        )
+        print(f"Saved phase timings to {profile_output_path}")
+        phase_summary = ", ".join(
+            f"{name}={seconds:.2f}s"
+            for name, seconds in sorted(
+                phase_report["aggregate_worker_phase_totals_seconds"].items()
+            )
+        )
+        print(f"Aggregate worker phase timings: {phase_summary}")
     return results
 
 
